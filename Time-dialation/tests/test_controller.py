@@ -128,6 +128,61 @@ def test_time_budget_subjective_time():
     assert config.num_cycles == 0  # unlimited in time-budget mode
 
 
+def test_score_cache_deduplicates():
+    """Identical (prompt, output) pairs should only be scored once."""
+    engine = _mock_engine([
+        "initial",  # gen
+        "70",       # score initial
+        # cycle 1: refine produces same string as initial -> score reused from cache
+        "critique",
+        "initial",  # identical refine output
+        # cycle 2
+        "critique2",
+        "better",
+        "85",
+    ])
+    config = TimeDilateConfig(dilation_factor=2, convergence_patience=10)
+    controller = DilationController(config, engine)
+    result = controller.run("test")
+    assert controller._score_cache_hits >= 1
+    assert result.score == 85
+
+
+def test_early_stop_on_high_score():
+    """If score >= early_stop_score, stop immediately."""
+    engine = _mock_engine(["initial", "99"])  # score 99 triggers early stop
+    config = TimeDilateConfig(dilation_factor=100, early_stop_score=98,
+                              convergence_patience=5)
+    controller = DilationController(config, engine)
+    result = controller.run("test")
+    assert result.score == 99
+    assert result.cycles_completed == 0  # never entered a refine cycle
+
+
+def test_branch_factor_keeps_best_branch():
+    """With branch_factor=3, controller should pick the highest-scoring branch."""
+    engine = _mock_engine([
+        "initial", "60",
+        # cycle 1: 3 branches with scores 70, 90, 80 — winner should be 90
+        "critique",
+        "v_a", "70",
+        "v_b", "90",
+        "v_c", "80",
+        # cycle 2: all worse, pick best but no improvement
+        "critique",
+        "x", "50",
+        "y", "55",
+        "z", "40",
+    ])
+    config = TimeDilateConfig(dilation_factor=2, branch_factor=3,
+                              convergence_patience=10,
+                              branch_temperature_spread=0.0)
+    controller = DilationController(config, engine)
+    result = controller.run("test")
+    assert result.score == 90
+    assert result.output == "v_b"
+
+
 def test_time_budget_mode_runs():
     """Time budget mode runs cycles until wall clock expires."""
     import time as _time

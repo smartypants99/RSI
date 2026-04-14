@@ -41,6 +41,10 @@ class TimeDilateConfig:
     use_self_critique: bool = True  # AI critiques its own output each cycle
     use_chain_of_thought: bool = True  # deeper reasoning per cycle
 
+    # Early stopping & exploration
+    early_stop_score: int = 98  # stop if score >= this (saves tokens on perfect answers)
+    branch_temperature_spread: float = 0.3  # +/- spread for branch diversification
+
     def validate(self) -> None:
         if self.dilation_factor < 1.0:
             raise ConfigError(f"dilation_factor must be >= 1.0, got {self.dilation_factor}")
@@ -58,6 +62,12 @@ class TimeDilateConfig:
             raise ConfigError(f"branch_factor must be >= 1, got {self.branch_factor}")
         if self.convergence_patience < 1:
             raise ConfigError(f"convergence_patience must be >= 1, got {self.convergence_patience}")
+        if not (0 <= self.early_stop_score <= 100):
+            raise ConfigError(f"early_stop_score must be in 0-100, got {self.early_stop_score}")
+        if self.branch_temperature_spread < 0:
+            raise ConfigError(
+                f"branch_temperature_spread must be >= 0, got {self.branch_temperature_spread}"
+            )
 
     @property
     def num_cycles(self) -> int:

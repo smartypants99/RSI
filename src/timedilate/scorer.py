@@ -52,6 +52,27 @@ class Scorer:
         "Respond with ONLY a single integer 0-100. Nothing else."
     )
 
+    COT_RUBRIC = (
+        "You are a strict, discriminating evaluator. Score the output 0-100.\n\n"
+        "First, analyze each criterion:\n"
+        "- Correctness (0-25): Is it factually/logically correct? Any bugs or errors?\n"
+        "- Completeness (0-25): Does it fully address ALL aspects of the task? Missing pieces?\n"
+        "- Quality (0-25): Is it well-structured, readable, and polished?\n"
+        "- Elegance (0-25): Is the approach clean, efficient, and well-designed?\n\n"
+        "Scoring guide:\n"
+        "  0-20: Fundamentally broken or irrelevant\n"
+        "  21-40: Major issues, partially addresses the task\n"
+        "  41-60: Acceptable but significant room for improvement\n"
+        "  61-80: Good, with minor issues\n"
+        "  81-90: Very good, only nitpicks remain\n"
+        "  91-100: Exceptional, near-perfect\n\n"
+        "Be harsh. Most outputs should score 40-75. Only truly exceptional work scores 90+.\n\n"
+        "Think step by step. For each criterion, note specific strengths and weaknesses, "
+        "then assign a sub-score. Sum the sub-scores for the total.\n\n"
+        "End your response with EXACTLY this line:\n"
+        "SCORE: <integer>"
+    )
+
     DETAILED_RUBRIC = (
         "You are a strict evaluator. Score each aspect 0-25.\n\n"
         "- Correctness (0-25): Is it factually/logically correct? Any bugs or errors?\n"
@@ -73,6 +94,20 @@ class Scorer:
         "If roughly equal, respond: TIE\n"
         "Respond with ONLY one word: A, B, or TIE."
     )
+
+    def build_cot_scoring_prompt(self, original_prompt: str, output: str) -> str:
+        return (
+            f"Original task: {original_prompt}\n\n"
+            f"Output to score:\n{output}\n\n"
+            f"{self.COT_RUBRIC}"
+        )
+
+    def parse_cot_score(self, raw: str) -> int:
+        """Parse chain-of-thought scoring output. Looks for 'SCORE: N' at end."""
+        match = re.search(r"SCORE:\s*(\d+)", raw, re.IGNORECASE)
+        if match:
+            return max(0, min(100, int(match.group(1))))
+        return self.parse_score(raw)
 
     def build_scoring_prompt(self, original_prompt: str, output: str) -> str:
         return (

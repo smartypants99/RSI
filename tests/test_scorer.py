@@ -83,3 +83,34 @@ def test_build_detailed_scoring_prompt():
     prompt = scorer.build_detailed_scoring_prompt("test task", "test output")
     assert "C:##" in prompt
     assert "Correctness" in prompt
+
+
+def test_build_cot_scoring_prompt():
+    scorer = Scorer()
+    prompt = scorer.build_cot_scoring_prompt("test task", "test output")
+    assert "step by step" in prompt.lower()
+    assert "SCORE:" in prompt
+
+
+def test_parse_cot_score_with_reasoning():
+    scorer = Scorer()
+    raw = (
+        "Correctness: 20/25 - logic is sound\n"
+        "Completeness: 18/25 - missing edge cases\n"
+        "Quality: 15/25 - needs better structure\n"
+        "Elegance: 12/25 - could be cleaner\n\n"
+        "SCORE: 65"
+    )
+    assert scorer.parse_cot_score(raw) == 65
+
+
+def test_parse_cot_score_fallback():
+    scorer = Scorer()
+    # No SCORE: line, falls back to parse_score
+    assert scorer.parse_cot_score("72") == 72
+
+
+def test_parse_cot_score_clamps():
+    scorer = Scorer()
+    assert scorer.parse_cot_score("SCORE: 150") == 100
+    assert scorer.parse_cot_score("SCORE: 0") == 0

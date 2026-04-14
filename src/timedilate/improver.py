@@ -75,14 +75,22 @@ class ImprovementEngine:
             logger.warning("Variant generation failed: %s", e)
             return None
 
-    def _score_variant(self, original_prompt: str, variant: str) -> int:
-        """Score a variant, returning 0 on failure."""
+    def _score_variant(self, original_prompt: str, variant: str, use_cot: bool = False) -> int:
+        """Score a variant, returning 0 on failure.
+        If use_cot=True, uses chain-of-thought scoring for higher accuracy."""
         try:
-            score_prompt = self.scorer.build_scoring_prompt(original_prompt, variant)
-            raw_score = self.engine.generate(
-                score_prompt, temperature=self.config.scoring_temperature
-            )
-            return self.scorer.parse_score(raw_score)
+            if use_cot:
+                score_prompt = self.scorer.build_cot_scoring_prompt(original_prompt, variant)
+                raw_score = self.engine.generate(
+                    score_prompt, temperature=self.config.scoring_temperature
+                )
+                return self.scorer.parse_cot_score(raw_score)
+            else:
+                score_prompt = self.scorer.build_scoring_prompt(original_prompt, variant)
+                raw_score = self.engine.generate(
+                    score_prompt, temperature=self.config.scoring_temperature
+                )
+                return self.scorer.parse_score(raw_score)
         except Exception as e:
             logger.warning("Scoring failed: %s", e)
             return 0
@@ -134,13 +142,15 @@ class ImprovementEngine:
         return winner_variant, winner_score, winner_index
 
     def _score_select(self, original_prompt: str, variants: list[str]) -> tuple[str, int, int]:
-        """Score each variant, return (best_variant, best_index, best_score)."""
+        """Score each variant, return (best_variant, best_index, best_score).
+        Uses CoT scoring when there are multiple variants for better discrimination."""
         best_variant = variants[0]
         best_score = -1
         best_index = 0
+        use_cot = len(variants) > 1
 
         for i, variant in enumerate(variants):
-            score = self._score_variant(original_prompt, variant)
+            score = self._score_variant(original_prompt, variant, use_cot=use_cot)
             if score > best_score:
                 best_variant = variant
                 best_score = score

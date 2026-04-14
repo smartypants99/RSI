@@ -219,3 +219,23 @@ def test_tournament_with_odd_number():
     winner, idx = improver._tournament_select("test", variants)
     assert winner == "v1"
     assert idx == 0
+
+
+def test_cot_scoring_with_multi_branch():
+    """Multi-branch scoring uses CoT format for better discrimination."""
+    engine = make_mock_engine([
+        "v1", "v2",
+        "Correctness: 20\nSCORE: 75",  # CoT score for v1
+        "Correctness: 22\nSCORE: 85",  # CoT score for v2
+    ])
+    config = TimeDilateConfig(branch_factor=2)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=50,
+        directive="Improve.",
+    )
+    assert best == "v2"
+    assert score == 85
+    assert idx == 1

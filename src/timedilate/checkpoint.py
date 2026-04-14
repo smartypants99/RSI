@@ -15,7 +15,8 @@ class CheckpointManager:
             logger.warning("Could not create checkpoint dir %s: %s", checkpoint_dir, e)
 
     def save(self, cycle: int, output: str, score: int,
-             prompt: str = "", task_type: str = "", no_improvement_count: int = 0) -> None:
+             prompt: str = "", task_type: str = "", no_improvement_count: int = 0,
+             score_history: list[int] | None = None) -> None:
         path = self.dir / f"cycle_{cycle:06d}.json"
         tmp_path = path.with_suffix(".json.tmp")
         try:
@@ -26,6 +27,7 @@ class CheckpointManager:
                 "prompt": prompt,
                 "task_type": task_type,
                 "no_improvement_count": no_improvement_count,
+                "score_history": score_history or [],
                 "timestamp": time.time(),
             })
             # Atomic write: write to tmp then rename to avoid corrupt checkpoints

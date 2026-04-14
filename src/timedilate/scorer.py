@@ -361,11 +361,27 @@ class Scorer:
         return max(0, min(100, int(numbers[0])))
 
     def parse_detailed_score(self, raw: str) -> DetailedScore:
-        """Parse 'C:20 K:18 Q:15 E:22' format into DetailedScore."""
+        """Parse detailed scores from various formats:
+        - Compact: 'C:20 K:18 Q:15 E:22'
+        - Verbose: 'Correctness: 20, Completeness: 18, Quality: 15, Elegance: 22'
+        - Mixed: 'C=20 K=18 Q=15 E=22'
+        """
         defaults = {"c": 0, "k": 0, "q": 0, "e": 0}
-        matches = re.findall(r"([CKQE]):(\d+)", raw.upper())
-        for key, val in matches:
-            defaults[key.lower()] = max(0, min(25, int(val)))
+        # Try compact format first: C:20 or C=20 (standalone letter only)
+        matches = re.findall(r"(?<![A-Z])([CKQE])\s*[:=]\s*(\d+)", raw.upper())
+        if len(matches) >= 2:  # need at least 2 to be confident it's compact format
+            for key, val in matches:
+                defaults[key.lower()] = max(0, min(25, int(val)))
+        else:
+            # Try verbose format: Correctness: 20
+            name_map = {
+                "correctness": "c", "completeness": "k",
+                "quality": "q", "elegance": "e",
+            }
+            for name, key in name_map.items():
+                match = re.search(rf"{name}\s*[:=]\s*(\d+)", raw, re.IGNORECASE)
+                if match:
+                    defaults[key] = max(0, min(25, int(match.group(1))))
         return DetailedScore(
             correctness=defaults["c"],
             completeness=defaults["k"],

@@ -124,6 +124,22 @@ def test_parse_detailed_score():
     assert result.total == 75
 
 
+def test_parse_detailed_score_verbose():
+    scorer = Scorer()
+    result = scorer.parse_detailed_score("Correctness: 20\nCompleteness: 18\nQuality: 15\nElegance: 22")
+    assert result.correctness == 20
+    assert result.completeness == 18
+    assert result.quality == 15
+    assert result.elegance == 22
+
+
+def test_parse_detailed_score_equals_format():
+    scorer = Scorer()
+    result = scorer.parse_detailed_score("C=20 K=18 Q=15 E=22")
+    assert result.correctness == 20
+    assert result.completeness == 18
+
+
 def test_parse_detailed_score_clamps():
     scorer = Scorer()
     result = scorer.parse_detailed_score("C:30 K:0 Q:25 E:25")

@@ -91,8 +91,9 @@ def main(ctx):
 @click.option("--target-score", default=0, type=int, help="Stop early when this score is reached (0 = disabled)")
 @click.option("--quiet", is_flag=True, help="Only output the final result (for piping)")
 @click.option("--verbose", is_flag=True, help="Show detailed progress")
+@click.option("--report", is_flag=True, help="Auto-generate a timestamped JSON report")
 @click.option("--dry-run", is_flag=True, help="Show configuration without running")
-def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, structured_logs, score_weights, task_type, meta_learning, target_score, quiet, verbose, dry_run):
+def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, structured_logs, score_weights, task_type, meta_learning, target_score, quiet, verbose, report, dry_run):
     """Run time dilation on a prompt."""
     import json as _json
     budget_seconds = parse_budget(budget)
@@ -164,11 +165,17 @@ def run(prompt, factor, budget, model, draft_model, branches, output_file, metri
             f.write(result.output)
         console.print(f"\n[dim]Saved to {output_file}[/]")
 
+    # Auto-report: generate timestamped filename
+    if report and not metrics_file:
+        import datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        metrics_file = f"timedilate_report_{ts}.json"
+
     if metrics_file:
         import json as _json2
-        report = result.to_report(config)
+        report_data = result.to_report(config)
         from pathlib import Path
-        Path(metrics_file).write_text(_json2.dumps(report, indent=2))
+        Path(metrics_file).write_text(_json2.dumps(report_data, indent=2))
         console.print(f"[dim]Run report saved to {metrics_file}[/]")
 
 

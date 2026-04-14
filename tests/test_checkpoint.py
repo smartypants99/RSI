@@ -103,6 +103,24 @@ def test_prune_keeps_recent():
         assert remaining[-1]["cycle"] == 7
 
 
+def test_save_with_score_history():
+    """Checkpoint saves score_history for trajectory analysis on resume."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = CheckpointManager(tmpdir)
+        mgr.save(cycle=5, output="code", score=80,
+                 score_history=[50, 60, 70, 75, 80])
+        result = mgr.load_latest()
+        assert result["score_history"] == [50, 60, 70, 75, 80]
+
+
+def test_save_without_score_history_defaults_empty():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = CheckpointManager(tmpdir)
+        mgr.save(cycle=1, output="x", score=50)
+        result = mgr.load_latest()
+        assert result["score_history"] == []
+
+
 def test_prune_noop_when_few():
     """Prune does nothing when fewer checkpoints than keep limit."""
     with tempfile.TemporaryDirectory() as tmpdir:

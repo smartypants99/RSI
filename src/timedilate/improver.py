@@ -49,13 +49,24 @@ class ImprovementEngine:
         )
         return self.engine.generate(summary_prompt)
 
-    def _generate_variant(self, original_prompt: str, current_best: str, directive: str, current_score: int, history_summary: str = "") -> str | None:
+    def _branch_temperature(self, branch_index: int) -> float:
+        """Vary temperature across branches for diverse exploration.
+        Branch 0 uses base temp, others spread from 0.3 to 1.0."""
+        if self.config.branch_factor <= 1:
+            return self.config.temperature
+        if branch_index == 0:
+            return self.config.temperature
+        # Spread remaining branches across 0.3 - 1.0
+        t = 0.3 + (branch_index / (self.config.branch_factor - 1)) * 0.7
+        return round(min(t, 1.0), 2)
+
+    def _generate_variant(self, original_prompt: str, current_best: str, directive: str, current_score: int, history_summary: str = "", temperature: float | None = None) -> str | None:
         """Generate a single variant, returning None on failure."""
         try:
             prompt = self._build_improvement_prompt(
                 original_prompt, current_best, directive, current_score, history_summary
             )
-            variant = self.engine.generate(prompt)
+            variant = self.engine.generate(prompt, temperature=temperature)
             if not variant or not variant.strip():
                 logger.warning("Empty variant generated, skipping")
                 return None
@@ -89,9 +100,10 @@ class ImprovementEngine:
         current_best = self._maybe_summarize(current_best, original_prompt)
 
         variants = []
-        for _ in range(self.config.branch_factor):
+        for i in range(self.config.branch_factor):
+            temp = self._branch_temperature(i)
             variant = self._generate_variant(
-                original_prompt, current_best, directive, current_score, history_summary
+                original_prompt, current_best, directive, current_score, history_summary, temperature=temp
             )
             if variant is not None:
                 variants.append(variant)

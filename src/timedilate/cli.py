@@ -5,6 +5,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from timedilate.config import TimeDilateConfig
 from timedilate.engine import InferenceEngine
 from timedilate.controller import DilationController, DilationResult
+from timedilate.logging_config import setup_logging
 
 console = Console()
 
@@ -73,6 +74,8 @@ def run_dilation(prompt: str, config: TimeDilateConfig, resume: bool = False) ->
 def main(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, verbose):
     """AI Time Dilation Runtime -- make AI think longer in less time."""
     budget_seconds = parse_budget(budget)
+
+    setup_logging(verbose=verbose)
 
     config = TimeDilateConfig(
         model=model,

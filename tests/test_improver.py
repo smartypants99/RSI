@@ -139,6 +139,28 @@ def test_comparative_overrule_on_close_score():
     assert idx == -1
 
 
+def test_branch_temperature_diversity():
+    """Different branches should get different temperatures."""
+    config = TimeDilateConfig(branch_factor=3, temperature=0.7)
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    improver = ImprovementEngine(engine, config)
+    t0 = improver._branch_temperature(0)
+    t1 = improver._branch_temperature(1)
+    t2 = improver._branch_temperature(2)
+    assert t0 == 0.7  # base temperature
+    assert t1 != t2  # different temperatures
+    assert 0.3 <= t1 <= 1.0
+    assert 0.3 <= t2 <= 1.0
+
+
+def test_single_branch_no_diversity():
+    config = TimeDilateConfig(branch_factor=1, temperature=0.5)
+    engine = MagicMock()
+    improver = ImprovementEngine(engine, config)
+    assert improver._branch_temperature(0) == 0.5
+
+
 def test_no_comparative_on_large_delta():
     """When score improvement is large (>5), skip comparative check."""
     engine = make_mock_engine(["variant", "80"])  # delta=30, no comparison call

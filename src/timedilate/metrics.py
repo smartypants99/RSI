@@ -57,6 +57,24 @@ class RunMetrics:
                 break
         return streak
 
+    @property
+    def avg_cycle_time(self) -> float:
+        """Average wall-clock seconds per cycle."""
+        if not self.cycles:
+            return 0.0
+        return sum(c.elapsed_seconds for c in self.cycles) / len(self.cycles)
+
+    @property
+    def effective_dilation(self) -> float:
+        """Actual dilation achieved: total_cycles / elapsed_wall_clock.
+        Higher means more cycles packed per second."""
+        if not self.cycles:
+            return 0.0
+        total_time = sum(c.elapsed_seconds for c in self.cycles)
+        if total_time <= 0:
+            return 0.0
+        return len(self.cycles) / total_time
+
     def to_dict(self) -> dict:
         return {
             "prompt": self.prompt,
@@ -66,6 +84,8 @@ class RunMetrics:
             "total_cycles": len(self.cycles),
             "improvement_rate": self.improvement_rate,
             "total_improvement": self.total_improvement,
+            "avg_cycle_time": self.avg_cycle_time,
+            "effective_dilation": self.effective_dilation,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
         }

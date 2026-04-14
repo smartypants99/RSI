@@ -254,7 +254,21 @@ class DilationController:
                 self.improver.cycles_remaining = refinement_cycles - cycle - 1
 
                 # Every 5 cycles, do a detailed score to target weaknesses
+                # Every 3 cycles (not overlapping with 5), do feedback scoring for strengths/weaknesses
                 score_feedback_text = ""
+                if cycle > 0 and cycle % 3 == 0 and cycle % 5 != 0:
+                    try:
+                        fb_prompt = self.scorer.build_feedback_scoring_prompt(prompt, current_best)
+                        fb_raw = self.engine.generate(fb_prompt, temperature=self.config.scoring_temperature)
+                        strengths, weaknesses = self.scorer.parse_strengths_weaknesses(fb_raw)
+                        if strengths:
+                            score_feedback_text = f"PRESERVE these strengths:\n{strengths}\n"
+                        if weaknesses:
+                            score_feedback_text += f"FIX these weaknesses:\n{weaknesses}"
+                        logger.info("Cycle %d: feedback scoring — strengths found: %s",
+                                    cycle + 1, bool(strengths))
+                    except Exception:
+                        logger.debug("Feedback scoring failed, continuing without")
                 if cycle > 0 and cycle % 5 == 0:
                     try:
                         detail_prompt = self.scorer.build_detailed_scoring_prompt(prompt, current_best)

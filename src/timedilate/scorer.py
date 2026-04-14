@@ -198,9 +198,13 @@ class Scorer:
         "- Completeness: Does it fully address the task?\n"
         "- Quality: Structure, readability, polish?\n"
         "- Elegance: Clean design, efficiency?\n\n"
-        "Give 2-3 specific, actionable critiques. Be concrete.\n"
+        "First, list 1-2 STRENGTHS (what's working well and should be preserved).\n"
+        "Then, list 2-3 specific, actionable WEAKNESSES to fix. Be concrete.\n"
         "Then end with: SCORE: <integer 0-100>\n\n"
-        "Example:\n"
+        "Format:\n"
+        "STRENGTHS:\n"
+        "- Good error handling for edge cases\n"
+        "WEAKNESSES:\n"
         "1. The sort function doesn't handle empty lists\n"
         "2. Variable names are unclear (x, y instead of left, right)\n"
         "SCORE: 62"
@@ -221,6 +225,21 @@ class Scorer:
         parts = re.split(r"SCORE:\s*\d+", raw, flags=re.IGNORECASE)
         feedback = parts[0].strip() if parts else ""
         return score, feedback
+
+    def parse_strengths_weaknesses(self, raw: str) -> tuple[str, str]:
+        """Extract strengths and weaknesses sections from feedback.
+        Returns (strengths_text, weaknesses_text)."""
+        strengths = ""
+        weaknesses = ""
+        # Try to extract STRENGTHS: section
+        s_match = re.search(r"STRENGTHS?:\s*\n((?:[-•*]\s*.+\n?)+)", raw, re.IGNORECASE)
+        if s_match:
+            strengths = s_match.group(1).strip()
+        # Try to extract WEAKNESSES: section
+        w_match = re.search(r"WEAKNESSES?:\s*\n((?:(?:\d+\.|-|•|\*)\s*.+\n?)+)", raw, re.IGNORECASE)
+        if w_match:
+            weaknesses = w_match.group(1).strip()
+        return strengths, weaknesses
 
     def sanity_check_score(self, new_score: int, old_score: int,
                            new_output: str, old_output: str) -> bool:

@@ -214,3 +214,38 @@ def test_parse_feedback_score_no_feedback():
     score, feedback = scorer.parse_feedback_score("SCORE: 75")
     assert score == 75
     assert feedback == ""
+
+
+def test_parse_strengths_weaknesses():
+    scorer = Scorer()
+    raw = (
+        "STRENGTHS:\n"
+        "- Clean error handling\n"
+        "- Good variable names\n"
+        "WEAKNESSES:\n"
+        "1. Missing edge case for empty input\n"
+        "2. No docstring\n"
+        "SCORE: 72"
+    )
+    strengths, weaknesses = scorer.parse_strengths_weaknesses(raw)
+    assert "Clean error handling" in strengths
+    assert "Good variable names" in strengths
+    assert "Missing edge case" in weaknesses
+    assert "No docstring" in weaknesses
+
+
+def test_parse_strengths_weaknesses_empty():
+    scorer = Scorer()
+    strengths, weaknesses = scorer.parse_strengths_weaknesses("Just some text\nSCORE: 50")
+    assert strengths == ""
+    assert weaknesses == ""
+
+
+def test_cot_scoring_prompt_includes_task_addendum():
+    scorer = Scorer()
+    prompt = scorer.build_cot_scoring_prompt("task", "output", task_type="code")
+    assert "compile/run without errors" in prompt
+    prompt_prose = scorer.build_cot_scoring_prompt("task", "output", task_type="prose")
+    assert "argument clear" in prompt_prose
+    prompt_general = scorer.build_cot_scoring_prompt("task", "output", task_type="general")
+    assert "compile/run" not in prompt_general

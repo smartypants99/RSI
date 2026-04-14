@@ -96,6 +96,8 @@ def test_controller_resume_from_checkpoint():
         # Cycle 4: v4 scores 95 (delta=10, no comparative needed)
         mock_engine = make_mock_engine([
             "v3", "85", "B",   # cycle 3 + comparative check
+            # cycle 4 (index 3): 3%3==0 triggers feedback scoring
+            "STRENGTHS:\n- Good\nWEAKNESSES:\n1. Bad\nSCORE: 85",
             "v4", "95",        # cycle 4 (large delta, no comparative)
         ])
         controller = DilationController(config, mock_engine)
@@ -124,17 +126,22 @@ def test_controller_targeted_directive_at_cycle_5():
     """At cycle 5, controller should do detailed scoring for targeted directive."""
     config = TimeDilateConfig(dilation_factor=8, branch_factor=1)
     responses = ["initial", "60", "60"]  # consistency check
-    # Cycle 1: variant scores 70 (delta=10, no comparative)
+    # Cycle 0: variant scores 70
     responses.extend(["v1", "70"])
-    # Cycles 2-4: each improves by 10+ (no comparative triggered)
-    for i in range(3):
-        responses.extend([f"v{i+2}", f"{80 + i * 3}"])
-    # Cycle 5: detailed score response + targeted improvement + score
-    responses.append("C:20 K:10 Q:18 E:15")  # detailed score (completeness weakest)
+    # Cycles 1-2: each improves
+    responses.extend(["v2", "80"])
+    responses.extend(["v3", "83"])
+    # Cycle 3: feedback scoring (3%3==0, 3%5!=0)
+    responses.append("STRENGTHS:\n- Good\nWEAKNESSES:\n1. Bad\nSCORE: 83")
+    responses.extend(["v4", "86"])
+    # Cycle 4: normal
+    responses.extend(["v5", "89"])
+    # Cycle 5: detailed score (5%5==0) + targeted improvement + score
+    responses.append("C:20 K:10 Q:18 E:15")  # completeness weakest
     responses.extend(["v5_targeted", "95"])
-    # Cycles 6-7: normal
-    for i in range(2):
-        responses.extend([f"v{6+i}", f"{96 + i}"])
+    # Cycle 6: feedback scoring (6%3==0, 6%5!=0) + normal cycle
+    responses.append("STRENGTHS:\n- Good\nWEAKNESSES:\n1. Minor\nSCORE: 95")
+    responses.extend(["v6", "97"])
     mock_engine = make_mock_engine(responses)
     controller = DilationController(config, mock_engine)
     result = controller.run("test")

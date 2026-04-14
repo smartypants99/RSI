@@ -31,6 +31,8 @@ def test_full_pipeline_dilation_5x():
         "v0", "50", "50",  # third is consistency check re-score
         "v1", "60",
         "v2", "70",
+        # cycle 3 (index 3): feedback scoring at 3%3==0
+        "STRENGTHS:\n- Good\nWEAKNESSES:\n1. Bad\nSCORE: 70",
         "v3", "80",
         "v4", "90",
     ]

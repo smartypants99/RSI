@@ -368,10 +368,27 @@ class Scorer:
         )
 
     def parse_comparison(self, raw: str) -> str:
-        """Returns 'A', 'B', or 'TIE'."""
-        raw = raw.strip().upper()
-        if raw.startswith("A"):
+        """Returns 'A', 'B', or 'TIE'. Handles verbose responses."""
+        text = raw.strip().upper()
+        # Direct single-word answers
+        if text in ("A", "B", "TIE"):
+            return text
+        # Look for explicit statements
+        if re.search(r"\bOUTPUT\s*A\s*(?:IS\s*)?(?:BETTER|SUPERIOR|WINS)\b", text):
             return "A"
-        if raw.startswith("B"):
+        if re.search(r"\bOUTPUT\s*B\s*(?:IS\s*)?(?:BETTER|SUPERIOR|WINS)\b", text):
             return "B"
+        if re.search(r"\b(?:TIE|EQUAL|ROUGHLY\s*EQUAL|ABOUT\s*THE\s*SAME)\b", text):
+            return "TIE"
+        # Count mentions as last resort
+        a_count = len(re.findall(r"\bA\b", text))
+        b_count = len(re.findall(r"\bB\b", text))
+        # Only trust if one clearly dominates
+        if a_count > b_count + 2:
+            return "A"
+        if b_count > a_count + 2:
+            return "B"
+        # Fallback: first character
+        if text and text[0] in ("A", "B"):
+            return text[0]
         return "TIE"

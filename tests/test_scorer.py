@@ -88,6 +88,16 @@ def test_parse_comparison():
     assert scorer.parse_comparison("something else") == "TIE"
 
 
+def test_parse_comparison_verbose():
+    scorer = Scorer()
+    assert scorer.parse_comparison("Output A is better overall") == "A"
+    assert scorer.parse_comparison("Output B is superior in every way") == "B"
+    assert scorer.parse_comparison("They are roughly equal in quality") == "TIE"
+    assert scorer.parse_comparison("After analysis, Output A wins") == "A"
+    # Edge case: verbose text that starts with non-A/B
+    assert scorer.parse_comparison("Overall, I think they are about the same") == "TIE"
+
+
 def test_scoring_rubric_has_calibration():
     scorer = Scorer()
     assert "harsh" in scorer.RUBRIC.lower() or "40-75" in scorer.RUBRIC

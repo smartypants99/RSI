@@ -1,3 +1,4 @@
+import tempfile
 from click.testing import CliRunner
 from unittest.mock import patch, MagicMock
 from timedilate.cli import main, parse_budget
@@ -58,6 +59,26 @@ def test_run_subcommand_parses_args():
         result = runner.invoke(main, ["run", "Write hello", "--factor", "5", "--budget", "10s"])
         assert result.exit_code == 0
         mock_run.assert_called_once()
+
+
+def test_status_no_checkpoints():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = runner.invoke(main, ["status", "--checkpoint-dir", tmpdir])
+        assert result.exit_code == 0
+        assert "No checkpoints" in result.output
+
+
+def test_status_with_checkpoints():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        from timedilate.checkpoint import CheckpointManager
+        mgr = CheckpointManager(tmpdir)
+        mgr.save(cycle=5, output="test", score=80, prompt="write sort", task_type="code")
+        result = runner.invoke(main, ["status", "--checkpoint-dir", tmpdir])
+        assert result.exit_code == 0
+        assert "Cycle   5" in result.output
+        assert "80" in result.output
 
 
 def test_benchmark_subcommand_help():

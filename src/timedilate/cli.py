@@ -144,6 +144,31 @@ def run(prompt, factor, budget, model, draft_model, branches, output_file, metri
 
 
 @main.command()
+@click.option("--checkpoint-dir", default=".timedilate_checkpoints", help="Checkpoint directory")
+def status(checkpoint_dir):
+    """Show status of checkpoints and last run."""
+    from timedilate.checkpoint import CheckpointManager
+    mgr = CheckpointManager(checkpoint_dir)
+    checkpoints = mgr.list_checkpoints()
+    if not checkpoints:
+        console.print("[dim]No checkpoints found.[/]")
+        return
+    console.print(f"[bold]Found {len(checkpoints)} checkpoint(s)[/]")
+    for cp in checkpoints:
+        ts = cp.get("timestamp", 0)
+        import datetime
+        dt = datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else "unknown"
+        console.print(
+            f"  Cycle {cp['cycle']:3d} | Score: {cp['score']:3d} | "
+            f"Task: {cp.get('task_type', '?'):8s} | {dt}"
+        )
+    latest = checkpoints[-1]
+    console.print(f"\n[bold]Latest:[/] cycle {latest['cycle']}, score {latest['score']}")
+    if latest.get("prompt"):
+        console.print(f"  Prompt: {latest['prompt'][:80]}...")
+
+
+@main.command()
 @click.option("--factors", default="1,2,5,10", help="Comma-separated dilation factors to test")
 @click.option("--model", default="Qwen/Qwen2.5-7B-Instruct", help="Model name or path")
 @click.option("--draft-model", default="Qwen/Qwen2.5-0.5B-Instruct", help="Draft model for speculative decoding")

@@ -311,11 +311,17 @@ class Scorer:
             f"{self.RUBRIC}"
         )
 
-    def build_detailed_scoring_prompt(self, original_prompt: str, output: str) -> str:
+    def build_detailed_scoring_prompt(self, original_prompt: str, output: str,
+                                       task_type: str = "general") -> str:
+        addendum = ""
+        if task_type == "code":
+            addendum = "\nFocus on: does it run correctly, handle edge cases, use efficient algorithms."
+        elif task_type == "prose":
+            addendum = "\nFocus on: argument clarity, evidence quality, structure, audience fit."
         return (
             f"Original task: {original_prompt}\n\n"
             f"Output to score:\n{output}\n\n"
-            f"{self.DETAILED_RUBRIC}"
+            f"{self.DETAILED_RUBRIC}{addendum}"
         )
 
     def build_comparative_prompt(

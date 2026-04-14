@@ -44,14 +44,24 @@ class ImprovementEngine:
             original_prompt, current_best, history_block, feedback_block, directive
         )
         if total_est > prompt_budget:
-            # Trim history first, then feedback
-            logger.info("Prompt too long (%d tokens), trimming to fit %d budget",
-                        total_est, prompt_budget)
-            history_block = ""
-            total_est = self._estimate_prompt_tokens(
-                original_prompt, current_best, feedback_block, directive
-            )
+            # Graduated trimming: shorten history first, then drop it, then drop feedback
+            if history_block:
+                # Keep only the last 2 lines of history
+                lines = history_block.strip().split("\n")
+                if len(lines) > 2:
+                    history_block = "\n".join(lines[-2:]) + "\n"
+                    total_est = self._estimate_prompt_tokens(
+                        original_prompt, current_best, history_block, feedback_block, directive
+                    )
             if total_est > prompt_budget:
+                logger.info("Prompt too long (%d tokens), dropping history to fit %d budget",
+                            total_est, prompt_budget)
+                history_block = ""
+                total_est = self._estimate_prompt_tokens(
+                    original_prompt, current_best, feedback_block, directive
+                )
+            if total_est > prompt_budget:
+                logger.info("Still too long, dropping feedback too")
                 feedback_block = ""
 
         # Score context: tell the model what the score means on the rubric
@@ -368,7 +378,7 @@ class ImprovementEngine:
                         logger.debug("CoT subscores: %s -> total %d", subscores, score)
                 elif self.config.score_weights:
                     # Use detailed scoring with custom weights
-                    score_prompt = self.scorer.build_detailed_scoring_prompt(original_prompt, variant)
+                    score_prompt = self.scorer.build_detailed_scoring_prompt(original_prompt, variant, self.task_type)
                     if current_score >= 75:
                         score_prompt += self.scorer.HARSH_ADDENDUM.format(score=current_score)
                     raw_score = self.engine.generate(

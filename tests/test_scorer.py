@@ -98,6 +98,17 @@ def test_parse_comparison_verbose():
     assert scorer.parse_comparison("Overall, I think they are about the same") == "TIE"
 
 
+def test_detailed_scoring_includes_task_type():
+    scorer = Scorer()
+    prompt = scorer.build_detailed_scoring_prompt("Write sort", "def sort(): pass", "code")
+    assert "edge cases" in prompt or "run correctly" in prompt
+    prompt = scorer.build_detailed_scoring_prompt("Write essay", "An essay...", "prose")
+    assert "argument" in prompt or "clarity" in prompt
+    # General has no addendum
+    prompt = scorer.build_detailed_scoring_prompt("Do something", "output", "general")
+    assert "edge cases" not in prompt
+
+
 def test_scoring_rubric_has_calibration():
     scorer = Scorer()
     assert "harsh" in scorer.RUBRIC.lower() or "40-75" in scorer.RUBRIC

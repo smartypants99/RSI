@@ -333,7 +333,7 @@ class DilationController:
                         logger.debug("Feedback scoring failed, continuing without")
                 if cycle > 0 and cycle % 5 == 0:
                     try:
-                        detail_prompt = self.scorer.build_detailed_scoring_prompt(prompt, current_best)
+                        detail_prompt = self.scorer.build_detailed_scoring_prompt(prompt, current_best, task_type)
                         detail_raw = self.engine.generate(detail_prompt, temperature=self.config.scoring_temperature)
                         detailed = self.scorer.parse_detailed_score(detail_raw)
                         weakness = detailed.weakest_aspect

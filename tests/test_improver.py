@@ -902,6 +902,23 @@ def test_format_hint_code():
     assert "markdown" in hint.lower() or "code fence" in hint.lower()
 
 
+def test_graduated_prompt_trimming():
+    """Long history should be trimmed to last 2 lines before being dropped entirely."""
+    engine = make_mock_engine(["improved", "80"])
+    config = TimeDilateConfig(branch_factor=1, context_window=200)  # tiny window
+    improver = ImprovementEngine(engine, config)
+    long_history = "\n".join([f"Line {i}: did something" for i in range(20)])
+    # Should not crash — graduated trimming handles it
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=50,
+        directive="Improve.",
+        history_summary=long_history,
+    )
+    assert best == "improved"
+
+
 def test_score_cache_avoids_redundant_calls():
     """Score cache should avoid re-scoring the same variant text."""
     engine = make_mock_engine(["70"])  # only one scoring call needed

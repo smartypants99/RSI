@@ -1,635 +1,142 @@
+"""Time Dilation Controller — the main entry point.
+
+Takes a prompt and dilation factor, auto-configures acceleration,
+runs inference, and returns the result with timing metrics.
+"""
 import logging
 import time
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
+
 from timedilate.config import TimeDilateConfig
-from timedilate.improver import ImprovementEngine
-from timedilate.scorer import Scorer
-from timedilate.directives import DirectiveGenerator
-from timedilate.checkpoint import CheckpointManager
-from timedilate.metrics import RunMetrics
-from timedilate.logging_config import log_cycle_summary, log_run_summary
-from timedilate.meta import MetaLearner
+from timedilate.engine import DilationEngine
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class DilationResult:
     output: str
-    score: int
-    cycles_completed: int
-    elapsed_seconds: float
-    convergence_detected: bool
-    interrupted: bool = False
-    resumed_from_cycle: int = 0
-    metrics: RunMetrics | None = None
+    dilation_factor: float
+    base_latency_estimate: float  # estimated time without dilation
+    actual_latency: float  # actual wall-clock time
+    achieved_speedup: float  # base_latency / actual_latency
+    model_used: str
+    acceleration_summary: str
+    tokens_generated: int = 0
 
-    def to_report(self, config: "TimeDilateConfig | None" = None) -> dict:
-        """Export a complete run report as a dict for JSON serialization."""
+    def to_report(self, config: TimeDilateConfig | None = None) -> dict:
         from timedilate import __version__
-        import time as _time
         report = {
             "version": __version__,
-            "timestamp": _time.time(),
-            "score": self.score,
-            "cycles_completed": self.cycles_completed,
-            "elapsed_seconds": round(self.elapsed_seconds, 2),
-            "convergence_detected": self.convergence_detected,
-            "interrupted": self.interrupted,
+            "timestamp": time.time(),
+            "dilation_factor": self.dilation_factor,
+            "base_latency_estimate_s": round(self.base_latency_estimate, 3),
+            "actual_latency_s": round(self.actual_latency, 3),
+            "achieved_speedup": round(self.achieved_speedup, 2),
+            "model_used": self.model_used,
+            "tokens_generated": self.tokens_generated,
             "output_length": len(self.output),
+            "acceleration_summary": self.acceleration_summary,
         }
         if config:
             report["config"] = {
-                "model": config.model,
-                "dilation_factor": config.dilation_factor,
-                "branch_factor": config.branch_factor,
-                "budget_seconds": config.budget_seconds,
-                "temperature": config.temperature,
-                "use_reflection": config.use_reflection,
-                "use_meta_learning": config.use_meta_learning,
-                "score_weights": config.score_weights,
-                "task_type_override": config.task_type_override,
+                "quantization_bits": config.quantization_bits,
+                "speculative_tokens": config.speculative_tokens,
+                "kv_cache_compression": config.kv_cache_compression,
+                "token_budget_ratio": config.token_budget_ratio,
+                "prompt_compression": config.prompt_compression,
+                "parallel_decode_width": config.parallel_decode_width,
+                "model_tier": config.model_tier,
             }
-        if self.metrics:
-            report["metrics"] = self.metrics.to_dict()
         return report
 
 
-logger = logging.getLogger(__name__)
-
-
 class DilationController:
-    def __init__(self, config: TimeDilateConfig, engine):
+    """Orchestrates time-dilated inference.
+
+    Usage:
+        config = TimeDilateConfig(dilation_factor=1000)
+        controller = DilationController(config)
+        result = controller.run("Write a Python sort function")
+        print(result.output)
+        print(f"Speedup: {result.achieved_speedup}x")
+    """
+
+    def __init__(self, config: TimeDilateConfig, engine: DilationEngine | None = None):
         config.validate()
-        self.config = config
-        self.engine = engine
-        self.improver = ImprovementEngine(engine, config)
-        self.scorer = Scorer()
-        self.directives = DirectiveGenerator()
-        self.checkpoint = CheckpointManager(config.checkpoint_dir)
-        self.meta = MetaLearner(path=config.checkpoint_dir + "/.meta.json") if config.use_meta_learning else None
+        # Auto-configure acceleration based on dilation factor
+        self.config = config.auto_configure()
+        self.engine = engine or DilationEngine(self.config)
+        logger.info("Controller initialized: %s", self.config.describe_acceleration())
 
-    def _build_history_summary(self, metrics: RunMetrics, max_entries: int = 5) -> str:
-        """Build a structured summary that highlights what worked and what to avoid."""
-        if not metrics.cycles:
-            return ""
-        recent = metrics.cycles[-max_entries:]
+    def run(self, prompt: str) -> DilationResult:
+        """Run time-dilated inference on a prompt.
 
-        worked = []
-        failed = []
-        for c in recent:
-            if c.score > c.previous_score:
-                worked.append(f'"{c.directive}" (+{c.score - c.previous_score} pts)')
-            else:
-                failed.append(f'"{c.directive}"')
-
-        lines = []
-        if worked:
-            lines.append(f"Approaches that improved the score: {'; '.join(worked)}")
-        if failed:
-            lines.append(f"Approaches that did NOT help (avoid these): {'; '.join(failed)}")
-        lines.append(f"Current trajectory: {' -> '.join(str(c.score) for c in recent)}")
-
-        # Add best single directive as an exemplar
-        best = metrics.best_directive
-        if best and best not in "; ".join(worked):
-            best_cycle = max(metrics.cycles, key=lambda c: c.score - c.previous_score)
-            if best_cycle.score > best_cycle.previous_score:
-                lines.append(
-                    f'Best approach so far: "{best}" (+{best_cycle.score - best_cycle.previous_score} pts)'
-                )
-        return "\n".join(lines)
-
-    def _adaptive_branch_factor(self, cycle: int, metrics: RunMetrics) -> int:
-        """Adapt branch factor based on timing, stagnation, and cycle position."""
-        base = self.config.branch_factor
-        refinement_cycles = self.config.dilation_factor - 1
-        if not metrics.cycles:
-            return base
-
-        # If last cycle took more than budget_seconds / dilation_factor,
-        # we're running slow — reduce branching
-        last_elapsed = metrics.cycles[-1].elapsed_seconds
-        target_per_cycle = self.config.budget_seconds / max(self.config.dilation_factor, 1)
-        if target_per_cycle > 0 and last_elapsed > target_per_cycle * 2:
-            reduced = max(1, base // 2)
-            if reduced < base:
-                logger.info("Cycle %d slow (%.1fs), reducing branches %d -> %d",
-                            cycle, last_elapsed, base, reduced)
-            return reduced
-
-        # If stagnating, increase branches to explore more
-        if metrics.stagnant_streak >= 3 and base < 5:
-            return min(base + 1, 5)
-
-        # Trajectory-based: rising fast → fewer branches, declining → more
-        if len(metrics.cycles) >= 3:
-            recent = metrics.cycles[-3:]
-            avg_delta = sum(c.score - c.previous_score for c in recent) / len(recent)
-            if avg_delta >= 5 and base > 1:
-                return max(base - 1, 1)  # rising fast, save compute
-
-        # Late-cycle reduction: in the last 20% of cycles with high scores,
-        # reduce branches since gains are marginal and we want speed
-        if refinement_cycles >= 5 and cycle > refinement_cycles * 0.8:
-            current_score = metrics.cycles[-1].score if metrics.cycles else 0
-            if current_score >= 80 and base > 1:
-                return max(1, base - 1)
-
-        return base
-
-    def _effective_convergence_threshold(self, current_score: int) -> int:
-        """Adaptive convergence threshold: more patient at high scores
-        where improvement is naturally harder."""
-        base = self.config.convergence_threshold
-        if current_score >= 85:
-            return base + 3  # much harder to improve, allow more attempts
-        if current_score >= 70:
-            return base + 1
-        return base
-
-    def _adaptive_scoring_temperature(self, metrics: RunMetrics) -> float:
-        """Lower scoring temperature when scores are oscillating for stability."""
-        base = self.config.scoring_temperature
-        if metrics.score_oscillating:
-            return max(0.0, base - 0.1)
-        if metrics.score_variance > 100:
-            return max(0.0, base - 0.05)
-        return base
-
-    def _should_prefer_generated(self, metrics: RunMetrics) -> bool:
-        """After enough data, prefer generated directives if they outperform builtins.
-        Uses avg score delta (magnitude) as primary signal, falls back to improvement rate."""
-        builtin_count = sum(1 for c in metrics.cycles if c.directive_source == "builtin")
-        generated_count = sum(1 for c in metrics.cycles if c.directive_source == "generated")
-        if builtin_count < 3 or generated_count < 2:
-            return False
-        # Prefer delta-based comparison (captures magnitude, not just win rate)
-        deltas = metrics.avg_score_delta_by_source
-        if "builtin" in deltas and "generated" in deltas:
-            return deltas["generated"] > deltas["builtin"] + 1.0
-        # Fallback to improvement rate
-        eff = metrics.directive_effectiveness
-        if "builtin" in eff and "generated" in eff:
-            return eff["generated"] > eff["builtin"] + 0.2
-        return False
-
-    def run(self, prompt: str, on_cycle=None, resume: bool = False) -> DilationResult:
+        The dilation factor determines how much faster the response should be
+        compared to the base model at full precision. The controller stacks
+        acceleration techniques to approach the target speedup.
+        """
         start = time.time()
-        task_type = self.config.task_type_override or self.directives.classify_task(prompt)
-        self.improver.task_type = task_type
-        refinement_cycles = self.config.dilation_factor - 1
 
-        metrics = RunMetrics(
-            prompt=prompt,
-            task_type=task_type,
-            dilation_factor=self.config.dilation_factor,
-            branch_factor=self.config.branch_factor,
-            start_time=start,
+        # Estimate what the base model latency would be without any acceleration.
+        # This is a rough estimate based on prompt length and max_tokens.
+        prompt_tokens = len(prompt) // 4
+        output_tokens = self.config.max_tokens
+        # Base model: ~30 tokens/sec for 7B on A6000 at FP16
+        base_tokens_per_sec = 30.0
+        base_latency = (prompt_tokens + output_tokens) / base_tokens_per_sec
+
+        logger.info("Starting dilated inference (target: %.0fx, base est: %.1fs)",
+                     self.config.dilation_factor, base_latency)
+        logger.info("Acceleration stack:\n%s", self.config.describe_acceleration())
+
+        # Run the actual inference with all acceleration applied
+        output = self.engine.generate(prompt)
+
+        actual_latency = time.time() - start
+        tokens_generated = len(output) // 4
+        achieved_speedup = base_latency / actual_latency if actual_latency > 0 else float('inf')
+
+        logger.info(
+            "Inference complete: %.3fs actual (est base: %.1fs) = %.1fx speedup",
+            actual_latency, base_latency, achieved_speedup,
         )
 
-        # Resume from checkpoint if requested
-        resumed_from = 0
-        if resume:
-            checkpoint = self.checkpoint.load_latest()
-            if checkpoint:
-                # Validate prompt matches — don't resume a different task
-                saved_prompt = checkpoint.get("prompt", "")
-                if saved_prompt and saved_prompt != prompt:
-                    logger.warning(
-                        "Checkpoint prompt mismatch — saved: '%.50s...', current: '%.50s...'. "
-                        "Starting fresh instead of resuming.",
-                        saved_prompt, prompt
-                    )
-                    resume = False
-                else:
-                    current_best = checkpoint["output"]
-                    current_score = checkpoint["score"]
-                    resumed_from = checkpoint["cycle"]
-                    logger.info("Resumed from checkpoint at cycle %d (score %d)",
-                                resumed_from, current_score)
-            else:
-                resume = False
-
-        if not resume:
-            # Initial generation
-            current_best = self.engine.generate(prompt)
-
-            if refinement_cycles <= 0:
-                return DilationResult(
-                    output=current_best,
-                    score=0,
-                    cycles_completed=0,
-                    elapsed_seconds=time.time() - start,
-                    convergence_detected=False,
-                    metrics=metrics,
-                )
-
-            # Score the initial output using feedback scoring to get actionable
-            # weaknesses for the first improvement cycle
-            current_score = 0
-            initial_feedback = ""
-            initial_strengths = ""
-            initial_weaknesses = ""
-            try:
-                fb_prompt = self.scorer.build_feedback_scoring_prompt(prompt, current_best)
-                raw_score = self.engine.generate(
-                    fb_prompt, temperature=self.config.scoring_temperature
-                )
-                current_score, initial_feedback = self.scorer.parse_feedback_score(raw_score)
-                initial_strengths, initial_weaknesses = self.scorer.parse_strengths_weaknesses(raw_score)
-                if initial_feedback:
-                    logger.info("Initial assessment: score=%d, feedback=%s", current_score, initial_feedback[:100])
-            except Exception as e:
-                logger.warning("Initial feedback scoring failed: %s, falling back to basic scoring", e)
-                try:
-                    basic_prompt = self.scorer.build_scoring_prompt(prompt, current_best)
-                    raw = self.engine.generate(basic_prompt, temperature=self.config.scoring_temperature)
-                    current_score = self.scorer.parse_score(raw)
-                except Exception:
-                    logger.warning("Basic scoring also failed, starting with score=0")
-
-        self.improver.initial_output_length = len(current_best)
-
-        # Scoring consistency check: re-score initial output to detect unreliable scoring
-        if not resume and refinement_cycles >= 3:
-            try:
-                if task_type != "general":
-                    check_prompt = self.scorer.build_task_aware_scoring_prompt(prompt, current_best, task_type)
-                else:
-                    check_prompt = self.scorer.build_scoring_prompt(prompt, current_best)
-                raw_check = self.engine.generate(check_prompt, temperature=self.config.scoring_temperature)
-                check_score = self.scorer.parse_score(raw_check)
-                score_delta = abs(current_score - check_score)
-                if score_delta > 15:
-                    logger.warning(
-                        "Scoring inconsistency detected: %d vs %d (delta=%d). "
-                        "Enabling ensemble scoring for this run.",
-                        current_score, check_score, score_delta
-                    )
-                    self.improver.force_ensemble = True
-                    # Use average as the baseline
-                    current_score = (current_score + check_score) // 2
-                elif score_delta > 0:
-                    logger.info("Scoring consistency check: %d vs %d (delta=%d, acceptable)",
-                                current_score, check_score, score_delta)
-            except Exception:
-                logger.debug("Scoring consistency check failed, continuing normally")
-
-        no_improvement_count = 0
-        convergence_detected = False
-        convergence_count = 0
-        built_in_exhausted = False
-        directive_offset = 0
-        built_in_count = len(self.directives.get_directives(task_type))
-        meta_directives = self.meta.best_directives(task_type, top_n=3) if self.meta else []
-        completed_cycles = resumed_from
-        start_cycle = resumed_from
-        # Track best output seen across the entire run (may differ from current_best
-        # if comparative validation or sanity checks rejected a better variant)
-        best_ever_output = current_best
-        best_ever_score = current_score
-        consecutive_errors = 0
-        failed_directives: set[str] = set()
-        # Pre-seed with historically bad directives from meta-learning
-        if self.meta:
-            worst = self.meta.worst_directives(task_type)
-            if worst:
-                failed_directives.update(worst)
-                logger.info("Pre-seeded %d historically bad directives", len(worst))
-        # Carry initial feedback into the first cycle
-        initial_score_feedback = ""
-        if not resume:
-            if initial_strengths:
-                initial_score_feedback += f"PRESERVE these strengths:\n{initial_strengths}\n"
-            if initial_weaknesses:
-                initial_score_feedback += f"FIX these weaknesses:\n{initial_weaknesses}"
-
-        try:
-            for cycle in range(start_cycle, refinement_cycles):
-                cycle_start = time.time()
-
-                # Adaptive branch factor
-                branch_factor = self._adaptive_branch_factor(cycle, metrics)
-                self.improver.config = replace(self.config, branch_factor=branch_factor)
-
-                # Use ensemble scoring when scores are oscillating, biased,
-                # or comparative validation is frequently overruling selections
-                self.improver.force_ensemble = (
-                    metrics.score_oscillating
-                    or metrics.scoring_bias != "normal"
-                    or (len(metrics.cycles) >= 3 and metrics.comparative_overrule_rate > 0.3)
-                )
-                # Adaptive scoring temperature: lower when noisy
-                self.config.scoring_temperature = self._adaptive_scoring_temperature(metrics)
-
-                # Disable crossover if it's been attempted 3+ times without winning
-                crossover_eff = metrics.crossover_efficiency
-                if crossover_eff is not None and metrics.crossover_attempt_count >= 3 and crossover_eff == 0.0:
-                    self.improver._disable_crossover = True
-                    logger.info("Disabling crossover after %d failed attempts", metrics.crossover_attempt_count)
-                else:
-                    self.improver._disable_crossover = False
-
-                # Boost temperature diversity when stagnating
-                self.improver.stagnation_boost = metrics.stagnant_streak >= 2
-                self.improver.cycles_remaining = refinement_cycles - cycle - 1
-
-                # Adaptive reflection: lower the threshold when stagnating so
-                # the model thinks harder about what to change
-                if metrics.stagnant_streak >= 3:
-                    self.improver.reflection_score_threshold = max(30, 50 - metrics.stagnant_streak * 5)
-                else:
-                    self.improver.reflection_score_threshold = None  # use default
-
-                # Every 5 cycles, do a detailed score to target weaknesses
-                # Every 3 cycles (not overlapping with 5), do feedback scoring for strengths/weaknesses
-                score_feedback_text = ""
-                # Use initial feedback on the first cycle
-                if cycle == start_cycle and initial_score_feedback:
-                    score_feedback_text = initial_score_feedback
-                if cycle > 0 and cycle % 3 == 0 and cycle % 5 != 0:
-                    try:
-                        fb_prompt = self.scorer.build_feedback_scoring_prompt(prompt, current_best)
-                        fb_raw = self.engine.generate(fb_prompt, temperature=self.config.scoring_temperature)
-                        strengths, weaknesses = self.scorer.parse_strengths_weaknesses(fb_raw)
-                        if strengths:
-                            score_feedback_text = f"PRESERVE these strengths:\n{strengths}\n"
-                        if weaknesses:
-                            score_feedback_text += f"FIX these weaknesses:\n{weaknesses}"
-                        logger.info("Cycle %d: feedback scoring — strengths found: %s",
-                                    cycle + 1, bool(strengths))
-                    except Exception:
-                        logger.debug("Feedback scoring failed, continuing without")
-                if cycle > 0 and cycle % 5 == 0:
-                    try:
-                        detail_prompt = self.scorer.build_detailed_scoring_prompt(prompt, current_best, task_type)
-                        detail_raw = self.engine.generate(detail_prompt, temperature=self.config.scoring_temperature)
-                        detailed = self.scorer.parse_detailed_score(detail_raw)
-                        weakness = detailed.weakest_aspect
-                        directive = self.directives.directive_for_weakness(weakness)
-                        directive_source = "targeted"
-                        score_feedback_text = (
-                            f"Aspect scores — Correctness: {detailed.correctness}/25, "
-                            f"Completeness: {detailed.completeness}/25, "
-                            f"Quality: {detailed.quality}/25, "
-                            f"Elegance: {detailed.elegance}/25. "
-                            f"Weakest: {weakness}."
-                        )
-                        logger.info("Cycle %d: targeting weakest aspect '%s' (scores: %s)",
-                                    cycle + 1, weakness, detailed.to_dict())
-                    except Exception:
-                        logger.warning("Detailed scoring failed, falling back to normal directive")
-                        directive = self.directives.next_directive(task_type, cycle + directive_offset, current_score=current_score)
-                        directive_source = "builtin"
-                elif meta_directives and cycle < len(meta_directives):
-                    directive = meta_directives[cycle]
-                    directive_source = "meta"
-                    logger.info("Cycle %d: using meta-learned directive", cycle + 1)
-                elif built_in_exhausted or self._should_prefer_generated(metrics) or metrics.diminishing_returns:
-                    custom_prompt = self.directives.generate_custom_directive_prompt(
-                        task_type, prompt, current_best,
-                        failed_directives=failed_directives,
-                        current_score=current_score,
-                        score_history=metrics.score_history,
-                        best_directive=metrics.best_directive,
-                    )
-                    directive = self.engine.generate(custom_prompt)
-                    directive_source = "generated"
-                else:
-                    # Try trajectory-aware directives, skipping ones that already failed
-                    directive = self.directives.trajectory_aware_directive(
-                        task_type, cycle + directive_offset,
-                        current_score=current_score,
-                        score_history=metrics.score_history,
-                    )
-                    attempts = 0
-                    while directive in failed_directives and attempts < 5:
-                        directive_offset += 1
-                        directive = self.directives.next_directive(
-                            task_type, cycle + directive_offset, current_score=current_score
-                        )
-                        attempts += 1
-                    directive_source = "builtin"
-
-                previous_score = current_score
-                previous_best = current_best
-                previous_length = len(current_best)
-                history_summary = self._build_history_summary(metrics)
-                # Reset engine cycle counter for precise inference tracking
-                if callable(getattr(self.engine, 'reset_cycle_calls', None)):
-                    self.engine.reset_cycle_calls()
-
-                try:
-                    new_best, new_score, best_idx = self.improver.run_cycle(
-                        original_prompt=prompt,
-                        current_best=current_best,
-                        current_score=current_score,
-                        directive=directive,
-                        history_summary=history_summary,
-                        score_feedback=score_feedback_text,
-                    )
-                    consecutive_errors = 0
-                except Exception as e:
-                    consecutive_errors += 1
-                    logger.warning("Cycle %d failed: %s (consecutive errors: %d)",
-                                   cycle + 1, e, consecutive_errors)
-                    if consecutive_errors >= 3:
-                        logger.error("Too many consecutive errors, stopping early")
-                        break
-                    # Skip this cycle but continue
-                    new_best, new_score, best_idx = current_best, current_score, -1
-
-                # Compute output change magnitude before updating current_best
-                output_delta = 1.0 - self.improver._similarity_ratio(new_best, previous_best)
-
-                if new_score > current_score:
-                    current_best = new_best
-                    current_score = new_score
-                    no_improvement_count = 0
-                else:
-                    no_improvement_count += 1
-                    failed_directives.add(directive)
-
-                # Track best output ever seen
-                if current_score > best_ever_score:
-                    best_ever_output = current_best
-                    best_ever_score = current_score
-
-                # Use precise inference call count from engine when available
-                cycle_calls = getattr(self.engine, '_cycle_calls', None)
-                if isinstance(cycle_calls, int):
-                    est_calls = cycle_calls
-                else:
-                    est_calls = branch_factor * 2  # fallback estimate
-
-                # Output length regression guard: if output shrinks >50% without
-                # a score increase, the model may be confused — log warning
-                if (len(current_best) < previous_length * 0.5
-                        and current_score <= previous_score
-                        and previous_length > 100):
-                    logger.warning(
-                        "Output length regression: %d -> %d chars without score gain. "
-                        "Model may be losing context.",
-                        previous_length, len(current_best),
-                    )
-
-                metrics.record_cycle(
-                    cycle=cycle + 1,
-                    score=current_score,
-                    previous_score=previous_score,
-                    directive=directive,
-                    directive_source=directive_source,
-                    branch_count=branch_factor,
-                    best_variant_index=best_idx,
-                    elapsed_seconds=time.time() - cycle_start,
-                    output_delta=output_delta,
-                    output_length=len(current_best),
-                    crossover_used=(best_idx == -2),
-                    crossover_attempted=getattr(self.improver, '_last_crossover_attempted', False),
-                    inference_calls=est_calls,
-                )
-
-                total_elapsed = time.time() - start
-                budget_pct = (total_elapsed / self.config.budget_seconds * 100) if self.config.budget_seconds > 0 else 0
-                log_cycle_summary(
-                    logger, cycle + 1, current_score, previous_score,
-                    directive_source, time.time() - cycle_start, branch_factor,
-                    output_delta=output_delta,
-                    peak_score=metrics.peak_score,
-                    improvement_rate=metrics.improvement_rate,
-                    budget_used_pct=budget_pct,
-                    directive_text=directive,
-                    inference_calls=est_calls,
-                )
-
-                # Record directive outcome for meta-learning
-                if self.meta:
-                    self.meta.record_directive(
-                        task_type, directive, current_score > previous_score,
-                        score_delta=current_score - previous_score,
-                    )
-
-                # Score ceiling detection — try fresh attempt to break through
-                if (metrics.score_ceiling is not None
-                        and no_improvement_count >= 2
-                        and not convergence_detected):
-                    logger.info("Score ceiling at %d, attempting breakthrough", metrics.score_ceiling)
-                    fresh_output, fresh_score = self.improver.fresh_attempt(
-                        prompt, "Take a completely different approach to break past the current quality ceiling.",
-                        best_directive=metrics.best_directive,
-                        score_history=metrics.score_history,
-                        best_feedback=score_feedback_text,
-                    )
-                    if fresh_output and fresh_score > current_score:
-                        logger.info("Ceiling breakthrough: %d -> %d", current_score, fresh_score)
-                        current_best = fresh_output
-                        current_score = fresh_score
-                        no_improvement_count = 0
-
-                if no_improvement_count >= self._effective_convergence_threshold(current_score):
-                    convergence_detected = True
-                    convergence_count += 1
-                    if convergence_count >= 2:
-                        logger.info("Double convergence at cycle %d (score %d), stopping",
-                                    cycle + 1, current_score)
-                        break
-                    # Try a fresh attempt to break out of plateau
-                    fresh_output, fresh_score = self.improver.fresh_attempt(
-                        prompt, directive,
-                        best_directive=metrics.best_directive,
-                        score_history=metrics.score_history,
-                        best_feedback=score_feedback_text,
-                    )
-                    if fresh_output and fresh_score > current_score:
-                        logger.info("Fresh attempt broke plateau (score %d -> %d)",
-                                    current_score, fresh_score)
-                        current_best = fresh_output
-                        current_score = fresh_score
-                    if not built_in_exhausted:
-                        directive_offset += built_in_count
-                        if directive_offset >= built_in_count * 2:
-                            built_in_exhausted = True
-                    no_improvement_count = 0
-
-                if (cycle + 1) % self.config.checkpoint_interval == 0:
-                    self.checkpoint.save(cycle + 1, current_best, current_score,
-                                        prompt=prompt, task_type=task_type,
-                                        no_improvement_count=no_improvement_count,
-                                        score_history=metrics.score_history,
-                                        metrics_summary={
-                                            "efficiency": metrics.efficiency,
-                                            "peak_score": metrics.peak_score,
-                                            "stagnant_streak": metrics.stagnant_streak,
-                                        })
-                    self.checkpoint.prune(keep=5)
-
-                completed_cycles = cycle + 1
-
-                # Early exit if target score reached
-                if self.config.target_score > 0 and current_score >= self.config.target_score:
-                    logger.info("Target score %d reached at cycle %d (score %d)",
-                                self.config.target_score, cycle + 1, current_score)
-                    break
-                if current_score >= 100:
-                    logger.info("Perfect score reached at cycle %d", cycle + 1)
-                    break
-
-                # Early termination if projected gains are negligible
-                if metrics.should_early_terminate:
-                    logger.info("Early termination: projected gains negligible at cycle %d (score %d)",
-                                cycle + 1, current_score)
-                    break
-
-                # Budget enforcement: stop if we've exceeded the time budget
-                total_elapsed = time.time() - start
-                if self.config.budget_seconds > 0 and total_elapsed > self.config.budget_seconds:
-                    logger.info("Budget exhausted (%.1fs / %.0fs) at cycle %d, stopping",
-                                total_elapsed, self.config.budget_seconds, cycle + 1)
-                    break
-
-                if on_cycle:
-                    elapsed = time.time() - start
-                    on_cycle(cycle + 1, refinement_cycles, current_score, elapsed)
-
-        except KeyboardInterrupt:
-            # Save checkpoint on interrupt so we can resume
-            self.checkpoint.save(completed_cycles, current_best, current_score,
-                                prompt=prompt, task_type=task_type,
-                                no_improvement_count=no_improvement_count,
-                                score_history=metrics.score_history)
-            return DilationResult(
-                output=current_best,
-                score=current_score,
-                cycles_completed=completed_cycles,
-                elapsed_seconds=time.time() - start,
-                convergence_detected=convergence_detected,
-                interrupted=True,
-                resumed_from_cycle=resumed_from,
-                metrics=metrics,
+        if achieved_speedup < self.config.dilation_factor * 0.5:
+            logger.warning(
+                "Achieved speedup (%.1fx) is below target (%.0fx). "
+                "Hardware may be the bottleneck.",
+                achieved_speedup, self.config.dilation_factor,
             )
 
-        self.checkpoint.cleanup()
-        if self.meta:
-            try:
-                self.meta.save()
-            except Exception:
-                logger.warning("Failed to save meta-learning data")
-
-        # Use best-ever output if it's better than current
-        final_output = best_ever_output if best_ever_score > current_score else current_best
-        final_score = max(best_ever_score, current_score)
-
-        log_run_summary(logger, metrics)
-
-        # Log engine stats for observability
-        if hasattr(self.engine, 'stats'):
-            logger.info("Engine stats: %s", self.engine.stats)
-
         return DilationResult(
-            output=final_output,
-            score=final_score,
-            cycles_completed=completed_cycles,
-            elapsed_seconds=time.time() - start,
-            convergence_detected=convergence_detected,
-            resumed_from_cycle=resumed_from,
-            metrics=metrics,
+            output=output,
+            dilation_factor=self.config.dilation_factor,
+            base_latency_estimate=base_latency,
+            actual_latency=actual_latency,
+            achieved_speedup=achieved_speedup,
+            model_used=self.config.model,
+            acceleration_summary=self.config.describe_acceleration(),
+            tokens_generated=tokens_generated,
         )
+
+    def benchmark(self, prompt: str, factors: list[float] | None = None) -> list[DilationResult]:
+        """Run the same prompt at multiple dilation factors for comparison."""
+        if factors is None:
+            factors = [1, 10, 100, 1000]
+        results = []
+        for factor in factors:
+            cfg = TimeDilateConfig(
+                model=self.config.model_cascade[0]["name"],
+                draft_model=self.config.draft_model,
+                dilation_factor=factor,
+                gpu_memory_gb=self.config.gpu_memory_gb,
+                max_tokens=self.config.max_tokens,
+                temperature=self.config.temperature,
+            )
+            ctrl = DilationController(cfg)
+            result = ctrl.run(prompt)
+            results.append(result)
+            logger.info("Factor %sx: %.3fs (%.1fx achieved)",
+                        factor, result.actual_latency, result.achieved_speedup)
+        return results

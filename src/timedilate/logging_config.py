@@ -1,10 +1,11 @@
+"""Logging configuration for the Time Dilation Runtime."""
 import json
 import logging
 import sys
 
 
 class StructuredFormatter(logging.Formatter):
-    """JSON-structured log formatter for machine-readable output."""
+    """JSON-structured log formatter."""
 
     def format(self, record):
         log_entry = {
@@ -13,8 +14,6 @@ class StructuredFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        if hasattr(record, "cycle_data"):
-            log_entry["cycle"] = record.cycle_data
         return json.dumps(log_entry)
 
 
@@ -31,62 +30,6 @@ def setup_logging(verbose: bool = False, structured: bool = False) -> None:
         ))
     root = logging.getLogger("timedilate")
     root.setLevel(level)
-    # Avoid duplicate handlers on repeated calls
     root.handlers.clear()
     root.addHandler(handler)
     root.propagate = False
-
-
-def log_cycle_summary(logger: logging.Logger, cycle: int, score: int, previous_score: int,
-                      directive_source: str, elapsed: float, branch_count: int,
-                      output_delta: float = 0.0, peak_score: int = 0,
-                      improvement_rate: float = 0.0,
-                      budget_used_pct: float = 0.0,
-                      directive_text: str = "",
-                      inference_calls: int = 0) -> None:
-    """Emit a structured cycle summary log with rich per-cycle data."""
-    delta = score - previous_score
-    data = {
-        "cycle": cycle,
-        "score": score,
-        "delta": delta,
-        "source": directive_source,
-        "elapsed_s": round(elapsed, 3),
-        "branches": branch_count,
-        "output_delta": round(output_delta, 3),
-        "peak_score": peak_score,
-        "cumulative_improvement_rate": round(improvement_rate, 3),
-        "budget_used_pct": round(budget_used_pct, 1),
-        "directive": directive_text[:80] if directive_text else "",
-        "inference_calls": inference_calls,
-    }
-    budget_str = f" budget={budget_used_pct:.0f}%" if budget_used_pct > 0 else ""
-    calls_str = f" calls={inference_calls}" if inference_calls > 0 else ""
-    msg = (
-        f"Cycle {cycle}: {score} ({delta:+d}) [{directive_source}] "
-        f"{elapsed:.2f}s | change={output_delta:.0%} peak={peak_score}{budget_str}{calls_str}"
-    )
-    record = logger.makeRecord(
-        logger.name, logging.INFO, "", 0, msg, (), None
-    )
-    record.cycle_data = data
-    logger.handle(record)
-
-
-def log_run_summary(logger: logging.Logger, metrics) -> None:
-    """Emit a structured run summary with key stats and recommendations."""
-    d = metrics.to_dict()
-    lines = [
-        f"Run complete: {d['total_cycles']} cycles, "
-        f"+{d['total_improvement']} pts ({d.get('score_history', [0])[-1] if d.get('score_history') else 0}/100), "
-        f"efficiency={d['efficiency']:.0%}",
-    ]
-    recs = d.get("recommendations", [])
-    if recs:
-        lines.append(f"Recommendations: {'; '.join(recs)}")
-    msg = " | ".join(lines)
-    record = logger.makeRecord(
-        logger.name, logging.INFO, "", 0, msg, (), None
-    )
-    record.cycle_data = {"type": "run_summary", **d}
-    logger.handle(record)

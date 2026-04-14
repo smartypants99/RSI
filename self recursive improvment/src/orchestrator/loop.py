@@ -618,6 +618,7 @@ class ImprovementLoop:
 
         # Prune old model checkpoints — keep last 2 + any LoRA-only dirs
         ckpt_dir = output_dir / "checkpoints"
+        ckpt_dir.mkdir(parents=True, exist_ok=True)
         def _cycle_num(d):
             try:
                 return int(d.name.split("_")[1])

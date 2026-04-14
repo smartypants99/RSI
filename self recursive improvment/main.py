@@ -25,6 +25,8 @@ def main():
     parser.add_argument("--samples-per-weakness", type=int, default=None, help="Training samples per weakness (default: 100)")
     parser.add_argument("--use-vllm", action="store_true", help="Use vLLM for 5-10x faster inference (pip install vllm)")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.90, help="vLLM GPU memory fraction (default: 0.90)")
+    parser.add_argument("--load-in-8bit", action="store_true", help="Load model in 8-bit quantization (halves memory, needs bitsandbytes)")
+    parser.add_argument("--load-in-4bit", action="store_true", help="Load model in 4-bit quantization (quarters memory, needs bitsandbytes)")
     args = parser.parse_args()
 
     # Create output dir BEFORE setting up file logging
@@ -41,7 +43,12 @@ def main():
     )
 
     config = SystemConfig()
-    config.model = ModelConfig(model_path=args.model, dtype=args.dtype)
+    quant_config = None
+    if args.load_in_8bit:
+        quant_config = {"load_in_8bit": True}
+    elif args.load_in_4bit:
+        quant_config = {"load_in_4bit": True, "bnb_4bit_compute_dtype": "bfloat16"}
+    config.model = ModelConfig(model_path=args.model, dtype=args.dtype, quantization_config=quant_config)
     config.orchestrator.max_cycles = args.max_cycles
     config.orchestrator.output_dir = output_dir
     config.orchestrator.log_dir = output_dir / "logs"

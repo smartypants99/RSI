@@ -21,7 +21,7 @@ def main(ctx):
 @main.command()
 @click.argument("prompt")
 @click.option("--factor", default=1.0, type=float, help="Dilation factor (e.g., 10, 1000, 1000000)")
-@click.option("--model", default="Qwen/Qwen2.5-7B-Instruct", help="Model to use")
+@click.option("--model", default="Qwen/Qwen3-8B", help="Model to use")
 @click.option("--time-budget", default=None, type=float, help="Wall-clock seconds the AI gets (e.g., 5 = 5 real seconds)")
 @click.option("--max-tokens", default=4096, type=int, help="Max output tokens")
 @click.option("--output", "output_file", default=None, help="Save output to file")

@@ -25,6 +25,7 @@ class InferenceEngine:
         self._total_tokens_generated = 0
         self._failed_calls = 0
         self._total_latency = 0.0
+        self._cycle_calls = 0  # reset per cycle for precise tracking
 
     def generate(
         self,
@@ -45,6 +46,7 @@ class InferenceEngine:
                 outputs = self.llm.generate([prompt], params)
                 text = outputs[0].outputs[0].text
                 self._total_calls += 1
+                self._cycle_calls += 1
                 self._total_latency += time.time() - call_start
                 self._total_tokens_generated += len(text) // 4  # rough estimate
                 if not text or not text.strip():
@@ -70,6 +72,12 @@ class InferenceEngine:
     def estimate_tokens(self, text: str) -> int:
         """Rough token estimate: ~4 chars per token."""
         return len(text) // 4
+
+    def reset_cycle_calls(self) -> int:
+        """Reset cycle call counter and return the count from the last cycle."""
+        count = self._cycle_calls
+        self._cycle_calls = 0
+        return count
 
     @property
     def avg_latency(self) -> float:

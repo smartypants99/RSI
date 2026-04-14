@@ -17,6 +17,7 @@ class ImprovementEngine:
         self.stagnation_boost: bool = False
         self.initial_output_length: int = 0
         self.cycles_remaining: int = 0
+        self.reflection_score_threshold: int | None = None  # override from controller
         self._score_cache: dict[int, int] = {}  # hash(variant_text) -> score
 
     def _estimate_prompt_tokens(self, *parts: str) -> int:
@@ -436,7 +437,8 @@ class ImprovementEngine:
 
     def fresh_attempt(self, original_prompt: str, directive: str,
                       best_directive: str | None = None,
-                      score_history: list[int] | None = None) -> tuple[str | None, int]:
+                      score_history: list[int] | None = None,
+                      best_feedback: str = "") -> tuple[str | None, int]:
         """Generate a completely fresh attempt (not based on current best).
         Returns (output, score). Used when refinement has plateaued.
         Optionally uses insights from the run (best directive, score trajectory)."""
@@ -447,6 +449,8 @@ class ImprovementEngine:
             if score_history and len(score_history) >= 2:
                 insights += f"Previous scores plateaued at: {' -> '.join(str(s) for s in score_history[-5:])}\n"
                 insights += "Try a fundamentally different approach.\n"
+            if best_feedback:
+                insights += f"Key feedback from scoring:\n{best_feedback}\n"
 
             prompt = (
                 f"{original_prompt}\n\n"
@@ -481,9 +485,13 @@ class ImprovementEngine:
         variants = []
         rejected_count = 0
         rejection_reasons: set[str] = set()
-        # Reflection is most valuable for code (catches bugs before they happen)
-        # so activate it earlier for code tasks
-        reflection_threshold = 50 if self.task_type == "code" else 60
+        # Reflection threshold: controller can override (e.g. lower when stagnating)
+        if self.reflection_score_threshold is not None:
+            reflection_threshold = self.reflection_score_threshold
+        elif self.task_type == "code":
+            reflection_threshold = 50
+        else:
+            reflection_threshold = 60
         use_reflection = self.config.use_reflection and current_score >= reflection_threshold
         cycle_start = time.time()
         budget_per_branch = self.config.budget_seconds / max(self.config.dilation_factor, 1) / max(self.config.branch_factor, 1)

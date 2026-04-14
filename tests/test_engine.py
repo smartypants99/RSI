@@ -110,3 +110,22 @@ def test_engine_raises_after_retries():
         assert False, "Should have raised"
     except InferenceError as e:
         assert "OOM" in str(e)
+
+
+def test_engine_cycle_call_counter():
+    """reset_cycle_calls returns count and resets."""
+    config = TimeDilateConfig()
+    mock_vllm.LLM.reset_mock()
+    mock_output = MagicMock()
+    mock_output.outputs = [MagicMock(text="result")]
+    mock_vllm.LLM.return_value.generate.side_effect = None
+    mock_vllm.LLM.return_value.generate.return_value = [mock_output]
+
+    engine = InferenceEngine(config)
+    engine.generate("a")
+    engine.generate("b")
+    count = engine.reset_cycle_calls()
+    assert count == 2
+    assert engine._cycle_calls == 0
+    engine.generate("c")
+    assert engine._cycle_calls == 1

@@ -325,6 +325,13 @@ class DilationController:
                 self.improver.stagnation_boost = metrics.stagnant_streak >= 2
                 self.improver.cycles_remaining = refinement_cycles - cycle - 1
 
+                # Adaptive reflection: lower the threshold when stagnating so
+                # the model thinks harder about what to change
+                if metrics.stagnant_streak >= 3:
+                    self.improver.reflection_score_threshold = max(30, 50 - metrics.stagnant_streak * 5)
+                else:
+                    self.improver.reflection_score_threshold = None  # use default
+
                 # Every 5 cycles, do a detailed score to target weaknesses
                 # Every 3 cycles (not overlapping with 5), do feedback scoring for strengths/weaknesses
                 score_feedback_text = ""
@@ -395,7 +402,11 @@ class DilationController:
 
                 previous_score = current_score
                 previous_best = current_best
+                previous_length = len(current_best)
                 history_summary = self._build_history_summary(metrics)
+                # Reset engine cycle counter for precise inference tracking
+                if callable(getattr(self.engine, 'reset_cycle_calls', None)):
+                    self.engine.reset_cycle_calls()
 
                 try:
                     new_best, new_score, best_idx = self.improver.run_cycle(
@@ -433,17 +444,23 @@ class DilationController:
                     best_ever_output = current_best
                     best_ever_score = current_score
 
-                # Estimate inference calls: generation + scoring per branch
-                # + potential comparative/crossover/ensemble calls
-                est_calls = branch_factor  # generation
-                if self.improver.force_ensemble:
-                    est_calls += branch_factor * 2  # 2 scores per variant
+                # Use precise inference call count from engine when available
+                cycle_calls = getattr(self.engine, '_cycle_calls', None)
+                if isinstance(cycle_calls, int):
+                    est_calls = cycle_calls
                 else:
-                    est_calls += branch_factor  # 1 score per variant
-                if best_idx == -2:
-                    est_calls += 2  # crossover generation + scoring
-                if score_feedback_text:
-                    est_calls += 1  # feedback/detailed scoring call
+                    est_calls = branch_factor * 2  # fallback estimate
+
+                # Output length regression guard: if output shrinks >50% without
+                # a score increase, the model may be confused — log warning
+                if (len(current_best) < previous_length * 0.5
+                        and current_score <= previous_score
+                        and previous_length > 100):
+                    logger.warning(
+                        "Output length regression: %d -> %d chars without score gain. "
+                        "Model may be losing context.",
+                        previous_length, len(current_best),
+                    )
 
                 metrics.record_cycle(
                     cycle=cycle + 1,
@@ -488,6 +505,7 @@ class DilationController:
                         prompt, "Take a completely different approach to break past the current quality ceiling.",
                         best_directive=metrics.best_directive,
                         score_history=metrics.score_history,
+                        best_feedback=score_feedback_text,
                     )
                     if fresh_output and fresh_score > current_score:
                         logger.info("Ceiling breakthrough: %d -> %d", current_score, fresh_score)
@@ -507,6 +525,7 @@ class DilationController:
                         prompt, directive,
                         best_directive=metrics.best_directive,
                         score_history=metrics.score_history,
+                        best_feedback=score_feedback_text,
                     )
                     if fresh_output and fresh_score > current_score:
                         logger.info("Fresh attempt broke plateau (score %d -> %d)",

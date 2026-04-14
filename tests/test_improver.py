@@ -1005,3 +1005,29 @@ def test_format_hint_general():
     improver = ImprovementEngine(engine, config)
     improver.task_type = "general"
     assert improver._format_hint() == ""
+
+
+def test_reflection_threshold_override():
+    """Controller can lower reflection threshold via reflection_score_threshold."""
+    engine = make_mock_engine(["reflection analysis", "variant output", "80"])
+    config = TimeDilateConfig(branch_factor=1, use_reflection=True)
+    improver = ImprovementEngine(engine, config)
+    improver.task_type = "general"
+    improver.reflection_score_threshold = 30  # override: activate at score 30
+    # Score 35 is below default 60 but above override 30
+    best, score, idx = improver.run_cycle("test", "original", 35, "Improve.")
+    first_call = engine.generate.call_args_list[0][0][0]
+    assert "Before making changes" in first_call
+
+
+def test_fresh_attempt_includes_feedback():
+    """Fresh attempt incorporates best_feedback in the prompt."""
+    engine = make_mock_engine(["fresh output", "85"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    output, score = improver.fresh_attempt(
+        "test task", "Improve.", best_feedback="FIX: missing error handling"
+    )
+    assert output == "fresh output"
+    gen_call = engine.generate.call_args_list[0][0][0]
+    assert "FIX: missing error handling" in gen_call

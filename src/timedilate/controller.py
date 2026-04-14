@@ -90,8 +90,9 @@ class DilationController:
         return "\n".join(lines)
 
     def _adaptive_branch_factor(self, cycle: int, metrics: RunMetrics) -> int:
-        """Reduce branch factor if cycles are slow or stagnating."""
+        """Adapt branch factor based on timing, stagnation, and cycle position."""
         base = self.config.branch_factor
+        refinement_cycles = self.config.dilation_factor - 1
         if not metrics.cycles:
             return base
 
@@ -109,6 +110,13 @@ class DilationController:
         # If stagnating, increase branches to explore more
         if metrics.stagnant_streak >= 3 and base < 5:
             return min(base + 1, 5)
+
+        # Late-cycle reduction: in the last 20% of cycles with high scores,
+        # reduce branches since gains are marginal and we want speed
+        if refinement_cycles >= 5 and cycle > refinement_cycles * 0.8:
+            current_score = metrics.cycles[-1].score if metrics.cycles else 0
+            if current_score >= 80 and base > 1:
+                return max(1, base - 1)
 
         return base
 
@@ -373,12 +381,15 @@ class DilationController:
                     crossover_used=(best_idx == -2),
                 )
 
+                total_elapsed = time.time() - start
+                budget_pct = (total_elapsed / self.config.budget_seconds * 100) if self.config.budget_seconds > 0 else 0
                 log_cycle_summary(
                     logger, cycle + 1, current_score, previous_score,
                     directive_source, time.time() - cycle_start, branch_factor,
                     output_delta=output_delta,
                     peak_score=metrics.peak_score,
                     improvement_rate=metrics.improvement_rate,
+                    budget_used_pct=budget_pct,
                 )
 
                 # Record directive outcome for meta-learning

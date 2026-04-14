@@ -153,6 +153,13 @@ def test_sanity_check_shorter_with_big_jump():
     assert scorer.sanity_check_score(90, 60, new, old) is False
 
 
+def test_sanity_check_near_identical_big_jump():
+    scorer = Scorer()
+    old = "def sort(lst):\n    return sorted(lst)\n" + "# padding " * 10
+    new = old[:-1] + "."  # trivially different
+    assert scorer.sanity_check_score(90, 60, new, old) is False  # +30 on near-identical
+
+
 def test_sanity_check_no_improvement():
     scorer = Scorer()
     assert scorer.sanity_check_score(50, 60, "any", "any") is True

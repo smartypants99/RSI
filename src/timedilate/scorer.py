@@ -258,6 +258,14 @@ class Scorer:
         if delta > 40:
             return False
 
+        # Suspicious: big jump but output barely changed
+        if delta > 20 and len(new_output) > 50 and len(old_output) > 50:
+            # Quick check: same first 80% of characters
+            check_len = min(len(new_output), len(old_output))
+            prefix_match = sum(1 for a, b in zip(new_output[:check_len], old_output[:check_len]) if a == b)
+            if prefix_match / check_len > 0.95:
+                return False
+
         return True
 
     def build_scoring_prompt(self, original_prompt: str, output: str) -> str:

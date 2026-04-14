@@ -608,14 +608,25 @@ class ImprovementEngine:
         scored = []
         # Adaptive early-exit threshold: lower when many variants, higher when few
         early_exit_margin = max(10, 30 - len(variants) * 5)
-        for i, variant in enumerate(variants):
+
+        # Score most-diverse-first: variants most different from current_best
+        # are more likely genuine improvements, so score them first for early exit
+        if current_best and len(variants) >= 3:
+            indexed = list(enumerate(variants))
+            indexed.sort(key=lambda iv: self._similarity_ratio(iv[1], current_best))
+            scoring_order = [idx for idx, _ in indexed]
+        else:
+            scoring_order = list(range(len(variants)))
+
+        for order_pos, i in enumerate(scoring_order):
+            variant = variants[i]
             if self.force_ensemble:
                 score = self._score_variant(original_prompt, variant, ensemble=True, current_score=current_score)
             else:
                 score = self._score_variant(original_prompt, variant, use_cot=use_cot, current_score=current_score)
             scored.append((score, i, variant))
             # Early exit: skip remaining once we find a clearly better variant
-            if len(variants) > 2 and i >= 1 and score > current_score + early_exit_margin:
+            if len(variants) > 2 and order_pos >= 1 and score > current_score + early_exit_margin:
                 remaining = len(variants) - i - 1
                 if remaining > 0:
                     logger.info("Early exit scoring: variant %d scored %d (>%d+%d), skipping %d remaining",

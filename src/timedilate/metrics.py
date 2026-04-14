@@ -381,6 +381,8 @@ class RunMetrics:
             recs.append("Generated directives outperform builtins — they'll be preferred automatically")
         if self.avg_cycle_time > 30:
             recs.append("Slow cycles — consider reducing branch_factor or using a faster model")
+        if self.stagnant_streak >= 4 and self.peak_score >= 50:
+            recs.append("High stagnation — try enabling --reflection for reflect-then-act generation")
         # Check if branch 0 dominates — temperature spread may be too wide
         dist = self.winning_branch_distribution
         improving_count = sum(v for k, v in dist.items() if k >= 0)

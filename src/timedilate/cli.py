@@ -20,7 +20,7 @@ def parse_budget(value: str) -> float:
     return num * multipliers[unit]
 
 
-def run_dilation(prompt: str, config: TimeDilateConfig) -> DilationResult:
+def run_dilation(prompt: str, config: TimeDilateConfig, resume: bool = False) -> DilationResult:
     engine = InferenceEngine(config)
     controller = DilationController(config, engine)
     total_cycles = config.dilation_factor - 1
@@ -54,7 +54,7 @@ def run_dilation(prompt: str, config: TimeDilateConfig) -> DilationResult:
             eta_str = f"{eta} | {elapsed:.1f}s/{config.budget_seconds:.0f}s ({budget_pct:.0f}%)"
             progress.update(task, completed=cycle, score=score, eta=eta_str)
 
-        result = controller.run(prompt, on_cycle=on_cycle)
+        result = controller.run(prompt, on_cycle=on_cycle, resume=resume)
 
     return result
 
@@ -68,8 +68,9 @@ def run_dilation(prompt: str, config: TimeDilateConfig) -> DilationResult:
 @click.option("--branches", default=3, help="Branch factor per cycle")
 @click.option("--output", "output_file", default=None, help="Save output to file")
 @click.option("--metrics", "metrics_file", default=None, help="Save run metrics to JSON file")
+@click.option("--resume", is_flag=True, help="Resume from last checkpoint")
 @click.option("--verbose", is_flag=True, help="Show detailed progress")
-def main(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, verbose):
+def main(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, verbose):
     """AI Time Dilation Runtime -- make AI think longer in less time."""
     budget_seconds = parse_budget(budget)
 
@@ -88,7 +89,10 @@ def main(prompt, factor, budget, model, draft_model, branches, output_file, metr
     console.print(f"  Budget: {budget} (advisory)")
     console.print()
 
-    result = run_dilation(prompt, config)
+    result = run_dilation(prompt, config, resume=resume)
+
+    if resume and hasattr(result, 'resumed_from_cycle') and result.resumed_from_cycle > 0:
+        console.print(f"[dim]Resumed from cycle {result.resumed_from_cycle}[/]")
 
     console.print()
     console.print(

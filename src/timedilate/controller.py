@@ -17,6 +17,7 @@ class DilationResult:
     elapsed_seconds: float
     convergence_detected: bool
     interrupted: bool = False
+    resumed_from_cycle: int = 0
     metrics: RunMetrics | None = None
 
 
@@ -32,7 +33,30 @@ class DilationController:
         self.directives = DirectiveGenerator()
         self.checkpoint = CheckpointManager(config.checkpoint_dir)
 
-    def run(self, prompt: str, on_cycle=None) -> DilationResult:
+    def _adaptive_branch_factor(self, cycle: int, metrics: RunMetrics) -> int:
+        """Reduce branch factor if cycles are slow or stagnating."""
+        base = self.config.branch_factor
+        if not metrics.cycles:
+            return base
+
+        # If last cycle took more than budget_seconds / dilation_factor,
+        # we're running slow — reduce branching
+        last_elapsed = metrics.cycles[-1].elapsed_seconds
+        target_per_cycle = self.config.budget_seconds / max(self.config.dilation_factor, 1)
+        if target_per_cycle > 0 and last_elapsed > target_per_cycle * 2:
+            reduced = max(1, base // 2)
+            if reduced < base:
+                logger.info("Cycle %d slow (%.1fs), reducing branches %d -> %d",
+                            cycle, last_elapsed, base, reduced)
+            return reduced
+
+        # If stagnating, increase branches to explore more
+        if metrics.stagnant_streak >= 3 and base < 5:
+            return min(base + 1, 5)
+
+        return base
+
+    def run(self, prompt: str, on_cycle=None, resume: bool = False) -> DilationResult:
         start = time.time()
         task_type = self.directives.classify_task(prompt)
         refinement_cycles = self.config.dilation_factor - 1
@@ -45,36 +69,57 @@ class DilationController:
             start_time=start,
         )
 
-        # Initial generation
-        current_best = self.engine.generate(prompt)
+        # Resume from checkpoint if requested
+        resumed_from = 0
+        if resume:
+            checkpoint = self.checkpoint.load_latest()
+            if checkpoint:
+                current_best = checkpoint["output"]
+                current_score = checkpoint["score"]
+                resumed_from = checkpoint["cycle"]
+                logger.info("Resumed from checkpoint at cycle %d (score %d)",
+                            resumed_from, current_score)
+            else:
+                resume = False
 
-        if refinement_cycles <= 0:
-            return DilationResult(
-                output=current_best,
-                score=0,
-                cycles_completed=0,
-                elapsed_seconds=time.time() - start,
-                convergence_detected=False,
-                metrics=metrics,
+        if not resume:
+            # Initial generation
+            current_best = self.engine.generate(prompt)
+
+            if refinement_cycles <= 0:
+                return DilationResult(
+                    output=current_best,
+                    score=0,
+                    cycles_completed=0,
+                    elapsed_seconds=time.time() - start,
+                    convergence_detected=False,
+                    metrics=metrics,
+                )
+
+            # Score the initial output
+            score_prompt = self.scorer.build_scoring_prompt(prompt, current_best)
+            raw_score = self.engine.generate(
+                score_prompt, temperature=self.config.scoring_temperature
             )
-
-        # Score the initial output
-        score_prompt = self.scorer.build_scoring_prompt(prompt, current_best)
-        raw_score = self.engine.generate(
-            score_prompt, temperature=self.config.scoring_temperature
-        )
-        current_score = self.scorer.parse_score(raw_score)
+            current_score = self.scorer.parse_score(raw_score)
 
         no_improvement_count = 0
         convergence_detected = False
         built_in_exhausted = False
         directive_offset = 0
         built_in_count = len(self.directives.get_directives(task_type))
-        completed_cycles = 0
+        completed_cycles = resumed_from
+        start_cycle = resumed_from
 
         try:
-            for cycle in range(refinement_cycles):
+            for cycle in range(start_cycle, refinement_cycles):
                 cycle_start = time.time()
+
+                # Adaptive branch factor
+                branch_factor = self._adaptive_branch_factor(cycle, metrics)
+                self.improver.config = TimeDilateConfig(
+                    **{**self.config.__dict__, "branch_factor": branch_factor}
+                )
 
                 # Choose directive: built-in or self-generated
                 if built_in_exhausted:
@@ -110,7 +155,7 @@ class DilationController:
                     previous_score=previous_score,
                     directive=directive,
                     directive_source=directive_source,
-                    branch_count=self.config.branch_factor,
+                    branch_count=branch_factor,
                     best_variant_index=best_idx,
                     elapsed_seconds=time.time() - cycle_start,
                 )
@@ -128,11 +173,18 @@ class DilationController:
 
                 completed_cycles = cycle + 1
 
+                # Early exit if perfect score
+                if current_score >= 100:
+                    logger.info("Perfect score reached at cycle %d", cycle + 1)
+                    break
+
                 if on_cycle:
                     elapsed = time.time() - start
                     on_cycle(cycle + 1, refinement_cycles, current_score, elapsed)
 
         except KeyboardInterrupt:
+            # Save checkpoint on interrupt so we can resume
+            self.checkpoint.save(completed_cycles, current_best, current_score)
             return DilationResult(
                 output=current_best,
                 score=current_score,
@@ -140,6 +192,7 @@ class DilationController:
                 elapsed_seconds=time.time() - start,
                 convergence_detected=convergence_detected,
                 interrupted=True,
+                resumed_from_cycle=resumed_from,
                 metrics=metrics,
             )
 
@@ -148,8 +201,9 @@ class DilationController:
         return DilationResult(
             output=current_best,
             score=current_score,
-            cycles_completed=refinement_cycles,
+            cycles_completed=completed_cycles,
             elapsed_seconds=time.time() - start,
             convergence_detected=convergence_detected,
+            resumed_from_cycle=resumed_from,
             metrics=metrics,
         )

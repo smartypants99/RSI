@@ -569,6 +569,10 @@ class DilationController:
 
         log_run_summary(logger, metrics)
 
+        # Log engine stats for observability
+        if hasattr(self.engine, 'stats'):
+            logger.info("Engine stats: %s", self.engine.stats)
+
         return DilationResult(
             output=final_output,
             score=final_score,

@@ -331,6 +331,15 @@ class RunMetrics:
         return None
 
     @property
+    def points_per_second(self) -> float:
+        """Score improvement velocity: points gained per wall-clock second.
+        Useful for comparing configs — higher means faster improvement."""
+        total_time = sum(c.elapsed_seconds for c in self.cycles)
+        if total_time <= 0:
+            return 0.0
+        return max(0, self.total_improvement) / total_time
+
+    @property
     def diminishing_returns(self) -> bool:
         """True if last 3+ cycles averaged < 1 point improvement."""
         if len(self.cycles) < 3:
@@ -391,6 +400,7 @@ class RunMetrics:
             "crossover_win_rate": self.crossover_win_rate,
             "total_inference_calls": self.total_inference_calls,
             "points_per_inference": round(self.points_per_inference, 3),
+            "points_per_second": round(self.points_per_second, 3),
             "score_ceiling": self.score_ceiling,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
@@ -410,7 +420,7 @@ class RunMetrics:
             f"Score history: {' -> '.join(str(s) for s in d['score_history'])}",
             f"Avg cycle: {d['avg_cycle_time']:.2f}s",
             f"Efficiency: {d['efficiency']:.0%} ({d['wasted_cycles']} wasted cycles)",
-            f"Inference calls: {d['total_inference_calls']}",
+            f"Inference calls: {d['total_inference_calls']} ({d['points_per_inference']:.2f} pts/call, {d['points_per_second']:.2f} pts/s)",
         ]
         if self.best_directive:
             lines.append(f"Best directive: {self.best_directive}")

@@ -481,6 +481,23 @@ def test_avg_score_delta_by_source():
     assert abs(deltas["generated"] - 5.0) < 0.01  # (10+0)/2
 
 
+def test_points_per_second():
+    m = _make_metrics_with_cycles([
+        {"score": 60, "previous_score": 50, "elapsed_seconds": 2.0},
+        {"score": 80, "previous_score": 60, "elapsed_seconds": 3.0},
+    ])
+    # total_improvement=30, total_time=5.0 -> 6.0 pts/s
+    assert abs(m.points_per_second - 6.0) < 0.01
+
+
+def test_points_per_second_in_to_dict():
+    m = _make_metrics_with_cycles([
+        {"score": 70, "previous_score": 50, "elapsed_seconds": 1.0},
+    ])
+    d = m.to_dict()
+    assert "points_per_second" in d
+
+
 def test_avg_score_delta_by_source_in_to_dict():
     m = _make_metrics_with_cycles([
         {"score": 60, "previous_score": 50, "directive_source": "builtin"},

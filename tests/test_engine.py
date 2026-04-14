@@ -66,6 +66,37 @@ def test_engine_retries_on_empty():
     assert result == "good result"
 
 
+def test_engine_stats_include_latency_and_failures():
+    config = TimeDilateConfig()
+    mock_vllm.LLM.reset_mock()
+    mock_output = MagicMock()
+    mock_output.outputs = [MagicMock(text="hello")]
+    mock_vllm.LLM.return_value.generate.side_effect = None
+    mock_vllm.LLM.return_value.generate.return_value = [mock_output]
+
+    engine = InferenceEngine(config)
+    engine.generate("test")
+    stats = engine.stats
+    assert "avg_latency_s" in stats
+    assert "failed_calls" in stats
+    assert stats["failed_calls"] == 0
+    assert stats["avg_latency_s"] >= 0
+
+
+def test_engine_tracks_failed_calls():
+    config = TimeDilateConfig()
+    mock_vllm.LLM.reset_mock()
+    good_output = MagicMock()
+    good_output.outputs = [MagicMock(text="ok")]
+    mock_vllm.LLM.return_value.generate.side_effect = [
+        RuntimeError("fail"), [good_output]
+    ]
+    engine = InferenceEngine(config)
+    result = engine.generate("test", retries=1)
+    assert result == "ok"
+    assert engine.stats["failed_calls"] == 1
+
+
 def test_engine_raises_after_retries():
     """Engine raises InferenceError after exhausting retries."""
     from timedilate.engine import InferenceError

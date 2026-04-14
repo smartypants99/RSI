@@ -125,6 +125,12 @@ class Scorer:
         "- Does it handle edge cases (empty input, nulls, boundaries)?\n"
         "- Is the algorithm efficient for the expected input size?\n"
         "- Are variable/function names descriptive?\n"
+        "\nCode scoring anchors:\n"
+        "  Correctness 20+: All logic correct, edge cases handled\n"
+        "  Correctness 10-19: Core logic works but misses some cases\n"
+        "  Correctness <10: Has bugs that would cause wrong output or crash\n"
+        "  Elegance 20+: Clean abstractions, no redundancy, idiomatic\n"
+        "  Elegance <15: Verbose, poor naming, redundant code\n"
     )
 
     PROSE_RUBRIC_ADDENDUM = (
@@ -133,6 +139,12 @@ class Scorer:
         "- Does it flow logically from point to point?\n"
         "- Is the tone appropriate for the audience?\n"
         "- Are there concrete examples?\n"
+        "\nProse scoring anchors:\n"
+        "  Quality 20+: Every paragraph advances the argument, smooth transitions\n"
+        "  Quality 10-19: Readable but some sections feel disconnected\n"
+        "  Quality <10: Hard to follow, lacks structure\n"
+        "  Completeness 20+: All aspects of the prompt addressed with depth\n"
+        "  Completeness <15: Key points missing or only superficially covered\n"
     )
 
     def _rubric_for_task(self, task_type: str) -> str:

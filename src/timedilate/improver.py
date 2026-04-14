@@ -17,6 +17,7 @@ class ImprovementEngine:
         self.stagnation_boost: bool = False
         self.initial_output_length: int = 0
         self.cycles_remaining: int = 0
+        self._score_cache: dict[int, int] = {}  # hash(variant_text) -> score
 
     def _estimate_prompt_tokens(self, *parts: str) -> int:
         return sum(self.engine.estimate_tokens(p) for p in parts if p)
@@ -330,7 +331,16 @@ class ImprovementEngine:
         If ensemble=True, scores twice (normal + CoT) and averages.
         Uses task-aware rubric when task_type is set, and progressive
         harshness when current_score >= 75.
-        Retries on failure up to `retries` times."""
+        Retries on failure up to `retries` times.
+        Results are cached by variant text hash to avoid redundant scoring."""
+        # Check cache (only for non-ensemble, non-CoT — those vary by mode)
+        if not ensemble and not use_cot:
+            cache_key = hash(variant)
+            if cache_key in self._score_cache:
+                logger.debug("Score cache hit")
+                return self._score_cache[cache_key]
+        else:
+            cache_key = None
         for attempt in range(retries + 1):
             try:
                 if ensemble:
@@ -393,6 +403,8 @@ class ImprovementEngine:
                 if score == 0 and attempt == retries:
                     # All retries returned 0 — try fallback scoring
                     return self._fallback_score(original_prompt, variant)
+                if cache_key is not None:
+                    self._score_cache[cache_key] = score
                 return score
             except Exception as e:
                 if attempt < retries:
@@ -460,6 +472,7 @@ class ImprovementEngine:
     ) -> tuple[str, int, int]:
         """Returns (best_output, best_score, best_variant_index).
         best_variant_index is -1 if no variant beat the current best."""
+        self._score_cache.clear()  # fresh cache per cycle
         current_best = self._maybe_summarize(current_best, original_prompt)
 
         variants = []
@@ -583,19 +596,20 @@ class ImprovementEngine:
         Skips scoring remaining variants if one already beats current by a wide margin."""
         use_cot = len(variants) > 1
         scored = []
+        # Adaptive early-exit threshold: lower when many variants, higher when few
+        early_exit_margin = max(10, 30 - len(variants) * 5)
         for i, variant in enumerate(variants):
             if self.force_ensemble:
                 score = self._score_variant(original_prompt, variant, ensemble=True, current_score=current_score)
             else:
                 score = self._score_variant(original_prompt, variant, use_cot=use_cot, current_score=current_score)
             scored.append((score, i, variant))
-            # Early exit: if we found a variant that beats current by >20 points
-            # and we've scored at least 2, skip remaining to save inference
-            if len(variants) > 2 and i >= 1 and score > current_score + 20:
+            # Early exit: skip remaining once we find a clearly better variant
+            if len(variants) > 2 and i >= 1 and score > current_score + early_exit_margin:
                 remaining = len(variants) - i - 1
                 if remaining > 0:
-                    logger.info("Early exit scoring: variant %d scored %d (>%d+20), skipping %d remaining",
-                                i, score, current_score, remaining)
+                    logger.info("Early exit scoring: variant %d scored %d (>%d+%d), skipping %d remaining",
+                                i, score, current_score, early_exit_margin, remaining)
                     break
 
         scored.sort(reverse=True, key=lambda x: x[0])

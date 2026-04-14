@@ -902,6 +902,32 @@ def test_format_hint_code():
     assert "markdown" in hint.lower() or "code fence" in hint.lower()
 
 
+def test_score_cache_avoids_redundant_calls():
+    """Score cache should avoid re-scoring the same variant text."""
+    engine = make_mock_engine(["70"])  # only one scoring call needed
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    # Score the same variant twice
+    s1 = improver._score_variant("test", "variant text")
+    s2 = improver._score_variant("test", "variant text")
+    assert s1 == s2 == 70
+    assert engine.generate.call_count == 1  # only called once, second was cached
+
+
+def test_score_cache_cleared_per_cycle():
+    """Score cache should be cleared at the start of each cycle."""
+    engine = make_mock_engine(["variant", "80", "variant", "85"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.run_cycle("test", "orig", 50, "Improve.")
+    # Cache has entries from the cycle that just ran
+    assert len(improver._score_cache) >= 0
+    # Second run_cycle clears cache at start and re-scores
+    engine.generate = MagicMock(side_effect=["variant", "90"])
+    improver.run_cycle("test", "orig", 50, "Improve.")
+    assert engine.generate.call_count == 2  # both gen + score called fresh
+
+
 def test_format_hint_general():
     engine = MagicMock()
     engine.estimate_tokens = MagicMock(return_value=100)

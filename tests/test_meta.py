@@ -7,26 +7,26 @@ def test_record_and_retrieve():
     with tempfile.TemporaryDirectory() as tmpdir:
         path = str(Path(tmpdir) / "meta.json")
         ml = MetaLearner(path)
-        ml.record_directive("code", "Fix bugs", True)
-        ml.record_directive("code", "Fix bugs", True)
-        ml.record_directive("code", "Optimize", False)
-        ml.record_directive("code", "Optimize", True)
+        ml.record_directive("code", "Fix bugs", True, score_delta=10)
+        ml.record_directive("code", "Fix bugs", True, score_delta=8)
+        ml.record_directive("code", "Optimize", False, score_delta=-2)
+        ml.record_directive("code", "Optimize", True, score_delta=3)
         ml.save()
 
         # Reload from disk
         ml2 = MetaLearner(path)
         best = ml2.best_directives("code")
         assert len(best) == 2
-        assert best[0] == "Fix bugs"  # 100% success rate
+        assert best[0] == "Fix bugs"  # avg delta 9 > 0.5
 
 
 def test_best_directives_minimum_attempts():
     with tempfile.TemporaryDirectory() as tmpdir:
         path = str(Path(tmpdir) / "meta.json")
         ml = MetaLearner(path)
-        ml.record_directive("code", "One shot", True)  # only 1 attempt
-        ml.record_directive("code", "Reliable", True)
-        ml.record_directive("code", "Reliable", True)
+        ml.record_directive("code", "One shot", True, score_delta=5)  # only 1 attempt
+        ml.record_directive("code", "Reliable", True, score_delta=5)
+        ml.record_directive("code", "Reliable", True, score_delta=3)
         ml.save()
         ml2 = MetaLearner(path)
         best = ml2.best_directives("code")
@@ -56,10 +56,10 @@ def test_task_type_isolation():
     with tempfile.TemporaryDirectory() as tmpdir:
         path = str(Path(tmpdir) / "meta.json")
         ml = MetaLearner(path)
-        ml.record_directive("code", "Fix bugs", True)
-        ml.record_directive("code", "Fix bugs", True)
-        ml.record_directive("prose", "Improve flow", True)
-        ml.record_directive("prose", "Improve flow", True)
+        ml.record_directive("code", "Fix bugs", True, score_delta=5)
+        ml.record_directive("code", "Fix bugs", True, score_delta=5)
+        ml.record_directive("prose", "Improve flow", True, score_delta=5)
+        ml.record_directive("prose", "Improve flow", True, score_delta=5)
         ml.save()
         ml2 = MetaLearner(path)
         assert ml2.best_directives("code")[0] == "Fix bugs"

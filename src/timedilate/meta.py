@@ -58,7 +58,9 @@ class MetaLearner:
         stats[key]["total_delta"] = stats[key].get("total_delta", 0) + score_delta
 
     def best_directives(self, task_type: str, top_n: int = 3) -> list[str]:
-        """Return the top N directives by success rate for a task type.
+        """Return the top N directives ranked by avg score delta (not just win rate).
+        This captures magnitude — a directive that gains +8 avg is better than one
+        that gains +1 avg even if both have 100% success rate.
         Only returns results if data was loaded from a previous run on disk."""
         if not self._loaded_from_disk:
             return []
@@ -66,11 +68,12 @@ class MetaLearner:
         candidates = []
         for key, val in stats.items():
             if key.startswith(f"{task_type}:") and val["attempts"] >= 2:
-                rate = val["successes"] / val["attempts"]
+                avg_delta = val.get("total_delta", 0) / val["attempts"]
                 directive = key[len(task_type) + 1:]
-                candidates.append((rate, directive))
+                candidates.append((avg_delta, directive))
         candidates.sort(reverse=True)
-        return [d for _, d in candidates[:top_n]]
+        # Only return directives with positive avg delta
+        return [d for delta, d in candidates[:top_n] if delta > 0]
 
     def worst_directives(self, task_type: str, top_n: int = 3) -> list[str]:
         """Return directives that consistently fail (0% success with 3+ attempts)."""

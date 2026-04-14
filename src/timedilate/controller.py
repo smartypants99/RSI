@@ -320,7 +320,9 @@ class DilationController:
                     logger.info("Cycle %d: using meta-learned directive", cycle + 1)
                 elif built_in_exhausted or self._should_prefer_generated(metrics) or metrics.diminishing_returns:
                     custom_prompt = self.directives.generate_custom_directive_prompt(
-                        task_type, prompt, current_best
+                        task_type, prompt, current_best,
+                        failed_directives=failed_directives,
+                        current_score=current_score,
                     )
                     directive = self.engine.generate(custom_prompt)
                     directive_source = "generated"

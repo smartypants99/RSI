@@ -115,3 +115,36 @@ def test_trajectory_short_history_falls_back():
     d = gen.trajectory_aware_directive("code", 0, current_score=50, score_history=[50])
     standard = gen.get_directives("code")
     assert d == standard[0]
+
+
+def test_custom_directive_prompt_includes_failed_and_score():
+    gen = DirectiveGenerator()
+    failed = {"Optimize performance", "Add error handling"}
+    result = gen.generate_custom_directive_prompt(
+        "code", "Write a sort function", "def sort(x): return sorted(x)",
+        failed_directives=failed, current_score=85,
+    )
+    assert "Optimize performance" in result
+    assert "Add error handling" in result
+    assert "did NOT improve" in result
+    assert "85/100" in result
+    assert "subtle, high-impact" in result
+
+
+def test_custom_directive_prompt_low_score():
+    gen = DirectiveGenerator()
+    result = gen.generate_custom_directive_prompt(
+        "code", "Write a sort function", "def sort(x): pass",
+        current_score=30,
+    )
+    assert "30/100" in result
+    assert "bold change" in result
+
+
+def test_custom_directive_prompt_no_extras():
+    gen = DirectiveGenerator()
+    result = gen.generate_custom_directive_prompt(
+        "code", "Write a sort function", "def sort(x): return sorted(x)",
+    )
+    assert "did NOT improve" not in result
+    assert "/100" not in result

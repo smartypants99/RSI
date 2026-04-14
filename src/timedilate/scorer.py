@@ -73,6 +73,7 @@ class Scorer:
         "  81-90: Very good, only nitpicks remain\n"
         "  91-100: Exceptional, near-perfect\n\n"
         "Be harsh. Most outputs should score 40-75. Only truly exceptional work scores 90+.\n"
+        "Do NOT round up. If unsure between two scores, pick the lower one.\n"
         "Respond with ONLY a single integer 0-100. Nothing else."
     )
 
@@ -90,7 +91,8 @@ class Scorer:
         "  61-80: Good, with minor issues\n"
         "  81-90: Very good, only nitpicks remain\n"
         "  91-100: Exceptional, near-perfect\n\n"
-        "Be harsh. Most outputs should score 40-75. Only truly exceptional work scores 90+.\n\n"
+        "Be harsh. Most outputs should score 40-75. Only truly exceptional work scores 90+.\n"
+        "Do NOT round up. If unsure between two scores, pick the lower one.\n\n"
         "Think step by step. For each criterion, note specific strengths and weaknesses, "
         "then assign a sub-score. Sum the sub-scores for the total.\n\n"
         "End your response with EXACTLY this line:\n"

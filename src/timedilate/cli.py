@@ -89,11 +89,12 @@ def main(ctx):
 @click.option("--task-type", type=click.Choice(["code", "prose", "general"]), default=None, help="Override task type auto-detection")
 @click.option("--meta-learning/--no-meta-learning", default=True, help="Enable/disable cross-run meta-learning")
 @click.option("--target-score", default=0, type=int, help="Stop early when this score is reached (0 = disabled)")
+@click.option("--max-output-tokens", default=0, type=int, help="Cap output length in tokens (0 = no cap)")
 @click.option("--quiet", is_flag=True, help="Only output the final result (for piping)")
 @click.option("--verbose", is_flag=True, help="Show detailed progress")
 @click.option("--report", is_flag=True, help="Auto-generate a timestamped JSON report")
 @click.option("--dry-run", is_flag=True, help="Show configuration without running")
-def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, structured_logs, score_weights, task_type, meta_learning, target_score, quiet, verbose, report, dry_run):
+def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, structured_logs, score_weights, task_type, meta_learning, target_score, max_output_tokens, quiet, verbose, report, dry_run):
     """Run time dilation on a prompt."""
     import json as _json
     budget_seconds = parse_budget(budget)
@@ -117,6 +118,7 @@ def run(prompt, factor, budget, model, draft_model, branches, output_file, metri
         task_type_override=task_type,
         score_weights=parsed_weights,
         target_score=target_score,
+        max_output_tokens=max_output_tokens,
     )
 
     if not quiet:

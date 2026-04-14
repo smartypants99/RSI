@@ -25,6 +25,7 @@ class TimeDilateConfig:
     task_type_override: str | None = None  # Override auto-detection: "code", "prose", "general"
     score_weights: dict | None = None  # e.g. {"correctness": 40, "completeness": 20, "quality": 20, "elegance": 20}
     target_score: int = 0  # Stop early when this score is reached (0 = disabled)
+    max_output_tokens: int = 0  # Cap output length (0 = no cap, uses max_tokens)
 
     def validate(self) -> None:
         """Validate configuration, raising ConfigError on issues."""

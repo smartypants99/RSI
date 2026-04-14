@@ -976,6 +976,28 @@ def test_score_cache_cleared_per_cycle():
     assert engine.generate.call_count == 2  # both gen + score called fresh
 
 
+def test_scoring_addenda_harshness():
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    # No addenda at low score
+    assert improver._scoring_addenda("short", 50) == ""
+    # Harshness at high score
+    addenda = improver._scoring_addenda("short", 80)
+    assert "EXTRA critical" in addenda
+
+
+def test_scoring_addenda_antibloat():
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.initial_output_length = 100
+    addenda = improver._scoring_addenda("x" * 300, 50)
+    assert "verbosity" in addenda.lower()
+
+
 def test_format_hint_general():
     engine = MagicMock()
     engine.estimate_tokens = MagicMock(return_value=100)

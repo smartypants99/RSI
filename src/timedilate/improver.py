@@ -315,7 +315,8 @@ class ImprovementEngine:
                 prompt = self._build_improvement_prompt(
                     original_prompt, current_best, directive, current_score, history_summary, score_feedback
                 )
-                variant = self.engine.generate(prompt, temperature=temperature)
+                max_tokens = self.config.max_output_tokens or None
+                variant = self.engine.generate(prompt, temperature=temperature, max_tokens=max_tokens)
                 if not variant or not variant.strip():
                     logger.warning("Empty variant generated, skipping")
                     return None
@@ -328,6 +329,19 @@ class ImprovementEngine:
                 logger.warning("Variant generation failed after retry: %s", e)
                 return None
         return None
+
+    def _scoring_addenda(self, variant: str, current_score: int) -> str:
+        """Build scoring addenda for harshness and anti-bloat."""
+        addenda = ""
+        if current_score >= 75:
+            addenda += self.scorer.HARSH_ADDENDUM.format(score=current_score)
+        if self.initial_output_length > 0 and len(variant) > self.initial_output_length * 2.5:
+            addenda += (
+                "\nNote: This output is significantly longer than the initial version. "
+                "Penalize unnecessary verbosity, padding, or repetition. "
+                "Conciseness is a quality signal."
+            )
+        return addenda
 
     def _score_variant(self, original_prompt: str, variant: str, use_cot: bool = False, ensemble: bool = False, retries: int = 1, current_score: int = 0) -> int:
         """Score a variant, returning 0 on failure.
@@ -355,14 +369,7 @@ class ImprovementEngine:
                     score_prompt = self.scorer.build_cot_scoring_prompt(
                         original_prompt, variant, task_type=self.task_type
                     )
-                    if current_score >= 75:
-                        score_prompt += self.scorer.HARSH_ADDENDUM.format(score=current_score)
-                    if self.initial_output_length > 0 and len(variant) > self.initial_output_length * 2.5:
-                        score_prompt += (
-                            "\nNote: This output is significantly longer than the initial version. "
-                            "Penalize unnecessary verbosity, padding, or repetition. "
-                            "Conciseness is a quality signal."
-                        )
+                    score_prompt += self._scoring_addenda(variant, current_score)
                     raw_score = self.engine.generate(
                         score_prompt, temperature=self.config.scoring_temperature
                     )
@@ -373,8 +380,7 @@ class ImprovementEngine:
                 elif self.config.score_weights:
                     # Use detailed scoring with custom weights
                     score_prompt = self.scorer.build_detailed_scoring_prompt(original_prompt, variant, self.task_type)
-                    if current_score >= 75:
-                        score_prompt += self.scorer.HARSH_ADDENDUM.format(score=current_score)
+                    score_prompt += self._scoring_addenda(variant, current_score)
                     raw_score = self.engine.generate(
                         score_prompt, temperature=self.config.scoring_temperature
                     )
@@ -388,14 +394,7 @@ class ImprovementEngine:
                         )
                     else:
                         score_prompt = self.scorer.build_scoring_prompt(original_prompt, variant)
-                    if current_score >= 75:
-                        score_prompt += self.scorer.HARSH_ADDENDUM.format(score=current_score)
-                    if self.initial_output_length > 0 and len(variant) > self.initial_output_length * 2.5:
-                        score_prompt += (
-                            "\nNote: This output is significantly longer than the initial version. "
-                            "Penalize unnecessary verbosity, padding, or repetition. "
-                            "Conciseness is a quality signal."
-                        )
+                    score_prompt += self._scoring_addenda(variant, current_score)
                     raw_score = self.engine.generate(
                         score_prompt, temperature=self.config.scoring_temperature
                     )

@@ -175,3 +175,47 @@ def test_no_comparative_on_large_delta():
     assert best == "variant"
     assert score == 80
     assert idx == 0
+
+
+def test_tournament_select_picks_winner():
+    """Tournament selection with 4+ variants uses pairwise comparisons."""
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    # 4 variants generated, then tournament: (v1 vs v2) -> B, (v3 vs v4) -> A, (v2 vs v3) -> B
+    # Winner: v3. Then score v3 -> 85
+    engine.generate = MagicMock(side_effect=[
+        "v1", "v2", "v3", "v4",   # 4 variants
+        "B",                        # v1 vs v2 -> v2 wins
+        "A",                        # v3 vs v4 -> v3 wins
+        "B",                        # v2 vs v3 -> v3 wins
+        "85",                       # score the winner (v3)
+    ])
+    config = TimeDilateConfig(branch_factor=4)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=50,
+        directive="Improve.",
+    )
+    assert best == "v3"
+    assert score == 85
+    assert idx == 2
+
+
+def test_tournament_with_odd_number():
+    """Tournament handles odd number of variants (bye for last one)."""
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    config = TimeDilateConfig(branch_factor=5)
+    improver = ImprovementEngine(engine, config)
+    # 5 variants: (0v1, 1v2)->"A", (2v3, 3v4)->"B", 4v5 gets bye
+    # Round 2: (0v1, 3v4)->"A", 4v5 gets bye
+    # Round 3: (0v1, 4v5)->"A" -> 0v1 wins
+    variants = ["v1", "v2", "v3", "v4", "v5"]
+    indexed = list(enumerate(variants))
+    # Just test the method directly
+    engine.generate = MagicMock(side_effect=["A", "B", "A", "A"])
+    winner, idx = improver._tournament_select("test", variants)
+    assert winner == "v1"
+    assert idx == 0

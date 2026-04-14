@@ -112,9 +112,32 @@ class ImprovementEngine:
             logger.warning("All variant generations failed, keeping current best")
             return current_best, current_score, -1
 
-        best_variant = current_best
-        best_score = current_score
-        best_index = -1
+        # Choose selection strategy
+        if len(variants) >= 4:
+            winner_variant, winner_index = self._tournament_select(original_prompt, variants)
+            # Tournament uses comparisons, need to score the winner
+            winner_score = self._score_variant(original_prompt, winner_variant)
+        else:
+            winner_variant, winner_index, winner_score = self._score_select(original_prompt, variants)
+
+        if winner_score <= current_score:
+            return current_best, current_score, -1
+
+        # Comparative validation for close scores
+        if (winner_score - current_score) <= 5:
+            result = self._compare_outputs(original_prompt, current_best, winner_variant)
+            if result == "A":
+                logger.info("Comparative check overruled selection (delta=%d)",
+                            winner_score - current_score)
+                return current_best, current_score, -1
+
+        return winner_variant, winner_score, winner_index
+
+    def _score_select(self, original_prompt: str, variants: list[str]) -> tuple[str, int, int]:
+        """Score each variant, return (best_variant, best_index, best_score)."""
+        best_variant = variants[0]
+        best_score = -1
+        best_index = 0
 
         for i, variant in enumerate(variants):
             score = self._score_variant(original_prompt, variant)
@@ -123,16 +146,29 @@ class ImprovementEngine:
                 best_score = score
                 best_index = i
 
-        # Comparative validation: if we found a better variant and scores are close,
-        # do an A/B comparison to confirm the improvement is real
-        if best_index >= 0 and (best_score - current_score) <= 5:
-            winner = self._compare_outputs(original_prompt, current_best, best_variant)
-            if winner == "A":
-                logger.info("Comparative check overruled score-based selection (delta=%d)",
-                            best_score - current_score)
-                return current_best, current_score, -1
+        return best_variant, best_index, best_score
 
-        return best_variant, best_score, best_index
+    def _tournament_select(self, original_prompt: str, variants: list[str]) -> tuple[str, int]:
+        """Pairwise tournament: compare adjacent pairs, winners advance.
+        Uses fewer inference calls than scoring every variant."""
+        indexed = list(enumerate(variants))
+
+        while len(indexed) > 1:
+            next_round = []
+            for j in range(0, len(indexed), 2):
+                if j + 1 >= len(indexed):
+                    next_round.append(indexed[j])
+                    continue
+                idx_a, a = indexed[j]
+                idx_b, b = indexed[j + 1]
+                winner = self._compare_outputs(original_prompt, a, b)
+                if winner == "B":
+                    next_round.append((idx_b, b))
+                else:
+                    next_round.append((idx_a, a))  # A or TIE -> keep A
+            indexed = next_round
+
+        return indexed[0][1], indexed[0][0]
 
     def _compare_outputs(self, original_prompt: str, output_a: str, output_b: str) -> str:
         """A/B compare two outputs, returns 'A', 'B', or 'TIE'."""

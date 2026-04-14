@@ -1,6 +1,11 @@
 from dataclasses import dataclass
 
 
+class ConfigError(ValueError):
+    """Raised when configuration is invalid."""
+    pass
+
+
 @dataclass
 class TimeDilateConfig:
     model: str = "Qwen/Qwen2.5-7B-Instruct"
@@ -17,3 +22,25 @@ class TimeDilateConfig:
     context_window: int = 32768
     use_reflection: bool = False
     score_weights: dict | None = None  # e.g. {"correctness": 40, "completeness": 20, "quality": 20, "elegance": 20}
+
+    def validate(self) -> None:
+        """Validate configuration, raising ConfigError on issues."""
+        if self.dilation_factor < 1:
+            raise ConfigError(f"dilation_factor must be >= 1, got {self.dilation_factor}")
+        if self.branch_factor < 1:
+            raise ConfigError(f"branch_factor must be >= 1, got {self.branch_factor}")
+        if self.budget_seconds <= 0:
+            raise ConfigError(f"budget_seconds must be > 0, got {self.budget_seconds}")
+        if self.max_tokens < 1:
+            raise ConfigError(f"max_tokens must be >= 1, got {self.max_tokens}")
+        if not (0.0 <= self.temperature <= 2.0):
+            raise ConfigError(f"temperature must be 0.0-2.0, got {self.temperature}")
+        if self.convergence_threshold < 1:
+            raise ConfigError(f"convergence_threshold must be >= 1, got {self.convergence_threshold}")
+        if self.context_window < 1024:
+            raise ConfigError(f"context_window must be >= 1024, got {self.context_window}")
+        if self.score_weights is not None:
+            valid_keys = {"correctness", "completeness", "quality", "elegance"}
+            invalid = set(self.score_weights.keys()) - valid_keys
+            if invalid:
+                raise ConfigError(f"Invalid score_weights keys: {invalid}")

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 class DilationController:
     def __init__(self, config: TimeDilateConfig, engine):
+        config.validate()
         self.config = config
         self.engine = engine
         self.improver = ImprovementEngine(engine, config)

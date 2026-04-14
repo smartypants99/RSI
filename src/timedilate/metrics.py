@@ -12,10 +12,12 @@ class CycleMetric:
     directive: str
     directive_source: str  # "builtin" or "generated"
     branch_count: int
-    best_variant_index: int  # -1 if no improvement
+    best_variant_index: int  # -1 if no improvement, -2 if crossover
     elapsed_seconds: float
     output_delta: float = 0.0  # fraction of output that changed (0.0-1.0)
     output_length: int = 0
+    comparative_overruled: bool = False  # True if comparative check rejected winner
+    crossover_used: bool = False  # True if crossover produced the winning variant
 
 
 @dataclass
@@ -260,6 +262,24 @@ class RunMetrics:
         return lengths[-1] / lengths[0] if lengths[0] > 0 else 1.0
 
     @property
+    def comparative_overrule_rate(self) -> float:
+        """Fraction of cycles where comparative validation rejected the winner.
+        High rates suggest scoring is unreliable."""
+        if not self.cycles:
+            return 0.0
+        overruled = sum(1 for c in self.cycles if c.comparative_overruled)
+        return overruled / len(self.cycles)
+
+    @property
+    def crossover_win_rate(self) -> float:
+        """Fraction of improving cycles where crossover produced the winner."""
+        improving = [c for c in self.cycles if c.score > c.previous_score]
+        if not improving:
+            return 0.0
+        crossover_wins = sum(1 for c in improving if c.crossover_used)
+        return crossover_wins / len(improving)
+
+    @property
     def diminishing_returns(self) -> bool:
         """True if last 3+ cycles averaged < 1 point improvement."""
         if len(self.cycles) < 3:
@@ -288,6 +308,8 @@ class RunMetrics:
             "avg_output_delta": self.avg_output_delta,
             "output_bloat_ratio": round(self.output_bloat_ratio, 2),
             "superficial_change_rate": self.superficial_change_rate,
+            "comparative_overrule_rate": self.comparative_overrule_rate,
+            "crossover_win_rate": self.crossover_win_rate,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
         }
@@ -311,6 +333,10 @@ class RunMetrics:
             lines.append(f"Warning: superficial changes ({self.superficial_change_rate:.0%} of improvements are tiny edits)")
         if self.output_bloat_ratio > 3.0:
             lines.append(f"Warning: output bloat ({self.output_bloat_ratio:.1f}x initial length)")
+        if self.comparative_overrule_rate > 0.3 and len(self.cycles) >= 3:
+            lines.append(f"Warning: high comparative overrule rate ({self.comparative_overrule_rate:.0%} — scoring may be unreliable)")
+        if self.crossover_win_rate > 0.0:
+            lines.append(f"Crossover win rate: {self.crossover_win_rate:.0%}")
         if self.score_inflation_rate > 0.8 and len(self.cycles) >= 3:
             lines.append(f"Warning: score inflation ({self.score_inflation_rate:.0%})")
         eff = self.directive_effectiveness

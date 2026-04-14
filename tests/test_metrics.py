@@ -333,3 +333,29 @@ def test_empty_metrics():
     assert m.effective_dilation == 0.0
     assert m.score_inflation_rate == 0.0
     assert m.max_score_jump == 0
+    assert m.comparative_overrule_rate == 0.0
+    assert m.crossover_win_rate == 0.0
+
+
+def test_comparative_overrule_rate():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=70, previous_score=60, directive="d",
+                   directive_source="builtin", branch_count=1, best_variant_index=0,
+                   elapsed_seconds=0.1, comparative_overruled=True)
+    m.record_cycle(cycle=2, score=80, previous_score=70, directive="d",
+                   directive_source="builtin", branch_count=1, best_variant_index=0,
+                   elapsed_seconds=0.1, comparative_overruled=False)
+    assert abs(m.comparative_overrule_rate - 0.5) < 0.01
+
+
+def test_crossover_win_rate():
+    m = RunMetrics(start_time=time.time())
+    # One improving cycle via crossover
+    m.record_cycle(cycle=1, score=70, previous_score=60, directive="d",
+                   directive_source="builtin", branch_count=2, best_variant_index=-2,
+                   elapsed_seconds=0.1, crossover_used=True)
+    # One improving cycle via normal variant
+    m.record_cycle(cycle=2, score=80, previous_score=70, directive="d",
+                   directive_source="builtin", branch_count=2, best_variant_index=0,
+                   elapsed_seconds=0.1)
+    assert abs(m.crossover_win_rate - 0.5) < 0.01

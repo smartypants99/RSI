@@ -25,8 +25,10 @@ class DilationResult:
     def to_report(self, config: "TimeDilateConfig | None" = None) -> dict:
         """Export a complete run report as a dict for JSON serialization."""
         from timedilate import __version__
+        import time as _time
         report = {
             "version": __version__,
+            "timestamp": _time.time(),
             "score": self.score,
             "cycles_completed": self.cycles_completed,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
@@ -245,9 +247,12 @@ class DilationController:
                     **{**self.config.__dict__, "branch_factor": branch_factor}
                 )
 
-                # Use ensemble scoring when scores are oscillating or biased
+                # Use ensemble scoring when scores are oscillating, biased,
+                # or comparative validation is frequently overruling selections
                 self.improver.force_ensemble = (
-                    metrics.score_oscillating or metrics.scoring_bias != "normal"
+                    metrics.score_oscillating
+                    or metrics.scoring_bias != "normal"
+                    or (len(metrics.cycles) >= 3 and metrics.comparative_overrule_rate > 0.3)
                 )
                 # Boost temperature diversity when stagnating
                 self.improver.stagnation_boost = metrics.stagnant_streak >= 2
@@ -365,6 +370,7 @@ class DilationController:
                     elapsed_seconds=time.time() - cycle_start,
                     output_delta=output_delta,
                     output_length=len(current_best),
+                    crossover_used=(best_idx == -2),
                 )
 
                 log_cycle_summary(

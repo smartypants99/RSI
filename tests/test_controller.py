@@ -34,21 +34,18 @@ def test_controller_dilation_1_means_no_refinement():
 
 
 def test_controller_convergence_detection():
-    config = TimeDilateConfig(dilation_factor=6, branch_factor=1, convergence_threshold=3)
+    # Use dilation_factor=5 (4 cycles), convergence_threshold=2
+    # so convergence fires after 2 no-improvement cycles (before early termination)
+    config = TimeDilateConfig(dilation_factor=5, branch_factor=1, convergence_threshold=2)
     responses = ["initial output", "80"]
-    # 5 cycles where nothing improves
-    for _ in range(3):
-        responses.extend(["same output", "70"])
-    # After 3 no-improvement cycles, fresh_attempt fires (generate + score)
-    responses.extend(["fresh output", "65"])  # fresh attempt doesn't beat 80
-    # 2 more cycles
-    for _ in range(2):
-        responses.extend(["same output", "70"])
+    # Plenty of responses for cycles + generated directives + fresh attempts
+    for _ in range(20):
+        responses.extend(["gen directive", "same output", "70", "fresh out", "65"])
     mock_engine = make_mock_engine(responses)
     controller = DilationController(config, mock_engine)
     result = controller.run("test")
-    assert result.cycles_completed == 5
     assert result.convergence_detected
+    assert result.score == 80  # never improved past initial
 
 
 def test_controller_on_cycle_callback():
@@ -193,3 +190,131 @@ def test_controller_has_metrics():
     assert result.metrics is not None
     assert len(result.metrics.cycles) == 2
     assert result.metrics.improvement_rate == 1.0
+
+
+def test_controller_no_meta_learning():
+    """With use_meta_learning=False, controller runs without meta-learner."""
+    config = TimeDilateConfig(dilation_factor=2, branch_factor=1, use_meta_learning=False)
+    mock_engine = make_mock_engine([
+        "initial output", "60",
+        "improved", "80",
+    ])
+    controller = DilationController(config, mock_engine)
+    assert controller.meta is None
+    result = controller.run("test")
+    assert result.score == 80
+
+
+def test_checkpoint_prompt_mismatch_starts_fresh():
+    """Resuming with a different prompt starts fresh instead of using stale checkpoint."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        config = TimeDilateConfig(dilation_factor=2, branch_factor=1, checkpoint_dir=tmpdir)
+        # Save a checkpoint with prompt "old task"
+        from timedilate.checkpoint import CheckpointManager
+        mgr = CheckpointManager(tmpdir)
+        mgr.save(cycle=5, output="old output", score=90, prompt="old task")
+
+        # Now run with a different prompt and resume=True
+        mock_engine = make_mock_engine(["fresh output", "70", "improved", "80"])
+        controller = DilationController(config, mock_engine)
+        result = controller.run("new task", resume=True)
+        # Should NOT have resumed — started fresh
+        assert result.resumed_from_cycle == 0
+        assert result.output != "old output"
+
+
+def test_adaptive_convergence_threshold():
+    """At high scores, convergence threshold is higher (more patient)."""
+    config = TimeDilateConfig(convergence_threshold=5)
+    engine = make_mock_engine(["init", "50"])
+    controller = DilationController(config, engine)
+    assert controller._effective_convergence_threshold(40) == 5
+    assert controller._effective_convergence_threshold(70) == 6
+    assert controller._effective_convergence_threshold(90) == 8
+
+
+def test_report_includes_version():
+    """Run report includes package version."""
+    from timedilate.controller import DilationResult
+    result = DilationResult(
+        output="x", score=50, cycles_completed=1,
+        elapsed_seconds=1.0, convergence_detected=False,
+    )
+    report = result.to_report()
+    assert "version" in report
+
+
+def test_to_report():
+    """DilationResult.to_report produces a complete exportable dict."""
+    from timedilate.controller import DilationResult
+    from timedilate.metrics import RunMetrics
+    import time
+    metrics = RunMetrics(prompt="test", task_type="code", dilation_factor=3,
+                         branch_factor=2, start_time=time.time())
+    result = DilationResult(
+        output="hello", score=85, cycles_completed=2,
+        elapsed_seconds=1.5, convergence_detected=False, metrics=metrics,
+    )
+    config = TimeDilateConfig(dilation_factor=3, branch_factor=2)
+    report = result.to_report(config)
+    assert report["score"] == 85
+    assert report["config"]["dilation_factor"] == 3
+    assert "metrics" in report
+    assert report["metrics"]["task_type"] == "code"
+
+
+def test_task_type_override():
+    """task_type_override skips auto-detection."""
+    config = TimeDilateConfig(dilation_factor=2, branch_factor=1, task_type_override="prose")
+    mock_engine = make_mock_engine([
+        "initial output", "60",
+        "improved", "80",
+    ])
+    controller = DilationController(config, mock_engine)
+    result = controller.run("Do something")  # would auto-detect as "general"
+    assert result.metrics.task_type == "prose"
+
+
+def test_controller_survives_engine_error():
+    """Engine errors in run_cycle are caught; controller continues."""
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    # Initial gen + score, then cycle 1 fails, cycle 2 succeeds
+    engine.generate = MagicMock(side_effect=[
+        "initial", "50",        # init
+        RuntimeError("gpu oom"), # cycle 1 fails in run_cycle
+        "improved", "80",       # cycle 2
+    ])
+    config = TimeDilateConfig(dilation_factor=3, branch_factor=1)
+    controller = DilationController(config, engine)
+    # Patch run_cycle to raise on first call
+    original_run_cycle = controller.improver.run_cycle
+    call_count = [0]
+    def patched_run_cycle(*args, **kwargs):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("gpu oom")
+        return original_run_cycle(*args, **kwargs)
+    controller.improver.run_cycle = patched_run_cycle
+    result = controller.run("test")
+    assert result.cycles_completed == 2
+    assert result.score >= 50  # should have recovered
+
+
+def test_history_summary_structure():
+    """History summary separates what worked from what failed."""
+    from timedilate.metrics import RunMetrics
+    config = TimeDilateConfig(dilation_factor=2, branch_factor=1)
+    mock_engine = make_mock_engine(["init", "50"])
+    controller = DilationController(config, mock_engine)
+    metrics = RunMetrics(start_time=0)
+    metrics.record_cycle(cycle=1, score=70, previous_score=50, directive="fix bugs",
+                         directive_source="builtin", branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    metrics.record_cycle(cycle=2, score=70, previous_score=70, directive="optimize",
+                         directive_source="builtin", branch_count=1, best_variant_index=-1, elapsed_seconds=0.1)
+    summary = controller._build_history_summary(metrics)
+    assert "improved the score" in summary
+    assert "fix bugs" in summary
+    assert "did NOT help" in summary
+    assert "optimize" in summary

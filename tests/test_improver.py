@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from timedilate.improver import ImprovementEngine
 from timedilate.config import TimeDilateConfig
 
@@ -58,7 +58,8 @@ def test_single_branch_mode():
     assert score == 88
 
 
-def test_handles_generation_failure():
+@patch("timedilate.improver.time.sleep")
+def test_handles_generation_failure(mock_sleep):
     """If all generations fail, returns current best."""
     engine = MagicMock()
     engine.generate = MagicMock(side_effect=RuntimeError("model crashed"))
@@ -152,6 +153,30 @@ def test_branch_temperature_diversity():
     assert t1 != t2  # different temperatures
     assert 0.3 <= t1 <= 1.0
     assert 0.3 <= t2 <= 1.0
+
+
+def test_stagnation_boost_widens_temperature():
+    """With stagnation_boost, branch temperatures are higher."""
+    config = TimeDilateConfig(branch_factor=3, temperature=0.7)
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    improver = ImprovementEngine(engine, config)
+
+    normal_t2 = improver._branch_temperature(2)
+    improver.stagnation_boost = True
+    boosted_t2 = improver._branch_temperature(2)
+    assert boosted_t2 > normal_t2  # boosted should be higher
+    assert boosted_t2 <= 1.3
+
+
+def test_stagnation_boost_single_branch():
+    """With single branch and stagnation_boost, temperature is raised."""
+    config = TimeDilateConfig(branch_factor=1, temperature=0.7)
+    engine = MagicMock()
+    improver = ImprovementEngine(engine, config)
+    assert improver._branch_temperature(0) == 0.7
+    improver.stagnation_boost = True
+    assert abs(improver._branch_temperature(0) - 0.9) < 0.01  # 0.7 + 0.2
 
 
 def test_single_branch_no_diversity():
@@ -288,6 +313,24 @@ def test_fresh_attempt():
     assert "current" not in prompt_text.lower() or "Current solution" not in prompt_text
 
 
+def test_fresh_attempt_with_insights():
+    """Fresh attempt uses best directive and score history when provided."""
+    engine = make_mock_engine(["fresh solution", "90"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    output, score = improver.fresh_attempt(
+        "Write hello world", "Be creative",
+        best_directive="Add error handling",
+        score_history=[50, 60, 65, 65, 65],
+    )
+    assert output == "fresh solution"
+    assert score == 90
+    # Check insights were included in the prompt
+    prompt_text = engine.generate.call_args_list[0][0][0]
+    assert "error handling" in prompt_text.lower()
+    assert "65" in prompt_text
+
+
 def test_fresh_attempt_failure():
     """Fresh attempt handles errors gracefully."""
     engine = MagicMock()
@@ -339,6 +382,20 @@ def test_score_feedback_in_improvement_prompt():
     assert best == "improved"
 
 
+def test_variant_diversity():
+    config = TimeDilateConfig(branch_factor=1)
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    improver = ImprovementEngine(engine, config)
+    # Identical variants = 0 diversity
+    assert improver._variant_diversity(["hello", "hello"]) == 0.0
+    # Completely different = high diversity
+    div = improver._variant_diversity(["abcdef", "xyz123"])
+    assert div > 0.5
+    # Single variant = 1.0
+    assert improver._variant_diversity(["single"]) == 1.0
+
+
 def test_deduplicate_variants():
     config = TimeDilateConfig(branch_factor=1)
     engine = MagicMock()
@@ -349,6 +406,19 @@ def test_deduplicate_variants():
     assert len(result) == 2  # one "hello world" removed
     assert result[0][1] == "hello world"
     assert result[1][1] == "something different"
+
+
+def test_crossover_with_scores():
+    """Crossover includes score context when scores provided."""
+    engine = make_mock_engine(["combined"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    result = improver._crossover("test", "sol A", "sol B", score_a=85, score_b=78)
+    assert result == "combined"
+    prompt_text = engine.generate.call_args_list[0][0][0]
+    assert "85/100" in prompt_text
+    assert "78/100" in prompt_text
+    assert "higher-scoring" in prompt_text
 
 
 def test_crossover_combines_variants():
@@ -432,7 +502,8 @@ def test_validate_variant_accepts_good():
     assert improver._validate_variant("good output here", "original output", "test prompt") is True
 
 
-def test_score_retry_on_zero():
+@patch("timedilate.improver.time.sleep")
+def test_score_retry_on_zero(mock_sleep):
     """Scoring retries when result is 0."""
     engine = make_mock_engine(["no score here", "75"])  # first returns 0, retry returns 75
     config = TimeDilateConfig(branch_factor=1)
@@ -442,7 +513,8 @@ def test_score_retry_on_zero():
     assert engine.generate.call_count == 2
 
 
-def test_score_retry_on_exception():
+@patch("timedilate.improver.time.sleep")
+def test_score_retry_on_exception(mock_sleep):
     """Scoring retries on exception."""
     engine = MagicMock()
     engine.estimate_tokens = MagicMock(return_value=100)
@@ -465,6 +537,136 @@ def test_ensemble_scoring():
     assert score == 85  # (80 + 90) // 2
 
 
+def test_task_aware_scoring_uses_code_rubric():
+    """When task_type is 'code', scoring uses code-specific rubric."""
+    engine = make_mock_engine(["improved", "85"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.task_type = "code"
+    best, score, idx = improver.run_cycle(
+        original_prompt="Write a sort function",
+        current_best="def sort(lst): return sorted(lst)",
+        current_score=50,
+        directive="Improve.",
+    )
+    assert best == "improved"
+    assert score == 85
+    # Verify the scoring prompt used code-specific rubric
+    score_call = engine.generate.call_args_list[1]
+    score_prompt = score_call[0][0]
+    assert "edge cases" in score_prompt  # from CODE_RUBRIC_ADDENDUM
+
+
+def test_progressive_harshness_at_high_score():
+    """When current_score >= 75, scoring prompt gets harshness addendum."""
+    engine = make_mock_engine(["improved", "82"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=80,
+        directive="Improve.",
+    )
+    assert best == "improved"
+    # Verify harshness addendum was included
+    score_call = engine.generate.call_args_list[1]
+    score_prompt = score_call[0][0]
+    assert "EXTRA critical" in score_prompt
+    assert "80/100" in score_prompt
+
+
+def test_score_aware_guidance_high():
+    """At high scores (>=85), prompt uses surgical guidance."""
+    engine = make_mock_engine(["improved", "90"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test", current_best="original",
+        current_score=88, directive="Polish.",
+    )
+    gen_call = engine.generate.call_args_list[0]
+    assert "surgical" in gen_call[0][0].lower()
+
+
+def test_urgency_in_prompt_when_few_cycles_left():
+    """When cycles_remaining <= 3, urgency note appears in prompt."""
+    engine = make_mock_engine(["improved", "85"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.cycles_remaining = 2
+    best, score, idx = improver.run_cycle(
+        original_prompt="test", current_best="original",
+        current_score=70, directive="Improve.",
+    )
+    gen_call = engine.generate.call_args_list[0]
+    assert "2 improvement cycle(s) remaining" in gen_call[0][0]
+
+
+def test_no_urgency_when_many_cycles_left():
+    """When cycles_remaining > 3, no urgency note."""
+    engine = make_mock_engine(["improved", "85"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.cycles_remaining = 10
+    best, score, idx = improver.run_cycle(
+        original_prompt="test", current_best="original",
+        current_score=70, directive="Improve.",
+    )
+    gen_call = engine.generate.call_args_list[0]
+    assert "remaining" not in gen_call[0][0]
+
+
+def test_score_aware_guidance_low():
+    """At low scores (<65), prompt encourages bold changes."""
+    engine = make_mock_engine(["improved", "60"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test", current_best="original",
+        current_score=30, directive="Fix.",
+    )
+    gen_call = engine.generate.call_args_list[0]
+    assert "bold" in gen_call[0][0].lower()
+
+
+def test_no_harshness_at_low_score():
+    """When current_score < 75, no harshness addendum."""
+    engine = make_mock_engine(["improved", "70"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=40,
+        directive="Improve.",
+    )
+    assert best == "improved"
+    score_call = engine.generate.call_args_list[1]
+    score_prompt = score_call[0][0]
+    assert "EXTRA critical" not in score_prompt
+
+
+def test_weighted_scoring_uses_detailed_rubric():
+    """When score_weights is set, scoring uses detailed rubric with weighted totals."""
+    engine = make_mock_engine(["improved", "C:20 K:15 Q:10 E:5"])
+    config = TimeDilateConfig(
+        branch_factor=1,
+        score_weights={"correctness": 60, "completeness": 20, "quality": 10, "elegance": 10},
+    )
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=30,
+        directive="Improve.",
+    )
+    # Weighted: (20*60 + 15*20 + 10*10 + 5*10) / (25*100) * 100 = heavy on correctness
+    assert best == "improved"
+    assert score > 0
+    assert idx == 0
+
+
 def test_cot_scoring_with_multi_branch():
     """Multi-branch scoring uses CoT format for better discrimination."""
     engine = make_mock_engine([
@@ -483,3 +685,42 @@ def test_cot_scoring_with_multi_branch():
     assert best == "v2"
     assert score == 85
     assert idx == 1
+
+
+def test_cot_scoring_uses_task_type():
+    """CoT scoring should include task-specific rubric addenda."""
+    engine = make_mock_engine(["variant", "SCORE: 75"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.task_type = "code"
+    score = improver._score_variant("Write a sort fn", "def sort(): pass", use_cot=True)
+    # Check that the scoring prompt included code-specific criteria
+    scoring_call = engine.generate.call_args_list[0]
+    prompt_text = scoring_call[0][0]
+    assert "compile/run without errors" in prompt_text
+    assert score == 75
+
+
+def test_cot_scoring_applies_harshness():
+    """CoT scoring should apply progressive harshness at high scores."""
+    engine = make_mock_engine(["SCORE: 80"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    score = improver._score_variant("test", "output", use_cot=True, current_score=80)
+    scoring_call = engine.generate.call_args_list[0]
+    prompt_text = scoring_call[0][0]
+    assert "EXTRA critical" in prompt_text
+
+
+def test_cot_scoring_applies_antibloat():
+    """CoT scoring should penalize bloated outputs."""
+    engine = make_mock_engine(["SCORE: 70"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.initial_output_length = 100
+    # Variant is 3x the initial length (>2.5x threshold)
+    long_variant = "x" * 300
+    score = improver._score_variant("test", long_variant, use_cot=True)
+    scoring_call = engine.generate.call_args_list[0]
+    prompt_text = scoring_call[0][0]
+    assert "Penalize unnecessary verbosity" in prompt_text

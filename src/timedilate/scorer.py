@@ -170,11 +170,18 @@ class Scorer:
             f"{rubric}"
         )
 
-    def build_cot_scoring_prompt(self, original_prompt: str, output: str) -> str:
+    def build_cot_scoring_prompt(self, original_prompt: str, output: str,
+                                    task_type: str = "general") -> str:
+        """CoT scoring prompt with optional task-aware addendum."""
+        addendum = ""
+        if task_type == "code":
+            addendum = self.CODE_RUBRIC_ADDENDUM
+        elif task_type == "prose":
+            addendum = self.PROSE_RUBRIC_ADDENDUM
         return (
             f"Original task: {original_prompt}\n\n"
             f"Output to score:\n{output}\n\n"
-            f"{self.COT_RUBRIC}"
+            f"{self.COT_RUBRIC}{addendum}"
         )
 
     def parse_cot_score(self, raw: str) -> int:

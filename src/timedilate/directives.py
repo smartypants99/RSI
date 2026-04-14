@@ -33,6 +33,32 @@ GENERAL_DIRECTIVES = [
     "Polish and refine the output.",
 ]
 
+HIGH_SCORE_CODE_DIRECTIVES = [
+    "Review every branch condition — is there an off-by-one or missed edge case?",
+    "Reduce the cyclomatic complexity of the most complex function.",
+    "Replace any magic numbers or strings with named constants.",
+    "Ensure the time complexity is optimal for the problem constraints.",
+    "Add type annotations and tighten the API surface.",
+    "Make error messages actionable — include what went wrong and how to fix it.",
+]
+
+HIGH_SCORE_PROSE_DIRECTIVES = [
+    "Find the weakest paragraph and rewrite it with a stronger claim and evidence.",
+    "Cut any sentence that doesn't advance the argument.",
+    "Replace abstract statements with concrete, specific examples.",
+    "Improve transitions between paragraphs for smoother flow.",
+    "Sharpen the thesis — can someone disagree with it?",
+    "Ensure the conclusion adds insight rather than just summarizing.",
+]
+
+HIGH_SCORE_GENERAL_DIRECTIVES = [
+    "Identify the single weakest part of this output and make it excellent.",
+    "Remove anything that adds length without adding value.",
+    "Add one concrete example that makes the output more useful.",
+    "Verify every factual claim or assumption — fix any that are wrong.",
+    "Improve the opening to immediately engage the reader.",
+]
+
 TASK_KEYWORDS = {
     "code": [
         "function", "code", "program", "script", "implement", "build",
@@ -67,8 +93,18 @@ class DirectiveGenerator:
             return PROSE_DIRECTIVES
         return GENERAL_DIRECTIVES
 
-    def next_directive(self, task_type: str, cycle_index: int) -> str:
-        directives = self.get_directives(task_type)
+    def get_high_score_directives(self, task_type: str) -> list[str]:
+        if task_type == "code":
+            return HIGH_SCORE_CODE_DIRECTIVES
+        if task_type == "prose":
+            return HIGH_SCORE_PROSE_DIRECTIVES
+        return HIGH_SCORE_GENERAL_DIRECTIVES
+
+    def next_directive(self, task_type: str, cycle_index: int, current_score: int = 0) -> str:
+        if current_score >= 70:
+            directives = self.get_high_score_directives(task_type)
+        else:
+            directives = self.get_directives(task_type)
         return directives[cycle_index % len(directives)]
 
     def directive_for_weakness(self, weakest_aspect: str) -> str:

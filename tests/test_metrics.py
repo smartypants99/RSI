@@ -190,6 +190,139 @@ def test_summary():
     assert "70 -> 85" in summary
 
 
+def test_avg_output_delta():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=80, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_delta=0.3)
+    m.record_cycle(cycle=2, score=85, previous_score=80, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_delta=0.1)
+    assert m.avg_output_delta == 0.2
+
+
+def test_superficial_change_rate():
+    m = RunMetrics(start_time=time.time())
+    # Two improving cycles: one with big delta, one with tiny delta
+    m.record_cycle(cycle=1, score=80, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_delta=0.3)
+    m.record_cycle(cycle=2, score=85, previous_score=80, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_delta=0.02)
+    assert m.superficial_change_rate == 0.5  # 1 of 2 improving cycles is superficial
+
+
+def test_superficial_change_rate_ignores_non_improving():
+    m = RunMetrics(start_time=time.time())
+    # Non-improving cycle with tiny delta should not count
+    m.record_cycle(cycle=1, score=70, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=-1, elapsed_seconds=0.1, output_delta=0.01)
+    m.record_cycle(cycle=2, score=80, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_delta=0.4)
+    assert m.superficial_change_rate == 0.0  # only 1 improving cycle, it has big delta
+
+
+def test_score_variance():
+    m = RunMetrics(start_time=time.time())
+    # Consistent deltas: variance should be low
+    for i in range(4):
+        m.record_cycle(cycle=i+1, score=60+i*5, previous_score=55+i*5, directive="d",
+                       directive_source="builtin", branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.score_variance < 1.0  # very consistent +5 per cycle
+
+
+def test_score_oscillating():
+    m = RunMetrics(start_time=time.time())
+    # Oscillating: up, down, up, down
+    scores = [(70, 60), (65, 70), (75, 65), (70, 75)]
+    for i, (score, prev) in enumerate(scores):
+        m.record_cycle(cycle=i+1, score=score, previous_score=prev, directive="d",
+                       directive_source="builtin", branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.score_oscillating is True
+
+
+def test_not_oscillating_when_improving():
+    m = RunMetrics(start_time=time.time())
+    for i in range(4):
+        m.record_cycle(cycle=i+1, score=60+i*5, previous_score=55+i*5, directive="d",
+                       directive_source="builtin", branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.score_oscillating is False
+
+
+def test_directive_effectiveness_by_score_range():
+    m = RunMetrics(start_time=time.time())
+    # Low score range: builtin works
+    m.record_cycle(cycle=1, score=60, previous_score=40, directive="fix", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    # Mid score range: generated works
+    m.record_cycle(cycle=2, score=75, previous_score=60, directive="custom", directive_source="generated",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    # High score range: builtin fails
+    m.record_cycle(cycle=3, score=75, previous_score=75, directive="polish", directive_source="builtin",
+                   branch_count=1, best_variant_index=-1, elapsed_seconds=0.1)
+    eff = m.directive_effectiveness_by_score_range
+    assert "low" in eff
+    assert eff["low"]["builtin"] == 1.0
+    assert "mid" in eff
+    assert eff["mid"]["generated"] == 1.0
+    assert "high" in eff
+    assert eff["high"]["builtin"] == 0.0
+
+
+def test_wasted_cycles():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=80, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    m.record_cycle(cycle=2, score=75, previous_score=80, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=-1, elapsed_seconds=0.1)
+    m.record_cycle(cycle=3, score=75, previous_score=75, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=-1, elapsed_seconds=0.1)
+    assert m.wasted_cycles == 2
+    assert abs(m.efficiency - 1.0 / 3.0) < 0.01
+
+
+def test_scoring_bias_high():
+    m = RunMetrics(start_time=time.time())
+    for i in range(4):
+        m.record_cycle(cycle=i+1, score=85+i, previous_score=84+i, directive="d",
+                       directive_source="builtin", branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.scoring_bias == "high"
+
+
+def test_scoring_bias_low():
+    m = RunMetrics(start_time=time.time())
+    for i in range(4):
+        m.record_cycle(cycle=i+1, score=20, previous_score=20, directive="d",
+                       directive_source="builtin", branch_count=1, best_variant_index=-1, elapsed_seconds=0.1)
+    assert m.scoring_bias == "low"
+
+
+def test_scoring_bias_normal():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=50, previous_score=30, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    m.record_cycle(cycle=2, score=70, previous_score=50, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    m.record_cycle(cycle=3, score=75, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.scoring_bias == "normal"
+
+
+def test_output_bloat_ratio():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=60, previous_score=50, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_length=100)
+    m.record_cycle(cycle=2, score=70, previous_score=60, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_length=400)
+    assert m.output_bloat_ratio == 4.0
+
+
+def test_output_bloat_ratio_no_bloat():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=60, previous_score=50, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_length=100)
+    m.record_cycle(cycle=2, score=70, previous_score=60, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1, output_length=110)
+    assert m.output_bloat_ratio == 1.1
+
+
 def test_empty_metrics():
     m = RunMetrics()
     assert m.improvement_rate == 0.0

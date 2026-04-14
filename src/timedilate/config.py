@@ -21,6 +21,8 @@ class TimeDilateConfig:
     convergence_threshold: int = 5
     context_window: int = 32768
     use_reflection: bool = False
+    use_meta_learning: bool = True
+    task_type_override: str | None = None  # Override auto-detection: "code", "prose", "general"
     score_weights: dict | None = None  # e.g. {"correctness": 40, "completeness": 20, "quality": 20, "elegance": 20}
 
     def validate(self) -> None:
@@ -39,6 +41,10 @@ class TimeDilateConfig:
             raise ConfigError(f"convergence_threshold must be >= 1, got {self.convergence_threshold}")
         if self.context_window < 1024:
             raise ConfigError(f"context_window must be >= 1024, got {self.context_window}")
+        if self.task_type_override is not None:
+            valid_types = {"code", "prose", "general"}
+            if self.task_type_override not in valid_types:
+                raise ConfigError(f"task_type_override must be one of {valid_types}, got '{self.task_type_override}'")
         if self.score_weights is not None:
             valid_keys = {"correctness", "completeness", "quality", "elegance"}
             invalid = set(self.score_weights.keys()) - valid_keys

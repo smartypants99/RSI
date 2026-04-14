@@ -57,3 +57,33 @@ def test_list_checkpoints():
         assert len(cps) == 2
         assert cps[0]["cycle"] == 1
         assert cps[1]["cycle"] == 5
+
+
+def test_load_latest_skips_corrupt():
+    """If the latest checkpoint is corrupt, falls back to previous."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = CheckpointManager(tmpdir)
+        mgr.save(cycle=5, output="good", score=80)
+        mgr.save(cycle=10, output="also good", score=90)
+        # Corrupt the latest checkpoint
+        from pathlib import Path
+        corrupt = Path(tmpdir) / "cycle_000010.json"
+        corrupt.write_text("{invalid json")
+        result = mgr.load_latest()
+        assert result is not None
+        assert result["cycle"] == 5
+        assert result["score"] == 80
+
+
+def test_list_checkpoints_skips_corrupt():
+    """Corrupt checkpoints are silently skipped in listing."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        mgr = CheckpointManager(tmpdir)
+        mgr.save(cycle=1, output="v1", score=60)
+        from pathlib import Path
+        (Path(tmpdir) / "cycle_000002.json").write_text("not json")
+        mgr.save(cycle=3, output="v3", score=80)
+        cps = mgr.list_checkpoints()
+        assert len(cps) == 2
+        assert cps[0]["cycle"] == 1
+        assert cps[1]["cycle"] == 3

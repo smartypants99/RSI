@@ -38,20 +38,28 @@ def setup_logging(verbose: bool = False, structured: bool = False) -> None:
 
 
 def log_cycle_summary(logger: logging.Logger, cycle: int, score: int, previous_score: int,
-                      directive_source: str, elapsed: float, branch_count: int) -> None:
-    """Emit a structured cycle summary log."""
+                      directive_source: str, elapsed: float, branch_count: int,
+                      output_delta: float = 0.0, peak_score: int = 0,
+                      improvement_rate: float = 0.0) -> None:
+    """Emit a structured cycle summary log with rich per-cycle data."""
+    delta = score - previous_score
     data = {
         "cycle": cycle,
         "score": score,
-        "delta": score - previous_score,
+        "delta": delta,
         "source": directive_source,
         "elapsed_s": round(elapsed, 3),
         "branches": branch_count,
+        "output_delta": round(output_delta, 3),
+        "peak_score": peak_score,
+        "cumulative_improvement_rate": round(improvement_rate, 3),
     }
+    msg = (
+        f"Cycle {cycle}: {score} ({delta:+d}) [{directive_source}] "
+        f"{elapsed:.2f}s | change={output_delta:.0%} peak={peak_score}"
+    )
     record = logger.makeRecord(
-        logger.name, logging.INFO, "", 0,
-        f"Cycle {cycle}: {score} ({score - previous_score:+d}) [{directive_source}] {elapsed:.2f}s",
-        (), None
+        logger.name, logging.INFO, "", 0, msg, (), None
     )
     record.cycle_data = data
     logger.handle(record)

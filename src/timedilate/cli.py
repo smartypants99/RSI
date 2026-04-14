@@ -85,11 +85,24 @@ def main(ctx):
 @click.option("--resume", is_flag=True, help="Resume from last checkpoint")
 @click.option("--reflection", is_flag=True, help="Enable reflect-then-act for high-score refinement")
 @click.option("--structured-logs", is_flag=True, help="Emit JSON-structured logs")
+@click.option("--score-weights", default=None, help="Custom score weights as JSON, e.g. '{\"correctness\":60,\"completeness\":20,\"quality\":10,\"elegance\":10}'")
+@click.option("--task-type", type=click.Choice(["code", "prose", "general"]), default=None, help="Override task type auto-detection")
+@click.option("--meta-learning/--no-meta-learning", default=True, help="Enable/disable cross-run meta-learning")
+@click.option("--quiet", is_flag=True, help="Only output the final result (for piping)")
 @click.option("--verbose", is_flag=True, help="Show detailed progress")
-def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, structured_logs, verbose):
+@click.option("--dry-run", is_flag=True, help="Show configuration without running")
+def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, structured_logs, score_weights, task_type, meta_learning, quiet, verbose, dry_run):
     """Run time dilation on a prompt."""
+    import json as _json
     budget_seconds = parse_budget(budget)
     setup_logging(verbose=verbose, structured=structured_logs)
+
+    parsed_weights = None
+    if score_weights:
+        try:
+            parsed_weights = _json.loads(score_weights)
+        except _json.JSONDecodeError:
+            raise click.BadParameter(f"Invalid JSON for --score-weights: {score_weights}")
 
     config = TimeDilateConfig(
         model=model,
@@ -98,43 +111,61 @@ def run(prompt, factor, budget, model, draft_model, branches, output_file, metri
         budget_seconds=budget_seconds,
         branch_factor=branches,
         use_reflection=reflection,
+        use_meta_learning=meta_learning,
+        task_type_override=task_type,
+        score_weights=parsed_weights,
     )
 
-    console.print("[bold green]Time Dilation Runtime[/]")
-    console.print(f"  Model: {config.model}")
-    console.print(f"  Factor: {factor}x ({factor - 1} refinement cycles)")
-    console.print(f"  Branches: {branches} per cycle")
-    console.print(f"  Budget: {budget} (advisory)")
-    console.print()
+    if not quiet:
+        console.print("[bold green]Time Dilation Runtime[/]")
+        console.print(f"  Model: {config.model}")
+        console.print(f"  Factor: {factor}x ({factor - 1} refinement cycles)")
+        console.print(f"  Branches: {branches} per cycle")
+        console.print(f"  Budget: {budget} (advisory)")
+        if reflection:
+            console.print("  Reflection: enabled")
+        if task_type:
+            console.print(f"  Task type: {task_type}")
+        if score_weights:
+            console.print(f"  Score weights: {parsed_weights}")
+        console.print()
+
+    if dry_run:
+        console.print("[dim]Dry run — no inference will be performed.[/]")
+        return
 
     result = _run_dilation(prompt, config, resume=resume)
 
-    if resume and hasattr(result, 'resumed_from_cycle') and result.resumed_from_cycle > 0:
-        console.print(f"[dim]Resumed from cycle {result.resumed_from_cycle}[/]")
-
-    console.print()
-    console.print(
-        f"[bold green]Complete![/] {result.cycles_completed} cycles in "
-        f"{result.elapsed_seconds:.1f}s | Score: {result.score}/100"
-    )
-    if result.interrupted:
-        console.print("[yellow]Interrupted -- returning best result so far[/]")
-    if result.convergence_detected:
-        console.print("[yellow]Note: convergence detected -- output may have plateaued[/]")
-    console.print()
-    console.print(result.output)
-
-    if result.metrics:
-        console.print(f"\n[dim]{result.metrics.summary()}[/]")
+    if quiet:
+        click.echo(result.output)
+    else:
+        if resume and hasattr(result, 'resumed_from_cycle') and result.resumed_from_cycle > 0:
+            console.print(f"[dim]Resumed from cycle {result.resumed_from_cycle}[/]")
+        console.print()
+        console.print(
+            f"[bold green]Complete![/] {result.cycles_completed} cycles in "
+            f"{result.elapsed_seconds:.1f}s | Score: {result.score}/100"
+        )
+        if result.interrupted:
+            console.print("[yellow]Interrupted -- returning best result so far[/]")
+        if result.convergence_detected:
+            console.print("[yellow]Note: convergence detected -- output may have plateaued[/]")
+        console.print()
+        console.print(result.output)
+        if result.metrics:
+            console.print(f"\n[dim]{result.metrics.summary()}[/]")
 
     if output_file:
         with open(output_file, "w") as f:
             f.write(result.output)
         console.print(f"\n[dim]Saved to {output_file}[/]")
 
-    if metrics_file and result.metrics:
-        result.metrics.save(metrics_file)
-        console.print(f"[dim]Metrics saved to {metrics_file}[/]")
+    if metrics_file:
+        import json as _json2
+        report = result.to_report(config)
+        from pathlib import Path
+        Path(metrics_file).write_text(_json2.dumps(report, indent=2))
+        console.print(f"[dim]Run report saved to {metrics_file}[/]")
 
 
 @main.command()
@@ -185,6 +216,90 @@ def benchmark(factors, model, draft_model, output_dir, verbose):
 
     console.print(format_results(results))
     console.print(f"\n[dim]Results saved to {output_dir}/results.json[/]")
+
+
+@main.command()
+@click.argument("report_a", type=click.Path(exists=True))
+@click.argument("report_b", type=click.Path(exists=True))
+def compare(report_a, report_b):
+    """Compare two run reports side by side."""
+    import json as _json
+    a = _json.loads(open(report_a).read())
+    b = _json.loads(open(report_b).read())
+
+    console.print(f"[bold]Comparing runs[/]")
+    console.print(f"  A: {report_a}")
+    console.print(f"  B: {report_b}")
+    console.print()
+
+    fields = [
+        ("Score", "score", ""),
+        ("Cycles", "cycles_completed", ""),
+        ("Time", "elapsed_seconds", "s"),
+        ("Convergence", "convergence_detected", ""),
+    ]
+    console.print(f"{'Metric':<20} {'A':>12} {'B':>12} {'Delta':>12}")
+    console.print("-" * 58)
+    for label, key, suffix in fields:
+        va = a.get(key, "?")
+        vb = b.get(key, "?")
+        if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+            delta = vb - va
+            sign = "+" if delta > 0 else ""
+            console.print(f"{label:<20} {va:>11}{suffix} {vb:>11}{suffix} {sign}{delta:>10}{suffix}")
+        else:
+            console.print(f"{label:<20} {str(va):>12} {str(vb):>12}")
+
+    # Compare metrics if present
+    for report_label, report in [("A", a), ("B", b)]:
+        m = report.get("metrics", {})
+        if m:
+            console.print(f"\n[bold]{report_label} metrics:[/]")
+            for key in ["improvement_rate", "efficiency", "peak_score", "avg_cycle_time",
+                         "output_bloat_ratio", "score_inflation_rate"]:
+                val = m.get(key)
+                if val is not None:
+                    if isinstance(val, float):
+                        console.print(f"  {key}: {val:.3f}")
+                    else:
+                        console.print(f"  {key}: {val}")
+
+
+@main.command()
+@click.argument("report_dir", default=".", type=click.Path(exists=True))
+@click.option("--limit", default=10, help="Max reports to show")
+def history(report_dir, limit):
+    """List past run reports from a directory."""
+    import json as _json
+    from pathlib import Path
+
+    reports = []
+    for f in Path(report_dir).glob("*.json"):
+        try:
+            data = _json.loads(f.read_text())
+            if "score" in data and "elapsed_seconds" in data:
+                data["_file"] = f.name
+                reports.append(data)
+        except (ValueError, KeyError):
+            continue
+
+    if not reports:
+        console.print("[dim]No run reports found.[/]")
+        return
+
+    reports.sort(key=lambda r: r.get("timestamp", 0), reverse=True)
+    reports = reports[:limit]
+
+    console.print(f"[bold]Run History ({len(reports)} reports)[/]")
+    console.print(f"{'File':<30} {'Score':>6} {'Cycles':>7} {'Time':>8} {'Task':>8}")
+    console.print("-" * 65)
+    for r in reports:
+        console.print(
+            f"{r['_file']:<30} {r.get('score', '?'):>6} "
+            f"{r.get('cycles_completed', '?'):>7} "
+            f"{r.get('elapsed_seconds', 0):>7.1f}s "
+            f"{r.get('task_type', '?'):>8}"
+        )
 
 
 if __name__ == "__main__":

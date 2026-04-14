@@ -1,6 +1,14 @@
 import os
+from unittest.mock import patch
 import pytest
 from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def no_sleep():
+    """Disable time.sleep in improver to speed up retry tests."""
+    with patch("timedilate.improver.time.sleep"):
+        yield
 
 
 @pytest.fixture(autouse=True)

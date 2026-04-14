@@ -22,6 +22,34 @@ class DilationResult:
     resumed_from_cycle: int = 0
     metrics: RunMetrics | None = None
 
+    def to_report(self, config: "TimeDilateConfig | None" = None) -> dict:
+        """Export a complete run report as a dict for JSON serialization."""
+        from timedilate import __version__
+        report = {
+            "version": __version__,
+            "score": self.score,
+            "cycles_completed": self.cycles_completed,
+            "elapsed_seconds": round(self.elapsed_seconds, 2),
+            "convergence_detected": self.convergence_detected,
+            "interrupted": self.interrupted,
+            "output_length": len(self.output),
+        }
+        if config:
+            report["config"] = {
+                "model": config.model,
+                "dilation_factor": config.dilation_factor,
+                "branch_factor": config.branch_factor,
+                "budget_seconds": config.budget_seconds,
+                "temperature": config.temperature,
+                "use_reflection": config.use_reflection,
+                "use_meta_learning": config.use_meta_learning,
+                "score_weights": config.score_weights,
+                "task_type_override": config.task_type_override,
+            }
+        if self.metrics:
+            report["metrics"] = self.metrics.to_dict()
+        return report
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +63,28 @@ class DilationController:
         self.scorer = Scorer()
         self.directives = DirectiveGenerator()
         self.checkpoint = CheckpointManager(config.checkpoint_dir)
-        self.meta = MetaLearner(path=config.checkpoint_dir + "/.meta.json")
+        self.meta = MetaLearner(path=config.checkpoint_dir + "/.meta.json") if config.use_meta_learning else None
 
     def _build_history_summary(self, metrics: RunMetrics, max_entries: int = 5) -> str:
-        """Build a concise summary of recent cycles for the improvement prompt."""
+        """Build a structured summary that highlights what worked and what to avoid."""
         if not metrics.cycles:
             return ""
         recent = metrics.cycles[-max_entries:]
-        lines = []
+
+        worked = []
+        failed = []
         for c in recent:
-            improved = "improved" if c.score > c.previous_score else "no improvement"
-            lines.append(f"- Cycle {c.cycle}: \"{c.directive}\" -> {improved} (score {c.previous_score}->{c.score})")
+            if c.score > c.previous_score:
+                worked.append(f'"{c.directive}" (+{c.score - c.previous_score} pts)')
+            else:
+                failed.append(f'"{c.directive}"')
+
+        lines = []
+        if worked:
+            lines.append(f"Approaches that improved the score: {'; '.join(worked)}")
+        if failed:
+            lines.append(f"Approaches that did NOT help (avoid these): {'; '.join(failed)}")
+        lines.append(f"Current trajectory: {' -> '.join(str(c.score) for c in recent)}")
         return "\n".join(lines)
 
     def _adaptive_branch_factor(self, cycle: int, metrics: RunMetrics) -> int:
@@ -71,6 +110,16 @@ class DilationController:
 
         return base
 
+    def _effective_convergence_threshold(self, current_score: int) -> int:
+        """Adaptive convergence threshold: more patient at high scores
+        where improvement is naturally harder."""
+        base = self.config.convergence_threshold
+        if current_score >= 85:
+            return base + 3  # much harder to improve, allow more attempts
+        if current_score >= 70:
+            return base + 1
+        return base
+
     def _should_prefer_generated(self, metrics: RunMetrics) -> bool:
         """After enough data, prefer generated directives if they outperform builtins."""
         eff = metrics.directive_effectiveness
@@ -85,7 +134,8 @@ class DilationController:
 
     def run(self, prompt: str, on_cycle=None, resume: bool = False) -> DilationResult:
         start = time.time()
-        task_type = self.directives.classify_task(prompt)
+        task_type = self.config.task_type_override or self.directives.classify_task(prompt)
+        self.improver.task_type = task_type
         refinement_cycles = self.config.dilation_factor - 1
 
         metrics = RunMetrics(
@@ -101,11 +151,21 @@ class DilationController:
         if resume:
             checkpoint = self.checkpoint.load_latest()
             if checkpoint:
-                current_best = checkpoint["output"]
-                current_score = checkpoint["score"]
-                resumed_from = checkpoint["cycle"]
-                logger.info("Resumed from checkpoint at cycle %d (score %d)",
-                            resumed_from, current_score)
+                # Validate prompt matches — don't resume a different task
+                saved_prompt = checkpoint.get("prompt", "")
+                if saved_prompt and saved_prompt != prompt:
+                    logger.warning(
+                        "Checkpoint prompt mismatch — saved: '%.50s...', current: '%.50s...'. "
+                        "Starting fresh instead of resuming.",
+                        saved_prompt, prompt
+                    )
+                    resume = False
+                else:
+                    current_best = checkpoint["output"]
+                    current_score = checkpoint["score"]
+                    resumed_from = checkpoint["cycle"]
+                    logger.info("Resumed from checkpoint at cycle %d (score %d)",
+                                resumed_from, current_score)
             else:
                 resume = False
 
@@ -123,21 +183,31 @@ class DilationController:
                     metrics=metrics,
                 )
 
-            # Score the initial output
-            score_prompt = self.scorer.build_scoring_prompt(prompt, current_best)
+            # Score the initial output (task-aware when applicable)
+            if task_type != "general":
+                score_prompt = self.scorer.build_task_aware_scoring_prompt(prompt, current_best, task_type)
+            else:
+                score_prompt = self.scorer.build_scoring_prompt(prompt, current_best)
             raw_score = self.engine.generate(
                 score_prompt, temperature=self.config.scoring_temperature
             )
             current_score = self.scorer.parse_score(raw_score)
 
+        self.improver.initial_output_length = len(current_best)
         no_improvement_count = 0
         convergence_detected = False
         built_in_exhausted = False
         directive_offset = 0
         built_in_count = len(self.directives.get_directives(task_type))
-        meta_directives = self.meta.best_directives(task_type, top_n=3)
+        meta_directives = self.meta.best_directives(task_type, top_n=3) if self.meta else []
         completed_cycles = resumed_from
         start_cycle = resumed_from
+        # Track best output seen across the entire run (may differ from current_best
+        # if comparative validation or sanity checks rejected a better variant)
+        best_ever_output = current_best
+        best_ever_score = current_score
+        consecutive_errors = 0
+        failed_directives: set[str] = set()
 
         try:
             for cycle in range(start_cycle, refinement_cycles):
@@ -149,7 +219,16 @@ class DilationController:
                     **{**self.config.__dict__, "branch_factor": branch_factor}
                 )
 
+                # Use ensemble scoring when scores are oscillating or biased
+                self.improver.force_ensemble = (
+                    metrics.score_oscillating or metrics.scoring_bias != "normal"
+                )
+                # Boost temperature diversity when stagnating
+                self.improver.stagnation_boost = metrics.stagnant_streak >= 2
+                self.improver.cycles_remaining = refinement_cycles - cycle - 1
+
                 # Every 5 cycles, do a detailed score to target weaknesses
+                score_feedback_text = ""
                 if cycle > 0 and cycle % 5 == 0:
                     try:
                         detail_prompt = self.scorer.build_detailed_scoring_prompt(prompt, current_best)
@@ -158,38 +237,69 @@ class DilationController:
                         weakness = detailed.weakest_aspect
                         directive = self.directives.directive_for_weakness(weakness)
                         directive_source = "targeted"
+                        score_feedback_text = (
+                            f"Aspect scores — Correctness: {detailed.correctness}/25, "
+                            f"Completeness: {detailed.completeness}/25, "
+                            f"Quality: {detailed.quality}/25, "
+                            f"Elegance: {detailed.elegance}/25. "
+                            f"Weakest: {weakness}."
+                        )
                         logger.info("Cycle %d: targeting weakest aspect '%s' (scores: %s)",
                                     cycle + 1, weakness, detailed.to_dict())
                     except Exception:
                         logger.warning("Detailed scoring failed, falling back to normal directive")
-                        directive = self.directives.next_directive(task_type, cycle + directive_offset)
+                        directive = self.directives.next_directive(task_type, cycle + directive_offset, current_score=current_score)
                         directive_source = "builtin"
                 elif meta_directives and cycle < len(meta_directives):
                     directive = meta_directives[cycle]
                     directive_source = "meta"
                     logger.info("Cycle %d: using meta-learned directive", cycle + 1)
-                elif built_in_exhausted or self._should_prefer_generated(metrics):
+                elif built_in_exhausted or self._should_prefer_generated(metrics) or metrics.diminishing_returns:
                     custom_prompt = self.directives.generate_custom_directive_prompt(
                         task_type, prompt, current_best
                     )
                     directive = self.engine.generate(custom_prompt)
                     directive_source = "generated"
                 else:
+                    # Try builtin directives, skipping ones that already failed
                     directive = self.directives.next_directive(
-                        task_type, cycle + directive_offset
+                        task_type, cycle + directive_offset, current_score=current_score
                     )
+                    attempts = 0
+                    while directive in failed_directives and attempts < 5:
+                        directive_offset += 1
+                        directive = self.directives.next_directive(
+                            task_type, cycle + directive_offset, current_score=current_score
+                        )
+                        attempts += 1
                     directive_source = "builtin"
 
                 previous_score = current_score
+                previous_best = current_best
                 history_summary = self._build_history_summary(metrics)
-                new_best, new_score, best_idx = self.improver.run_cycle(
-                    original_prompt=prompt,
-                    current_best=current_best,
-                    current_score=current_score,
-                    directive=directive,
-                    history_summary=history_summary,
-                    score_feedback="",
-                )
+
+                try:
+                    new_best, new_score, best_idx = self.improver.run_cycle(
+                        original_prompt=prompt,
+                        current_best=current_best,
+                        current_score=current_score,
+                        directive=directive,
+                        history_summary=history_summary,
+                        score_feedback=score_feedback_text,
+                    )
+                    consecutive_errors = 0
+                except Exception as e:
+                    consecutive_errors += 1
+                    logger.warning("Cycle %d failed: %s (consecutive errors: %d)",
+                                   cycle + 1, e, consecutive_errors)
+                    if consecutive_errors >= 3:
+                        logger.error("Too many consecutive errors, stopping early")
+                        break
+                    # Skip this cycle but continue
+                    new_best, new_score, best_idx = current_best, current_score, -1
+
+                # Compute output change magnitude before updating current_best
+                output_delta = 1.0 - self.improver._similarity_ratio(new_best, previous_best)
 
                 if new_score > current_score:
                     current_best = new_best
@@ -197,6 +307,12 @@ class DilationController:
                     no_improvement_count = 0
                 else:
                     no_improvement_count += 1
+                    failed_directives.add(directive)
+
+                # Track best output ever seen
+                if current_score > best_ever_score:
+                    best_ever_output = current_best
+                    best_ever_score = current_score
 
                 metrics.record_cycle(
                     cycle=cycle + 1,
@@ -207,23 +323,31 @@ class DilationController:
                     branch_count=branch_factor,
                     best_variant_index=best_idx,
                     elapsed_seconds=time.time() - cycle_start,
+                    output_delta=output_delta,
+                    output_length=len(current_best),
                 )
 
                 log_cycle_summary(
                     logger, cycle + 1, current_score, previous_score,
                     directive_source, time.time() - cycle_start, branch_factor,
+                    output_delta=output_delta,
+                    peak_score=metrics.peak_score,
+                    improvement_rate=metrics.improvement_rate,
                 )
 
                 # Record directive outcome for meta-learning
-                self.meta.record_directive(
-                    task_type, directive, current_score > previous_score
-                )
+                if self.meta:
+                    self.meta.record_directive(
+                        task_type, directive, current_score > previous_score
+                    )
 
-                if no_improvement_count >= self.config.convergence_threshold:
+                if no_improvement_count >= self._effective_convergence_threshold(current_score):
                     convergence_detected = True
                     # Try a fresh attempt to break out of plateau
                     fresh_output, fresh_score = self.improver.fresh_attempt(
-                        prompt, directive
+                        prompt, directive,
+                        best_directive=metrics.best_directive,
+                        score_history=metrics.score_history,
                     )
                     if fresh_output and fresh_score > current_score:
                         logger.info("Fresh attempt broke plateau (score %d -> %d)",
@@ -275,14 +399,19 @@ class DilationController:
             )
 
         self.checkpoint.cleanup()
-        try:
-            self.meta.save()
-        except Exception:
-            logger.warning("Failed to save meta-learning data")
+        if self.meta:
+            try:
+                self.meta.save()
+            except Exception:
+                logger.warning("Failed to save meta-learning data")
+
+        # Use best-ever output if it's better than current
+        final_output = best_ever_output if best_ever_score > current_score else current_best
+        final_score = max(best_ever_score, current_score)
 
         return DilationResult(
-            output=current_best,
-            score=current_score,
+            output=final_output,
+            score=final_score,
             cycles_completed=completed_cycles,
             elapsed_seconds=time.time() - start,
             convergence_detected=convergence_detected,

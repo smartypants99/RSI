@@ -32,6 +32,16 @@ def test_invalid_score_weights_keys():
         TimeDilateConfig(score_weights={"correctness": 50, "bogus": 50}).validate()
 
 
+def test_invalid_task_type_override():
+    with pytest.raises(ConfigError, match="task_type_override"):
+        TimeDilateConfig(task_type_override="invalid").validate()
+
+
+def test_valid_task_type_override():
+    config = TimeDilateConfig(task_type_override="code")
+    config.validate()  # should not raise
+
+
 def test_valid_score_weights():
     config = TimeDilateConfig(score_weights={"correctness": 60, "completeness": 20, "quality": 10, "elegance": 10})
     config.validate()  # should not raise

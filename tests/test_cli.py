@@ -81,6 +81,35 @@ def test_status_with_checkpoints():
         assert "80" in result.output
 
 
+def test_dry_run():
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", "Write hello", "--factor", "3", "--dry-run"])
+    assert result.exit_code == 0
+    assert "Dry run" in result.output
+    assert "Factor: 3x" in result.output
+
+
+def test_history_no_reports():
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = runner.invoke(main, ["history", tmpdir])
+        assert result.exit_code == 0
+        assert "No run reports" in result.output
+
+
+def test_history_with_reports():
+    import json
+    from pathlib import Path
+    runner = CliRunner()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        report = {"score": 85, "elapsed_seconds": 2.5, "cycles_completed": 5, "task_type": "code", "timestamp": 1000}
+        Path(tmpdir, "run1.json").write_text(json.dumps(report))
+        result = runner.invoke(main, ["history", tmpdir])
+        assert result.exit_code == 0
+        assert "run1.json" in result.output
+        assert "85" in result.output
+
+
 def test_benchmark_subcommand_help():
     runner = CliRunner()
     result = runner.invoke(main, ["benchmark", "--help"])

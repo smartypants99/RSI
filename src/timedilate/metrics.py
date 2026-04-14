@@ -14,6 +14,8 @@ class CycleMetric:
     branch_count: int
     best_variant_index: int  # -1 if no improvement
     elapsed_seconds: float
+    output_delta: float = 0.0  # fraction of output that changed (0.0-1.0)
+    output_length: int = 0
 
 
 @dataclass
@@ -114,6 +116,34 @@ class RunMetrics:
         }
 
     @property
+    def directive_effectiveness_by_score_range(self) -> dict[str, dict[str, float]]:
+        """Track which directive sources work at different score levels.
+        Returns {score_range: {source: improvement_rate}}."""
+        ranges: dict[str, dict[str, list[bool]]] = {
+            "low": {},    # 0-49
+            "mid": {},    # 50-74
+            "high": {},   # 75+
+        }
+        for c in self.cycles:
+            if c.previous_score < 50:
+                bucket = "low"
+            elif c.previous_score < 75:
+                bucket = "mid"
+            else:
+                bucket = "high"
+            improved = c.score > c.previous_score
+            ranges[bucket].setdefault(c.directive_source, []).append(improved)
+        return {
+            bucket: {
+                source: sum(results) / len(results)
+                for source, results in sources.items()
+                if results
+            }
+            for bucket, sources in ranges.items()
+            if sources
+        }
+
+    @property
     def best_directive(self) -> str | None:
         """Return the directive text that produced the largest score jump."""
         if not self.cycles:
@@ -155,6 +185,81 @@ class RunMetrics:
         return remaining > 2 and (proj - current) < 2
 
     @property
+    def wasted_cycles(self) -> int:
+        """Count of cycles where no improvement was made."""
+        return sum(1 for c in self.cycles if c.score <= c.previous_score)
+
+    @property
+    def efficiency(self) -> float:
+        """Ratio of improving cycles to total cycles. Higher is better."""
+        if not self.cycles:
+            return 0.0
+        return 1.0 - (self.wasted_cycles / len(self.cycles))
+
+    @property
+    def avg_output_delta(self) -> float:
+        """Average output change magnitude across cycles."""
+        if not self.cycles:
+            return 0.0
+        return sum(c.output_delta for c in self.cycles) / len(self.cycles)
+
+    @property
+    def score_variance(self) -> float:
+        """Variance of score deltas across recent cycles. High variance
+        suggests unreliable scoring — triggers ensemble scoring."""
+        if len(self.cycles) < 3:
+            return 0.0
+        recent = self.cycles[-5:]
+        deltas = [c.score - c.previous_score for c in recent]
+        mean = sum(deltas) / len(deltas)
+        return sum((d - mean) ** 2 for d in deltas) / len(deltas)
+
+    @property
+    def score_oscillating(self) -> bool:
+        """True if scores are bouncing up and down — sign of unreliable scoring."""
+        if len(self.cycles) < 4:
+            return False
+        recent = self.cycles[-4:]
+        deltas = [c.score - c.previous_score for c in recent]
+        sign_changes = sum(
+            1 for i in range(1, len(deltas))
+            if (deltas[i] > 0) != (deltas[i - 1] > 0) and deltas[i] != 0 and deltas[i - 1] != 0
+        )
+        return sign_changes >= 2
+
+    @property
+    def superficial_change_rate(self) -> float:
+        """Fraction of improving cycles with tiny output changes (<5%).
+        High values suggest the model is gaming scores with trivial edits."""
+        improving = [c for c in self.cycles if c.score > c.previous_score]
+        if not improving:
+            return 0.0
+        superficial = sum(1 for c in improving if c.output_delta < 0.05)
+        return superficial / len(improving)
+
+    @property
+    def scoring_bias(self) -> str:
+        """Detect systematic scoring bias. Returns 'high', 'low', or 'normal'.
+        'high' = all scores >80 from the start (likely overrating).
+        'low' = all scores <30 after 3+ cycles (likely underrating)."""
+        if len(self.cycles) < 3:
+            return "normal"
+        scores = [c.score for c in self.cycles]
+        if all(s > 80 for s in scores):
+            return "high"
+        if all(s < 30 for s in scores):
+            return "low"
+        return "normal"
+
+    @property
+    def output_bloat_ratio(self) -> float:
+        """Ratio of final output length to initial. Values >3.0 suggest bloat."""
+        lengths = [c.output_length for c in self.cycles if c.output_length > 0]
+        if len(lengths) < 2:
+            return 1.0
+        return lengths[-1] / lengths[0] if lengths[0] > 0 else 1.0
+
+    @property
     def diminishing_returns(self) -> bool:
         """True if last 3+ cycles averaged < 1 point improvement."""
         if len(self.cycles) < 3:
@@ -178,6 +283,11 @@ class RunMetrics:
             "max_score_jump": self.max_score_jump,
             "directive_effectiveness": self.directive_effectiveness,
             "best_directive": self.best_directive,
+            "wasted_cycles": self.wasted_cycles,
+            "efficiency": self.efficiency,
+            "avg_output_delta": self.avg_output_delta,
+            "output_bloat_ratio": round(self.output_bloat_ratio, 2),
+            "superficial_change_rate": self.superficial_change_rate,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
         }
@@ -191,11 +301,16 @@ class RunMetrics:
             f"Improvement: +{d['total_improvement']} pts ({d['improvement_rate']:.0%} of cycles improved)",
             f"Score history: {' -> '.join(str(s) for s in d['score_history'])}",
             f"Avg cycle: {d['avg_cycle_time']:.2f}s",
+            f"Efficiency: {d['efficiency']:.0%} ({d['wasted_cycles']} wasted cycles)",
         ]
         if self.best_directive:
             lines.append(f"Best directive: {self.best_directive}")
         if self.diminishing_returns:
             lines.append("Warning: diminishing returns detected")
+        if self.superficial_change_rate > 0.5 and len(self.cycles) >= 3:
+            lines.append(f"Warning: superficial changes ({self.superficial_change_rate:.0%} of improvements are tiny edits)")
+        if self.output_bloat_ratio > 3.0:
+            lines.append(f"Warning: output bloat ({self.output_bloat_ratio:.1f}x initial length)")
         if self.score_inflation_rate > 0.8 and len(self.cycles) >= 3:
             lines.append(f"Warning: score inflation ({self.score_inflation_rate:.0%})")
         eff = self.directive_effectiveness

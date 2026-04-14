@@ -56,3 +56,50 @@ def test_single_branch_mode():
     )
     assert best == "improved"
     assert score == 88
+
+
+def test_handles_generation_failure():
+    """If all generations fail, returns current best."""
+    engine = MagicMock()
+    engine.generate = MagicMock(side_effect=RuntimeError("model crashed"))
+    engine.estimate_tokens = MagicMock(return_value=100)
+    config = TimeDilateConfig(branch_factor=2)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=50,
+        directive="Improve.",
+    )
+    assert best == "original"
+    assert score == 50
+    assert idx == -1
+
+
+def test_handles_empty_generation():
+    """Empty outputs are skipped."""
+    engine = make_mock_engine(["", "good variant", "85"])
+    config = TimeDilateConfig(branch_factor=2)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=50,
+        directive="Improve.",
+    )
+    assert best == "good variant"
+    assert score == 85
+
+
+def test_variant_index_tracking():
+    engine = make_mock_engine(["v1", "v2", "v3", "60", "90", "70"])
+    config = TimeDilateConfig(branch_factor=3)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=50,
+        directive="Improve.",
+    )
+    assert idx == 1  # v2 scored highest
+    assert best == "v2"

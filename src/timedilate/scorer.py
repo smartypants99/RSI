@@ -3,12 +3,32 @@ import re
 
 class Scorer:
     RUBRIC = (
-        "Rate the following output on a scale of 0-100 based on these criteria:\n"
-        "- Correctness: Does it accurately address the task? (0-25)\n"
-        "- Completeness: Does it fully address all aspects? (0-25)\n"
-        "- Quality: Is it well-structured and polished? (0-25)\n"
-        "- Elegance: Is the approach clean and well-designed? (0-25)\n\n"
+        "You are a strict, discriminating evaluator. Score the output 0-100.\n\n"
+        "Criteria (score each sub-category, then sum):\n"
+        "- Correctness (0-25): Is it factually/logically correct? Any bugs or errors?\n"
+        "- Completeness (0-25): Does it fully address ALL aspects of the task? Missing pieces?\n"
+        "- Quality (0-25): Is it well-structured, readable, and polished?\n"
+        "- Elegance (0-25): Is the approach clean, efficient, and well-designed?\n\n"
+        "Scoring guide:\n"
+        "  0-20: Fundamentally broken or irrelevant\n"
+        "  21-40: Major issues, partially addresses the task\n"
+        "  41-60: Acceptable but significant room for improvement\n"
+        "  61-80: Good, with minor issues\n"
+        "  81-90: Very good, only nitpicks remain\n"
+        "  91-100: Exceptional, near-perfect\n\n"
+        "Be harsh. Most outputs should score 40-75. Only truly exceptional work scores 90+.\n"
         "Respond with ONLY a single integer 0-100. Nothing else."
+    )
+
+    COMPARATIVE_RUBRIC = (
+        "You are comparing two outputs for the same task. Which is better?\n\n"
+        "Criteria: Correctness, Completeness, Quality, Elegance.\n\n"
+        "Output A:\n{output_a}\n\n"
+        "Output B:\n{output_b}\n\n"
+        "If A is clearly better, respond: A\n"
+        "If B is clearly better, respond: B\n"
+        "If roughly equal, respond: TIE\n"
+        "Respond with ONLY one word: A, B, or TIE."
     )
 
     def build_scoring_prompt(self, original_prompt: str, output: str) -> str:
@@ -18,9 +38,26 @@ class Scorer:
             f"{self.RUBRIC}"
         )
 
+    def build_comparative_prompt(
+        self, original_prompt: str, output_a: str, output_b: str
+    ) -> str:
+        return (
+            f"Original task: {original_prompt}\n\n"
+            f"{self.COMPARATIVE_RUBRIC.format(output_a=output_a, output_b=output_b)}"
+        )
+
     def parse_score(self, raw: str) -> int:
         numbers = re.findall(r"\d+", raw)
         if not numbers:
             return 0
         score = int(numbers[0])
         return max(0, min(100, score))
+
+    def parse_comparison(self, raw: str) -> str:
+        """Returns 'A', 'B', or 'TIE'."""
+        raw = raw.strip().upper()
+        if raw.startswith("A"):
+            return "A"
+        if raw.startswith("B"):
+            return "B"
+        return "TIE"

@@ -1,5 +1,9 @@
+import logging
+
 from timedilate.config import TimeDilateConfig
 from timedilate.scorer import Scorer
+
+logger = logging.getLogger(__name__)
 
 
 class ImprovementEngine:
@@ -26,6 +30,7 @@ class ImprovementEngine:
         limit = int(self.config.context_window * 0.75)
         if token_est <= limit:
             return text
+        logger.info("Output exceeds context limit (%d > %d tokens), summarizing", token_est, limit)
         summary_prompt = (
             f"The following is a solution to this task: {original_prompt}\n\n"
             f"Solution:\n{text}\n\n"
@@ -33,6 +38,33 @@ class ImprovementEngine:
             f"all key functionality and correctness. Output ONLY the condensed solution."
         )
         return self.engine.generate(summary_prompt)
+
+    def _generate_variant(self, original_prompt: str, current_best: str, directive: str, current_score: int) -> str | None:
+        """Generate a single variant, returning None on failure."""
+        try:
+            prompt = self._build_improvement_prompt(
+                original_prompt, current_best, directive, current_score
+            )
+            variant = self.engine.generate(prompt)
+            if not variant or not variant.strip():
+                logger.warning("Empty variant generated, skipping")
+                return None
+            return variant
+        except Exception as e:
+            logger.warning("Variant generation failed: %s", e)
+            return None
+
+    def _score_variant(self, original_prompt: str, variant: str) -> int:
+        """Score a variant, returning 0 on failure."""
+        try:
+            score_prompt = self.scorer.build_scoring_prompt(original_prompt, variant)
+            raw_score = self.engine.generate(
+                score_prompt, temperature=self.config.scoring_temperature
+            )
+            return self.scorer.parse_score(raw_score)
+        except Exception as e:
+            logger.warning("Scoring failed: %s", e)
+            return 0
 
     def run_cycle(
         self,
@@ -47,22 +79,22 @@ class ImprovementEngine:
 
         variants = []
         for _ in range(self.config.branch_factor):
-            prompt = self._build_improvement_prompt(
+            variant = self._generate_variant(
                 original_prompt, current_best, directive, current_score
             )
-            variant = self.engine.generate(prompt)
-            variants.append(variant)
+            if variant is not None:
+                variants.append(variant)
+
+        if not variants:
+            logger.warning("All variant generations failed, keeping current best")
+            return current_best, current_score, -1
 
         best_variant = current_best
         best_score = current_score
         best_index = -1
 
         for i, variant in enumerate(variants):
-            score_prompt = self.scorer.build_scoring_prompt(original_prompt, variant)
-            raw_score = self.engine.generate(
-                score_prompt, temperature=self.config.scoring_temperature
-            )
-            score = self.scorer.parse_score(raw_score)
+            score = self._score_variant(original_prompt, variant)
             if score > best_score:
                 best_variant = variant
                 best_score = score

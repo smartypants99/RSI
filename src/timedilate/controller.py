@@ -1,3 +1,4 @@
+import logging
 import time
 from dataclasses import dataclass, field
 from timedilate.config import TimeDilateConfig
@@ -17,6 +18,9 @@ class DilationResult:
     convergence_detected: bool
     interrupted: bool = False
     metrics: RunMetrics | None = None
+
+
+logger = logging.getLogger(__name__)
 
 
 class DilationController:

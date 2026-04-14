@@ -283,6 +283,26 @@ def test_fresh_attempt_failure():
     assert score == 0
 
 
+def test_prompt_trimming_on_overflow():
+    """History is trimmed when prompt exceeds context budget."""
+    engine = MagicMock()
+    # Return high token count to trigger trimming
+    engine.estimate_tokens = MagicMock(return_value=20000)
+    engine.generate = MagicMock(side_effect=["improved", "80"])
+    config = TimeDilateConfig(branch_factor=1, context_window=32768)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original",
+        current_score=50,
+        directive="Improve.",
+        history_summary="long history...",
+        score_feedback="feedback...",
+    )
+    # Should still work — history/feedback trimmed
+    assert best == "improved"
+
+
 def test_score_feedback_in_improvement_prompt():
     """Score feedback is included in the improvement prompt."""
     engine = make_mock_engine(["improved", "88"])

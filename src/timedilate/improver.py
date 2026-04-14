@@ -13,6 +13,9 @@ class ImprovementEngine:
         self.config = config
         self.scorer = Scorer()
 
+    def _estimate_prompt_tokens(self, *parts: str) -> int:
+        return sum(self.engine.estimate_tokens(p) for p in parts if p)
+
     def _build_improvement_prompt(
         self,
         original_prompt: str,
@@ -28,6 +31,23 @@ class ImprovementEngine:
         feedback_block = ""
         if score_feedback:
             feedback_block = f"Evaluator feedback on current solution:\n{score_feedback}\n\n"
+
+        # Check if prompt would exceed context budget (60% of window, leaving room for generation)
+        prompt_budget = int(self.config.context_window * 0.6)
+        total_est = self._estimate_prompt_tokens(
+            original_prompt, current_best, history_block, feedback_block, directive
+        )
+        if total_est > prompt_budget:
+            # Trim history first, then feedback
+            logger.info("Prompt too long (%d tokens), trimming to fit %d budget",
+                        total_est, prompt_budget)
+            history_block = ""
+            total_est = self._estimate_prompt_tokens(
+                original_prompt, current_best, feedback_block, directive
+            )
+            if total_est > prompt_budget:
+                feedback_block = ""
+
         return (
             f"Original task: {original_prompt}\n\n"
             f"Current solution (scored {current_score}/100):\n{current_best}\n\n"

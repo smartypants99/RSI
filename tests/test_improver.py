@@ -726,6 +726,41 @@ def test_cot_scoring_applies_antibloat():
     assert "Penalize unnecessary verbosity" in prompt_text
 
 
+def test_reflection_prompt_code_specific():
+    """Code tasks get code-specific reflection analysis points."""
+    engine = make_mock_engine([])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.task_type = "code"
+    prompt = improver._build_reflection_prompt("Write sort", "def sort(): pass", "Fix bugs", 70)
+    assert "edge cases" in prompt
+    assert "introducing a bug" in prompt
+
+
+def test_reflection_prompt_prose_specific():
+    """Prose tasks get prose-specific reflection analysis points."""
+    engine = make_mock_engine([])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    improver.task_type = "prose"
+    prompt = improver._build_reflection_prompt("Write essay", "An essay...", "Improve", 70)
+    assert "paragraph" in prompt
+    assert "argument" in prompt
+
+
+def test_reflection_threshold_lower_for_code():
+    """Reflection activates at score 50 for code, 60 for other types."""
+    engine = make_mock_engine(["reflection", "variant", "80"])
+    config = TimeDilateConfig(branch_factor=1, use_reflection=True)
+    improver = ImprovementEngine(engine, config)
+    improver.task_type = "code"
+    # Score 55: should use reflection for code
+    best, score, idx = improver.run_cycle("Write sort", "def sort(): pass", 55, "Fix bugs")
+    # First call should be reflection prompt (has "Before making changes")
+    first_call = engine.generate.call_args_list[0][0][0]
+    assert "Before making changes" in first_call
+
+
 def test_fallback_scoring_on_zero():
     """When primary scoring returns 0 after retries, fallback scoring kicks in."""
     engine = make_mock_engine([

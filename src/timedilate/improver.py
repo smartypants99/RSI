@@ -134,15 +134,35 @@ class ImprovementEngine:
     ) -> str:
         """Ask the model to reflect on what to change before generating."""
         feedback_block = f"\nEvaluator feedback: {score_feedback}\n" if score_feedback else ""
+
+        if self.task_type == "code":
+            analysis_points = (
+                "1. What are the 2-3 most impactful changes that would raise the score?\n"
+                "2. Which functions/sections should NOT be touched (they're correct)?\n"
+                "3. Are there any edge cases or error paths not handled?\n"
+                "4. What is the biggest risk of introducing a bug?"
+            )
+        elif self.task_type == "prose":
+            analysis_points = (
+                "1. Which paragraph or section is weakest and how should it change?\n"
+                "2. What parts of the argument are strong and should be preserved?\n"
+                "3. Is the structure logical? Any flow issues?\n"
+                "4. What is the biggest risk of weakening the writing?"
+            )
+        else:
+            analysis_points = (
+                "1. What are the 2-3 most impactful changes that would raise the score?\n"
+                "2. What should NOT be changed (things that are already good)?\n"
+                "3. What is the biggest risk of regression?"
+            )
+
         return (
             f"Original task: {original_prompt}\n\n"
             f"Current solution (scored {current_score}/100):\n{current_best}\n"
             f"{feedback_block}\n"
             f"Improvement directive: {directive}\n\n"
             f"Before making changes, analyze:\n"
-            f"1. What are the 2-3 most impactful changes that would raise the score?\n"
-            f"2. What should NOT be changed (things that are already good)?\n"
-            f"3. What is the biggest risk of regression?\n\n"
+            f"{analysis_points}\n\n"
             f"Be specific and concise. 3-5 sentences total."
         )
 
@@ -369,7 +389,10 @@ class ImprovementEngine:
         current_best = self._maybe_summarize(current_best, original_prompt)
 
         variants = []
-        use_reflection = self.config.use_reflection and current_score >= 60
+        # Reflection is most valuable for code (catches bugs before they happen)
+        # so activate it earlier for code tasks
+        reflection_threshold = 50 if self.task_type == "code" else 60
+        use_reflection = self.config.use_reflection and current_score >= reflection_threshold
         cycle_start = time.time()
         budget_per_branch = self.config.budget_seconds / max(self.config.dilation_factor, 1) / max(self.config.branch_factor, 1)
 

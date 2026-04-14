@@ -95,6 +95,39 @@ class Scorer:
         "Respond with ONLY one word: A, B, or TIE."
     )
 
+    CODE_RUBRIC_ADDENDUM = (
+        "\nCode-specific criteria (weight these heavily):\n"
+        "- Does it compile/run without errors?\n"
+        "- Does it handle edge cases (empty input, nulls, boundaries)?\n"
+        "- Is the algorithm efficient for the expected input size?\n"
+        "- Are variable/function names descriptive?\n"
+    )
+
+    PROSE_RUBRIC_ADDENDUM = (
+        "\nWriting-specific criteria (weight these heavily):\n"
+        "- Is the argument clear and well-supported?\n"
+        "- Does it flow logically from point to point?\n"
+        "- Is the tone appropriate for the audience?\n"
+        "- Are there concrete examples?\n"
+    )
+
+    def _rubric_for_task(self, task_type: str) -> str:
+        """Return the base rubric with task-specific additions."""
+        base = self.RUBRIC
+        if task_type == "code":
+            return base + self.CODE_RUBRIC_ADDENDUM
+        if task_type == "prose":
+            return base + self.PROSE_RUBRIC_ADDENDUM
+        return base
+
+    def build_task_aware_scoring_prompt(self, original_prompt: str, output: str, task_type: str) -> str:
+        rubric = self._rubric_for_task(task_type)
+        return (
+            f"Original task: {original_prompt}\n\n"
+            f"Output to score:\n{output}\n\n"
+            f"{rubric}"
+        )
+
     def build_cot_scoring_prompt(self, original_prompt: str, output: str) -> str:
         return (
             f"Original task: {original_prompt}\n\n"

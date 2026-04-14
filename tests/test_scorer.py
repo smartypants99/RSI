@@ -116,6 +116,24 @@ def test_parse_cot_score_clamps():
     assert scorer.parse_cot_score("SCORE: 0") == 0
 
 
+def test_task_aware_scoring_code():
+    scorer = Scorer()
+    prompt = scorer.build_task_aware_scoring_prompt("write sort", "def sort(): pass", "code")
+    assert "compile" in prompt.lower() or "edge case" in prompt.lower()
+
+
+def test_task_aware_scoring_prose():
+    scorer = Scorer()
+    prompt = scorer.build_task_aware_scoring_prompt("write essay", "Climate change...", "prose")
+    assert "argument" in prompt.lower() or "flow" in prompt.lower()
+
+
+def test_task_aware_scoring_general():
+    scorer = Scorer()
+    prompt = scorer.build_task_aware_scoring_prompt("do thing", "result", "general")
+    assert "Correctness" in prompt  # base rubric only
+
+
 def test_build_feedback_scoring_prompt():
     scorer = Scorer()
     prompt = scorer.build_feedback_scoring_prompt("test task", "test output")

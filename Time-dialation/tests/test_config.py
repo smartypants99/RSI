@@ -6,7 +6,7 @@ from timedilate.config import TimeDilateConfig, ConfigError
 def test_default_config():
     config = TimeDilateConfig()
     assert config.dilation_factor == 1.0
-    assert config.model == "Qwen/Qwen2.5-7B-Instruct"
+    assert config.model == "Qwen/Qwen3-8B"
 
 
 def test_validate_rejects_negative_factor():
@@ -64,3 +64,21 @@ def test_describe_with_branch_factor():
     config = TimeDilateConfig(dilation_factor=10, branch_factor=3)
     desc = config.describe()
     assert "3" in desc
+
+
+def test_validate_rejects_bad_gpu_util():
+    config = TimeDilateConfig(gpu_memory_utilization=1.5)
+    with pytest.raises(ConfigError):
+        config.validate()
+
+
+def test_validate_rejects_zero_branch_factor():
+    config = TimeDilateConfig(branch_factor=0)
+    with pytest.raises(ConfigError):
+        config.validate()
+
+
+def test_default_gpu_util_is_safe():
+    """Default must leave headroom for other GPU processes."""
+    config = TimeDilateConfig()
+    assert config.gpu_memory_utilization <= 0.75

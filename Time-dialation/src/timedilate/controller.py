@@ -42,6 +42,18 @@ class DilationResult:
     score: int
     cycle_history: list[CycleRecord] = field(default_factory=list)
     convergence_resets: int = 0
+    initial_score: int = 0
+
+    @property
+    def score_gain(self) -> int:
+        return self.score - self.initial_score
+
+    @property
+    def improvement_rate(self) -> float:
+        """Fraction of cycles that produced an improvement."""
+        if not self.cycle_history:
+            return 0.0
+        return sum(1 for c in self.cycle_history if c.improved) / len(self.cycle_history)
 
     def to_report(self, config: TimeDilateConfig | None = None) -> dict:
         from timedilate import __version__
@@ -53,6 +65,9 @@ class DilationResult:
             "total_cycles": self.total_cycles,
             "elapsed_seconds": round(self.elapsed_seconds, 3),
             "score": self.score,
+            "initial_score": self.initial_score,
+            "score_gain": self.score_gain,
+            "improvement_rate": round(self.improvement_rate, 3),
             "model_used": self.model_used,
             "convergence_resets": self.convergence_resets,
             "improvements": sum(1 for c in self.cycle_history if c.improved),
@@ -147,9 +162,27 @@ class DilationController:
             else:
                 critique = "Improve the response."
 
-            # Step 2: Refine based on critique
-            new_output = self._refine(prompt, output, critique)
-            new_score = self._score(prompt, new_output)
+            # Step 2: Refine based on critique — explore multiple branches, keep best
+            branches = max(1, self.config.branch_factor)
+            candidates = []
+            for b in range(branches):
+                try:
+                    cand = self._refine(prompt, output, critique)
+                    cand_score = self._score(prompt, cand)
+                    candidates.append((cand_score, cand))
+                except Exception as e:
+                    logger.warning("Branch %d failed: %s", b, e)
+            if not candidates:
+                logger.warning("All branches failed on cycle %d, skipping", cycle)
+                no_improve_count += 1
+                if on_cycle:
+                    on_cycle(cycle, num_cycles or cycle, best_score, time.time() - start)
+                continue
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            new_score, new_output = candidates[0]
+            if branches > 1:
+                logger.debug("Cycle %d branches scored: %s", cycle,
+                             [s for s, _ in candidates])
 
             improved = new_score > best_score
             history.append(CycleRecord(
@@ -171,54 +204,82 @@ class DilationController:
 
             # Step 3: If stuck, try fresh approach
             if no_improve_count >= self.config.convergence_patience:
-                logger.info("Convergence detected, trying fresh approach...")
+                logger.info("Convergence detected at score %d, trying fresh approach...", best_score)
+                prior_best = best_score
                 fresh = self._fresh_attempt(prompt, best_output, best_score)
                 fresh_score = self._score(prompt, fresh)
-                if fresh_score > best_score:
+                fresh_improved = fresh_score > prior_best
+                history.append(CycleRecord(
+                    cycle=cycle, action="fresh", improved=fresh_improved,
+                    score_before=prior_best, score_after=fresh_score,
+                ))
+                if fresh_improved:
                     best_output = fresh
                     best_score = fresh_score
                     output = fresh
                     score = fresh_score
-                    history.append(CycleRecord(
-                        cycle=cycle, action="fresh", improved=True,
-                        score_before=best_score, score_after=fresh_score,
-                    ))
+                    logger.info("Fresh approach improved: %d -> %d", prior_best, fresh_score)
+                else:
+                    logger.info("Fresh approach did not improve (%d vs best %d)", fresh_score, prior_best)
                 no_improve_count = 0
                 convergence_resets += 1
 
             if on_cycle:
                 on_cycle(cycle, num_cycles or cycle, best_score, time.time() - start)
 
+        initial_score_val = history[0].score_before if history else best_score
+        elapsed_total = time.time() - start
+        improvements = sum(1 for c in history if c.improved)
+        logger.info(
+            "Dilation complete: %d cycles in %.1fs, score %s -> %d (+%d), %d improvements, %d resets",
+            cycle - 1, elapsed_total, initial_score_val, best_score,
+            best_score - (initial_score_val or 0), improvements, convergence_resets,
+        )
         return DilationResult(
             output=best_output,
             dilation_factor=self.config.dilation_factor,
             cycles_completed=cycle - 1,
             total_cycles=num_cycles or cycle - 1,
-            elapsed_seconds=time.time() - start,
+            elapsed_seconds=elapsed_total,
             model_used=self.config.model,
             score=best_score,
             cycle_history=history,
             convergence_resets=convergence_resets,
+            initial_score=initial_score_val or 0,
         )
 
     def _score(self, prompt: str, output: str) -> int:
-        """Have the AI score its own output 0-100."""
+        """Have the AI score its own output 0-100.
+
+        Rubric is deliberately strict to resist grade inflation. Every band
+        requires concrete evidence (correctness, completeness, clarity) and
+        penalizes hallucination, hand-waving, and length-without-substance.
+        """
         score_prompt = (
-            f"You are scoring an AI response. Rate it 0-100.\n\n"
+            f"You are a strict reviewer. Rate the RESPONSE 0-100 for the TASK.\n\n"
             f"TASK: {prompt}\n\n"
             f"RESPONSE:\n{output}\n\n"
-            f"Score criteria: correctness, completeness, clarity, usefulness.\n"
-            f"Reply with ONLY a number 0-100."
+            f"Rubric (anti-inflation):\n"
+            f"  0-19  = wrong, off-topic, or empty\n"
+            f"  20-39 = partial attempt with major errors or missing requirements\n"
+            f"  40-59 = mostly on topic but incomplete, unclear, or with factual errors\n"
+            f"  60-74 = correct core, minor gaps or rough edges\n"
+            f"  75-89 = correct, complete, clear — would satisfy an expert reviewer\n"
+            f"  90-100 = flawless, thorough, and efficient; reserved for truly excellent work\n"
+            f"Penalize: padding, hedging, hallucinated facts, unexplained code, length without substance.\n"
+            f"Default to the LOWER band when in doubt.\n"
+            f"Reply with ONLY a single integer 0-100."
         )
         try:
-            result = self.engine.generate(score_prompt, max_tokens=16, temperature=0.1)
-            # Extract first number from response
+            result = self.engine.generate(score_prompt, max_tokens=16, temperature=0.0)
             for word in result.split():
-                word = word.strip(".,!()[]")
+                word = word.strip(".,!()[]:")
                 if word.isdigit():
                     return min(100, max(0, int(word)))
-            return 50  # fallback
-        except Exception:
+            logger.warning("Score parse failed on: %r — defaulting to 50", result[:60])
+            return 50
+        except Exception as e:
+            logger.warning("Scoring failed: %s — defaulting to 50", e)
             return 50
 
     def _critique(self, prompt: str, output: str, score: int) -> str:

@@ -35,12 +35,19 @@ class DilationEngine:
 
         from vllm import LLM
 
-        logger.info("Initializing model: %s", self.config.model)
-        self._model = LLM(
+        logger.info(
+            "Initializing model: %s (gpu_mem_util=%.2f, max_model_len=%s)",
+            self.config.model, self.config.gpu_memory_utilization,
+            self.config.max_model_len,
+        )
+        kwargs = dict(
             model=self.config.model,
             trust_remote_code=True,
-            gpu_memory_utilization=0.90,
+            gpu_memory_utilization=self.config.gpu_memory_utilization,
         )
+        if self.config.max_model_len is not None:
+            kwargs["max_model_len"] = self.config.max_model_len
+        self._model = LLM(**kwargs)
         self._initialized = True
 
     def generate(self, prompt: str, max_tokens: int | None = None,

@@ -22,6 +22,8 @@ class TimeDilateConfig:
     # Hardware
     device: str = "cuda"
     gpu_memory_gb: float = 48.0
+    gpu_memory_utilization: float = 0.60  # fraction of GPU memory vLLM may reserve
+    max_model_len: int | None = None  # cap context length to reduce KV cache memory
 
     # Generation
     max_tokens: int = 4096
@@ -48,6 +50,14 @@ class TimeDilateConfig:
             raise ConfigError(f"temperature must be 0.0-2.0, got {self.temperature}")
         if self.gpu_memory_gb <= 0:
             raise ConfigError(f"gpu_memory_gb must be > 0, got {self.gpu_memory_gb}")
+        if not (0.1 <= self.gpu_memory_utilization <= 0.99):
+            raise ConfigError(
+                f"gpu_memory_utilization must be in 0.1-0.99, got {self.gpu_memory_utilization}"
+            )
+        if self.branch_factor < 1:
+            raise ConfigError(f"branch_factor must be >= 1, got {self.branch_factor}")
+        if self.convergence_patience < 1:
+            raise ConfigError(f"convergence_patience must be >= 1, got {self.convergence_patience}")
 
     @property
     def num_cycles(self) -> int:

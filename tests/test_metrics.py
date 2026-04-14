@@ -558,6 +558,47 @@ def test_crossover_efficiency():
     assert abs(m.crossover_efficiency - 0.5) < 0.01
 
 
+def test_score_momentum_accelerating():
+    m = _make_metrics_with_cycles([
+        {"score": 50, "previous_score": 45},  # +5
+        {"score": 58, "previous_score": 50},  # +8
+        {"score": 70, "previous_score": 58},  # +12
+        {"score": 86, "previous_score": 70},  # +16
+    ])
+    mom = m.score_momentum
+    assert mom is not None
+    assert mom > 0  # accelerating
+
+
+def test_score_momentum_decelerating():
+    m = _make_metrics_with_cycles([
+        {"score": 60, "previous_score": 50},  # +10
+        {"score": 66, "previous_score": 60},  # +6
+        {"score": 69, "previous_score": 66},  # +3
+        {"score": 70, "previous_score": 69},  # +1
+    ])
+    mom = m.score_momentum
+    assert mom is not None
+    assert mom < 0  # decelerating
+
+
+def test_score_momentum_none_insufficient_data():
+    m = _make_metrics_with_cycles([
+        {"score": 60, "previous_score": 50},
+        {"score": 70, "previous_score": 60},
+    ])
+    assert m.score_momentum is None
+
+
+def test_score_momentum_in_to_dict():
+    m = _make_metrics_with_cycles([
+        {"score": 50 + i * 5, "previous_score": 50 + (i - 1) * 5 if i > 0 else 45}
+        for i in range(5)
+    ])
+    d = m.to_dict()
+    assert "score_momentum" in d
+
+
 def test_crossover_efficiency_none_when_no_attempts():
     m = RunMetrics(start_time=time.time())
     m.record_cycle(cycle=1, score=70, previous_score=60, directive="d",

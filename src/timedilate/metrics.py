@@ -365,6 +365,19 @@ class RunMetrics:
         return max(0, self.total_improvement) / total_time
 
     @property
+    def score_momentum(self) -> float | None:
+        """Rate of change of score deltas — positive means accelerating improvement,
+        negative means decelerating. None if insufficient data.
+        Useful for predicting whether the run is about to plateau."""
+        if len(self.cycles) < 4:
+            return None
+        recent = self.cycles[-4:]
+        deltas = [c.score - c.previous_score for c in recent]
+        # Momentum = avg change in delta (second derivative)
+        delta_changes = [deltas[i] - deltas[i - 1] for i in range(1, len(deltas))]
+        return sum(delta_changes) / len(delta_changes)
+
+    @property
     def diminishing_returns(self) -> bool:
         """True if last 3+ cycles averaged < 1 point improvement."""
         if len(self.cycles) < 3:
@@ -397,6 +410,9 @@ class RunMetrics:
             recs.append("Generated directives outperform builtins — they'll be preferred automatically")
         if self.avg_cycle_time > 30:
             recs.append("Slow cycles — consider reducing branch_factor or using a faster model")
+        momentum = self.score_momentum
+        if momentum is not None and momentum < -3:
+            recs.append("Score momentum is strongly negative — improvements are decelerating fast, consider stopping early")
         if self.stagnant_streak >= 4 and self.peak_score >= 50:
             recs.append("High stagnation — try enabling --reflection for reflect-then-act generation")
         # Check if branch 0 dominates — temperature spread may be too wide
@@ -434,6 +450,7 @@ class RunMetrics:
             "total_inference_calls": self.total_inference_calls,
             "points_per_inference": round(self.points_per_inference, 3),
             "points_per_second": round(self.points_per_second, 3),
+            "score_momentum": round(self.score_momentum, 3) if self.score_momentum is not None else None,
             "score_ceiling": self.score_ceiling,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,

@@ -505,6 +505,7 @@ class ImprovementEngine:
         cycle_start = time.time()
         budget_per_branch = self.config.budget_seconds / max(self.config.dilation_factor, 1) / max(self.config.branch_factor, 1)
 
+        branch_times: list[float] = []
         for i in range(self.config.branch_factor):
             # Skip remaining branches if we've used >80% of per-cycle budget
             if i > 0 and budget_per_branch > 0:
@@ -515,6 +516,7 @@ class ImprovementEngine:
                     break
 
             temp = self._branch_temperature(i)
+            branch_start = time.time()
             if i == 0 and use_reflection:
                 variant = self._generate_with_reflection(
                     original_prompt, current_best, directive, current_score, history_summary, temperature=temp, score_feedback=score_feedback
@@ -523,6 +525,7 @@ class ImprovementEngine:
                 variant = self._generate_variant(
                     original_prompt, current_best, directive, current_score, history_summary, temperature=temp, score_feedback=score_feedback
                 )
+            branch_times.append(time.time() - branch_start)
             if variant is not None and self._validate_variant(variant, current_best, original_prompt):
                 variants.append(variant)
             elif variant is not None:
@@ -530,6 +533,11 @@ class ImprovementEngine:
                 reason = self._validation_failure_reason(variant, current_best, original_prompt)
                 if reason:
                     rejection_reasons.add(reason)
+
+        if len(branch_times) > 1:
+            logger.debug("Branch gen times: %s (avg %.2fs)",
+                         [round(t, 2) for t in branch_times],
+                         sum(branch_times) / len(branch_times))
 
         if rejected_count > 0:
             logger.info("Rejected %d/%d variants (validation failures: %s)",
@@ -562,7 +570,9 @@ class ImprovementEngine:
             deduped = self._deduplicate_variants(variants)
             variants = [v for _, v in deduped]
 
-        # Choose selection strategy
+        # Choose selection strategy and log the mode
+        scoring_mode = "ensemble" if self.force_ensemble else ("weighted" if self.config.score_weights else ("task-aware" if self.task_type != "general" else "standard"))
+        logger.debug("Scoring mode: %s, variants: %d", scoring_mode, len(variants))
         score_start = time.time()
         if len(variants) >= 4:
             winner_variant, winner_index = self._tournament_select(original_prompt, variants)

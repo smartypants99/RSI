@@ -152,6 +152,18 @@ def test_diminishing_returns_not_detected():
     assert m.diminishing_returns is False
 
 
+def test_summary():
+    m = RunMetrics(prompt="write sort", task_type="code", dilation_factor=5, branch_factor=1, start_time=time.time())
+    m.record_cycle(cycle=1, score=70, previous_score=50, directive="fix bugs", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.5)
+    m.record_cycle(cycle=2, score=85, previous_score=70, directive="optimize", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.3)
+    summary = m.summary()
+    assert "code" in summary
+    assert "+35" in summary
+    assert "70 -> 85" in summary
+
+
 def test_empty_metrics():
     m = RunMetrics()
     assert m.improvement_rate == 0.0

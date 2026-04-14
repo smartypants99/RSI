@@ -148,5 +148,27 @@ class RunMetrics:
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
         }
 
+    def summary(self) -> str:
+        """Human-readable summary of the run."""
+        d = self.to_dict()
+        lines = [
+            f"Task type: {d['task_type']}",
+            f"Dilation: {d['dilation_factor']}x ({d['total_cycles']} cycles)",
+            f"Improvement: +{d['total_improvement']} pts ({d['improvement_rate']:.0%} of cycles improved)",
+            f"Score history: {' -> '.join(str(s) for s in d['score_history'])}",
+            f"Avg cycle: {d['avg_cycle_time']:.2f}s",
+        ]
+        if self.best_directive:
+            lines.append(f"Best directive: {self.best_directive}")
+        if self.diminishing_returns:
+            lines.append("Warning: diminishing returns detected")
+        if self.score_inflation_rate > 0.8 and len(self.cycles) >= 3:
+            lines.append(f"Warning: score inflation ({self.score_inflation_rate:.0%})")
+        eff = self.directive_effectiveness
+        if eff:
+            eff_str = ", ".join(f"{k}={v:.0%}" for k, v in eff.items())
+            lines.append(f"Directive effectiveness: {eff_str}")
+        return "\n".join(lines)
+
     def save(self, path: str) -> None:
         Path(path).write_text(json.dumps(self.to_dict(), indent=2))

@@ -125,14 +125,7 @@ def run(prompt, factor, budget, model, draft_model, branches, output_file, metri
     console.print(result.output)
 
     if result.metrics:
-        m = result.metrics
-        console.print(f"  Improvement rate: {m.improvement_rate:.0%}")
-        console.print(f"  Total improvement: +{m.total_improvement} points")
-        console.print(f"  Avg cycle time: {m.avg_cycle_time:.2f}s")
-        if m.score_inflation_rate > 0.8 and len(m.cycles) >= 3:
-            console.print("[yellow]  Warning: high score inflation rate ({:.0%}) — scores may be unreliable[/]".format(m.score_inflation_rate))
-        if m.diminishing_returns:
-            console.print("[yellow]  Note: diminishing returns detected — consider lower dilation factor[/]")
+        console.print(f"\n[dim]{result.metrics.summary()}[/]")
 
     if output_file:
         with open(output_file, "w") as f:

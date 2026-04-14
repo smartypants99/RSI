@@ -87,6 +87,14 @@ class ImprovementEngine:
                 "Make bold changes — incremental tweaks won't be enough."
             )
 
+        # Exemplar: if history shows what worked, highlight it
+        exemplar_block = ""
+        if history_summary and "improved the score" in history_summary:
+            exemplar_block = (
+                "Learn from what worked before — apply a similar level of change "
+                "and specificity to this directive.\n\n"
+            )
+
         urgency = ""
         if 0 < self.cycles_remaining <= 3:
             urgency = (
@@ -99,6 +107,7 @@ class ImprovementEngine:
             f"Current solution (scored {current_score}/100):\n{score_context}{current_best}\n\n"
             f"{feedback_block}"
             f"{history_block}"
+            f"{exemplar_block}"
             f"{urgency}"
             f"Improvement directive: {directive}\n\n"
             f"{guidance} "

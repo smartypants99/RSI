@@ -330,6 +330,26 @@ def test_history_summary_structure():
     assert "optimize" in summary
 
 
+def test_history_summary_includes_best_exemplar():
+    """History summary should include the best-ever directive as exemplar when it's outside the recent window."""
+    from timedilate.metrics import RunMetrics
+    config = TimeDilateConfig(dilation_factor=2, branch_factor=1)
+    mock_engine = make_mock_engine(["init", "50"])
+    controller = DilationController(config, mock_engine)
+    metrics = RunMetrics(start_time=0)
+    # Best directive is cycle 1 (+30 pts) — will be outside max_entries=3 window
+    metrics.record_cycle(cycle=1, score=80, previous_score=50, directive="add error handling",
+                         directive_source="builtin", branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    for i in range(5):
+        metrics.record_cycle(cycle=i+2, score=82, previous_score=82, directive=f"tweak {i}",
+                             directive_source="builtin", branch_count=1, best_variant_index=-1, elapsed_seconds=0.1)
+    # Now recent window (last 5) won't include cycle 1
+    summary = controller._build_history_summary(metrics)
+    assert "Best approach so far" in summary
+    assert "add error handling" in summary
+    assert "+30 pts" in summary
+
+
 def test_scoring_consistency_check_triggers_ensemble():
     """When initial scores differ by >15, ensemble scoring is enabled."""
     config = TimeDilateConfig(dilation_factor=5, branch_factor=1)

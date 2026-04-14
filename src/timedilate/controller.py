@@ -87,6 +87,15 @@ class DilationController:
         if failed:
             lines.append(f"Approaches that did NOT help (avoid these): {'; '.join(failed)}")
         lines.append(f"Current trajectory: {' -> '.join(str(c.score) for c in recent)}")
+
+        # Add best single directive as an exemplar
+        best = metrics.best_directive
+        if best and best not in "; ".join(worked):
+            best_cycle = max(metrics.cycles, key=lambda c: c.score - c.previous_score)
+            if best_cycle.score > best_cycle.previous_score:
+                lines.append(
+                    f'Best approach so far: "{best}" (+{best_cycle.score - best_cycle.previous_score} pts)'
+                )
         return "\n".join(lines)
 
     def _adaptive_branch_factor(self, cycle: int, metrics: RunMetrics) -> int:

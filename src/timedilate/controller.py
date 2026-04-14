@@ -254,6 +254,7 @@ class DilationController:
 
         no_improvement_count = 0
         convergence_detected = False
+        convergence_count = 0
         built_in_exhausted = False
         directive_offset = 0
         built_in_count = len(self.directives.get_directives(task_type))
@@ -474,6 +475,11 @@ class DilationController:
 
                 if no_improvement_count >= self._effective_convergence_threshold(current_score):
                     convergence_detected = True
+                    convergence_count += 1
+                    if convergence_count >= 2:
+                        logger.info("Double convergence at cycle %d (score %d), stopping",
+                                    cycle + 1, current_score)
+                        break
                     # Try a fresh attempt to break out of plateau
                     fresh_output, fresh_score = self.improver.fresh_attempt(
                         prompt, directive,

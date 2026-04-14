@@ -367,6 +367,23 @@ def test_controller_target_score_early_stop():
     assert result.cycles_completed <= 3  # should stop after hitting 85
 
 
+def test_double_convergence_stops_run():
+    """Second convergence detection should stop the run entirely."""
+    # dilation_factor=20 (19 cycles), convergence_threshold=2
+    config = TimeDilateConfig(dilation_factor=20, branch_factor=1, convergence_threshold=2)
+    responses = ["initial output", "60", "60"]  # init + feedback + consistency
+    # Need enough responses for cycles + fresh attempts + generated directives
+    for _ in range(40):
+        responses.extend(["same output", "55", "gen dir", "fresh out", "50"])
+    mock_engine = make_mock_engine(responses)
+    controller = DilationController(config, mock_engine)
+    result = controller.run("test")
+    assert result.convergence_detected
+    # Should stop well before all 19 cycles due to double convergence
+    # First convergence at cycle ~2, reset, second convergence at cycle ~4-5
+    assert result.cycles_completed < 19
+
+
 def test_adaptive_branch_factor_trajectory():
     """Adaptive branch factor should reduce when scores are rising fast."""
     from timedilate.metrics import RunMetrics, CycleMetric

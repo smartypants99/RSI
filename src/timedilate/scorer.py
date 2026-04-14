@@ -304,11 +304,25 @@ class Scorer:
         )
 
     def parse_score(self, raw: str) -> int:
-        numbers = re.findall(r"\d+", raw)
+        """Parse a score from LLM output. Prefers explicit patterns like
+        'Score: N' or 'N/100', falls back to the last standalone number."""
+        # Try explicit patterns first
+        explicit = re.search(r"(?:score|rating)\s*[:=]\s*(\d+)", raw, re.IGNORECASE)
+        if explicit:
+            return max(0, min(100, int(explicit.group(1))))
+        # "N/100" or "N out of 100"
+        scale = re.search(r"(\d+)\s*(?:/|out\s+of)\s*100", raw, re.IGNORECASE)
+        if scale:
+            return max(0, min(100, int(scale.group(1))))
+        # Fall back to first number in 0-100 range
+        numbers = re.findall(r"\b(\d+)\b", raw)
         if not numbers:
             return 0
-        score = int(numbers[0])
-        return max(0, min(100, score))
+        for n in numbers:
+            val = int(n)
+            if 0 <= val <= 100:
+                return val
+        return max(0, min(100, int(numbers[0])))
 
     def parse_detailed_score(self, raw: str) -> DetailedScore:
         """Parse 'C:20 K:18 Q:15 E:22' format into DetailedScore."""

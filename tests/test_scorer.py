@@ -15,6 +15,17 @@ def test_parse_score_valid():
     assert scorer.parse_score("I'd give this a 90 out of 100") == 90
 
 
+def test_parse_score_explicit_patterns():
+    scorer = Scorer()
+    assert scorer.parse_score("Score: 75") == 75
+    assert scorer.parse_score("score=68") == 68
+    assert scorer.parse_score("Rating: 82") == 82
+    assert scorer.parse_score("75/100") == 75
+    assert scorer.parse_score("I'd rate it 88 out of 100") == 88
+    # Explicit pattern takes priority over other numbers in text
+    assert scorer.parse_score("There are 3 issues. Score: 65") == 65
+
+
 def test_parse_score_invalid():
     scorer = Scorer()
     assert scorer.parse_score("no number here") == 0

@@ -13,7 +13,7 @@ console = Console()
 @click.version_option(package_name="timedilate")
 @click.pass_context
 def main(ctx):
-    """AI Time Dilation Runtime — make AI inference faster."""
+    """AI Time Dilation Runtime — give AI more thinking time."""
     if ctx.invoked_subcommand is None:
         click.echo(ctx.get_help())
 
@@ -21,63 +21,61 @@ def main(ctx):
 @main.command()
 @click.argument("prompt")
 @click.option("--factor", default=1.0, type=float, help="Dilation factor (e.g., 10, 1000, 1000000)")
-@click.option("--model", default="Qwen/Qwen2.5-7B-Instruct", help="Base model")
-@click.option("--draft-model", default="Qwen/Qwen2.5-0.5B-Instruct", help="Draft model for speculative decoding")
+@click.option("--model", default="Qwen/Qwen2.5-7B-Instruct", help="Model to use")
+@click.option("--time-budget", default=None, type=float, help="Wall-clock seconds the AI gets (e.g., 5 = 5 real seconds)")
 @click.option("--max-tokens", default=4096, type=int, help="Max output tokens")
 @click.option("--output", "output_file", default=None, help="Save output to file")
 @click.option("--report", is_flag=True, help="Save JSON report")
 @click.option("--quiet", is_flag=True, help="Only output the result")
 @click.option("--verbose", is_flag=True, help="Detailed logging")
-@click.option("--dry-run", is_flag=True, help="Show acceleration config without running")
-def run(prompt, factor, model, draft_model, max_tokens, output_file, report, quiet, verbose, dry_run):
+@click.option("--dry-run", is_flag=True, help="Show config without running")
+def run(prompt, factor, model, time_budget, max_tokens, output_file, report, quiet, verbose, dry_run):
     """Run time-dilated inference on a prompt.
 
+    The dilation factor controls how much subjective thinking time the AI gets.
+    Combined with --time-budget, it gives the AI factor * budget seconds of thinking.
+
     Examples:
-        timedilate run "Write a sort function" --factor 100
-        timedilate run "Explain quantum physics" --factor 1000000
+        timedilate run "Write a sort function" --factor 1000
+        timedilate run "Solve this" --factor 1000000 --time-budget 5
     """
     setup_logging(verbose=verbose)
 
     config = TimeDilateConfig(
         model=model,
-        draft_model=draft_model,
         dilation_factor=factor,
         max_tokens=max_tokens,
+        time_budget_seconds=time_budget,
     )
-
-    # Auto-configure acceleration
-    config = config.auto_configure()
 
     if not quiet:
         console.print("[bold green]Time Dilation Runtime[/]")
-        console.print(f"  Target speedup: {factor}x")
-        console.print(f"  Base model: {model}")
-        console.print()
-        console.print(config.describe_acceleration())
+        console.print(config.describe())
         console.print()
 
     if dry_run:
         console.print("[dim]Dry run — showing configuration only.[/]")
         return
 
+    def on_cycle(cycle, total, score, elapsed):
+        if not quiet:
+            console.print(f"  [dim]Cycle {cycle}/{total} — score: {score} — {elapsed:.1f}s[/]")
+
     controller = DilationController(config)
-    result = controller.run(prompt)
+    result = controller.run(prompt, on_cycle=on_cycle)
 
     if quiet:
         click.echo(result.output)
     else:
+        console.print()
         console.print(result.output)
         console.print()
         console.print(
-            f"[bold green]Done![/] {result.actual_latency:.3f}s "
-            f"(estimated {result.base_latency_estimate:.1f}s without dilation) "
-            f"= [bold]{result.achieved_speedup:.1f}x[/] speedup"
+            f"[bold green]Done![/] {result.cycles_completed} cycles in {result.elapsed_seconds:.1f}s "
+            f"— final score: [bold]{result.score}[/]/100"
         )
-        if result.achieved_speedup < factor * 0.5:
-            console.print(
-                f"[yellow]Note: achieved {result.achieved_speedup:.1f}x "
-                f"vs target {factor}x — hardware-limited[/]"
-            )
+        if result.convergence_resets > 0:
+            console.print(f"[dim]Fresh approach attempts: {result.convergence_resets}[/]")
 
     if output_file:
         with open(output_file, "w") as f:
@@ -98,41 +96,17 @@ def run(prompt, factor, model, draft_model, max_tokens, output_file, report, qui
 
 
 @main.command()
-@click.argument("prompt")
-@click.option("--factors", default="1,10,100,1000", help="Comma-separated dilation factors")
-@click.option("--model", default="Qwen/Qwen2.5-7B-Instruct", help="Base model")
-@click.option("--verbose", is_flag=True, help="Detailed logging")
-def benchmark(prompt, factors, model, verbose):
-    """Benchmark a prompt across multiple dilation factors."""
-    setup_logging(verbose=verbose)
-    factor_list = [float(f.strip()) for f in factors.split(",")]
-
-    console.print("[bold green]Time Dilation Benchmark[/]")
-    console.print(f"  Prompt: {prompt[:80]}...")
-    console.print(f"  Factors: {factor_list}")
-    console.print()
-
-    config = TimeDilateConfig(model=model)
-    controller = DilationController(config)
-    results = controller.benchmark(prompt, factor_list)
-
-    console.print(f"{'Factor':>10} {'Latency':>10} {'Speedup':>10} {'Model':>30}")
-    console.print("-" * 65)
-    for r in results:
-        console.print(
-            f"{r.dilation_factor:>9}x {r.actual_latency:>9.3f}s "
-            f"{r.achieved_speedup:>9.1f}x {r.model_used:>30}"
-        )
-
-
-@main.command()
 @click.option("--factor", default=1000.0, type=float, help="Dilation factor to inspect")
 def explain(factor):
-    """Explain what acceleration techniques would be used for a given factor."""
-    config = TimeDilateConfig(dilation_factor=factor).auto_configure()
-    console.print(f"[bold]Acceleration plan for {factor}x dilation:[/]")
+    """Explain what happens at a given dilation factor."""
+    config = TimeDilateConfig(dilation_factor=factor)
+    console.print(f"[bold]Time dilation at {factor}x:[/]")
     console.print()
-    console.print(config.describe_acceleration())
+    console.print(config.describe())
+    console.print()
+    console.print(f"The AI will get [bold]{config.num_cycles}[/] reasoning cycles.")
+    console.print("Each cycle: score -> critique -> refine -> repeat.")
+    console.print("No quality loss. No shortcuts. Just more thinking.")
 
 
 if __name__ == "__main__":

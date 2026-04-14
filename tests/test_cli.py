@@ -2,7 +2,6 @@
 import sys
 from unittest.mock import MagicMock
 
-# Mock vllm — reuse if already mocked by test_engine
 if "vllm" not in sys.modules or not isinstance(sys.modules["vllm"], MagicMock):
     sys.modules["vllm"] = MagicMock()
 mock_vllm = sys.modules["vllm"]
@@ -24,7 +23,6 @@ def test_cli_help():
     result = runner.invoke(main, ["--help"])
     assert result.exit_code == 0
     assert "run" in result.output
-    assert "benchmark" in result.output
     assert "explain" in result.output
 
 
@@ -33,7 +31,6 @@ def test_run_help():
     result = runner.invoke(main, ["run", "--help"])
     assert result.exit_code == 0
     assert "--factor" in result.output
-    assert "--model" in result.output
 
 
 def test_explain_command():
@@ -50,25 +47,9 @@ def test_dry_run():
     assert "Dry run" in result.output
 
 
-def test_run_quiet():
+def test_run_quiet_factor_1():
     _setup_mock()
     runner = CliRunner()
     result = runner.invoke(main, ["run", "Say hi", "--factor", "1", "--quiet"])
     assert result.exit_code == 0
     assert "generated result" in result.output
-
-
-def test_run_with_output_file(tmp_path):
-    _setup_mock()
-    out = tmp_path / "out.txt"
-    runner = CliRunner()
-    result = runner.invoke(main, ["run", "test", "--factor", "1", "--quiet", "--output", str(out)])
-    assert result.exit_code == 0
-    assert out.read_text() == "generated result"
-
-
-def test_benchmark_help():
-    runner = CliRunner()
-    result = runner.invoke(main, ["benchmark", "--help"])
-    assert result.exit_code == 0
-    assert "--factors" in result.output

@@ -315,6 +315,33 @@ class RunMetrics:
         recent = self.points_per_cycle[-3:]
         return sum(recent) / len(recent) < 1.0
 
+    @property
+    def recommendations(self) -> list[str]:
+        """Suggest config changes for next run based on observed metrics."""
+        recs = []
+        if len(self.cycles) < 3:
+            return recs
+        if self.efficiency < 0.3:
+            recs.append("Low efficiency — try increasing branch_factor for more candidates per cycle")
+        if self.output_bloat_ratio > 3.0:
+            recs.append("Output bloat detected — consider adding max_output_length constraint")
+        if self.comparative_overrule_rate > 0.3:
+            recs.append("Scoring unreliable — try ensemble scoring (force_ensemble=True)")
+        if self.score_ceiling is not None and self.total_improvement < 10:
+            recs.append("Hit ceiling early — try a higher dilation_factor or different task_type classification")
+        if self.crossover_win_rate > 0.4:
+            recs.append("Crossover is very effective — consider increasing branch_factor to feed it more candidates")
+        if self.diminishing_returns and len(self.cycles) > 3:
+            recs.append("Diminishing returns — use a lower dilation_factor to save compute")
+        if self.superficial_change_rate > 0.5:
+            recs.append("Too many superficial changes — scoring may need recalibration")
+        eff = self.directive_effectiveness
+        if eff.get("generated", 0) > eff.get("builtin", 0) + 0.2:
+            recs.append("Generated directives outperform builtins — they'll be preferred automatically")
+        if self.avg_cycle_time > 30:
+            recs.append("Slow cycles — consider reducing branch_factor or using a faster model")
+        return recs
+
     def to_dict(self) -> dict:
         return {
             "prompt": self.prompt,
@@ -343,6 +370,7 @@ class RunMetrics:
             "score_ceiling": self.score_ceiling,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
+            "recommendations": self.recommendations,
         }
 
     def summary(self) -> str:
@@ -377,6 +405,11 @@ class RunMetrics:
         if eff:
             eff_str = ", ".join(f"{k}={v:.0%}" for k, v in eff.items())
             lines.append(f"Directive effectiveness: {eff_str}")
+        recs = self.recommendations
+        if recs:
+            lines.append("Recommendations:")
+            for r in recs:
+                lines.append(f"  - {r}")
         return "\n".join(lines)
 
     def save(self, path: str) -> None:

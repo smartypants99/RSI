@@ -390,3 +390,69 @@ def test_points_per_inference():
                    elapsed_seconds=0.1, inference_calls=4)
     # total_improvement=30, total_inference_calls=8
     assert abs(m.points_per_inference - 3.75) < 0.01
+
+
+def _make_metrics_with_cycles(cycles_data):
+    """Helper to build RunMetrics with multiple cycles."""
+    m = RunMetrics(start_time=time.time(), dilation_factor=10, branch_factor=2)
+    for i, data in enumerate(cycles_data):
+        defaults = dict(cycle=i+1, directive="d", directive_source="builtin",
+                        branch_count=2, best_variant_index=0, elapsed_seconds=0.1)
+        defaults.update(data)
+        m.record_cycle(**defaults)
+    return m
+
+
+def test_recommendations_low_efficiency():
+    m = _make_metrics_with_cycles([
+        {"score": 50, "previous_score": 50},
+        {"score": 50, "previous_score": 50},
+        {"score": 50, "previous_score": 50},
+        {"score": 50, "previous_score": 50},
+    ])
+    recs = m.recommendations
+    assert any("branch_factor" in r for r in recs)
+
+
+def test_recommendations_bloat():
+    m = _make_metrics_with_cycles([
+        {"score": 60, "previous_score": 50, "output_length": 100},
+        {"score": 70, "previous_score": 60, "output_length": 200},
+        {"score": 75, "previous_score": 70, "output_length": 400},
+    ])
+    recs = m.recommendations
+    assert any("bloat" in r.lower() for r in recs)
+
+
+def test_recommendations_empty_for_good_run():
+    m = _make_metrics_with_cycles([
+        {"score": 60, "previous_score": 50},
+        {"score": 70, "previous_score": 60},
+        {"score": 80, "previous_score": 70},
+    ])
+    # Good run — no major issues
+    recs = m.recommendations
+    # Should not have bloat, unreliable, or ceiling warnings
+    assert not any("bloat" in r.lower() for r in recs)
+    assert not any("unreliable" in r.lower() for r in recs)
+
+
+def test_recommendations_in_summary():
+    m = _make_metrics_with_cycles([
+        {"score": 50, "previous_score": 50},
+        {"score": 50, "previous_score": 50},
+        {"score": 50, "previous_score": 50},
+    ])
+    summary = m.summary()
+    assert "Recommendations:" in summary
+
+
+def test_recommendations_in_to_dict():
+    m = _make_metrics_with_cycles([
+        {"score": 60, "previous_score": 50},
+        {"score": 70, "previous_score": 60},
+        {"score": 80, "previous_score": 70},
+    ])
+    d = m.to_dict()
+    assert "recommendations" in d
+    assert isinstance(d["recommendations"], list)

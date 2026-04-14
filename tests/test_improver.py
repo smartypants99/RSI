@@ -724,3 +724,31 @@ def test_cot_scoring_applies_antibloat():
     scoring_call = engine.generate.call_args_list[0]
     prompt_text = scoring_call[0][0]
     assert "Penalize unnecessary verbosity" in prompt_text
+
+
+def test_fallback_scoring_on_zero():
+    """When primary scoring returns 0 after retries, fallback scoring kicks in."""
+    engine = make_mock_engine([
+        "not a number",  # primary returns 0
+        "still not",     # retry returns 0
+        "75",            # fallback succeeds
+    ])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    score = improver._score_variant("test", "output", retries=1)
+    assert score == 75
+
+
+def test_fallback_scoring_on_exception():
+    """When primary scoring raises exceptions, fallback scoring kicks in."""
+    engine = MagicMock()
+    engine.estimate_tokens = MagicMock(return_value=100)
+    engine.generate = MagicMock(side_effect=[
+        RuntimeError("gpu error"),  # primary fails
+        RuntimeError("gpu error"),  # retry fails
+        "60",                       # fallback succeeds
+    ])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    score = improver._score_variant("test", "output", retries=1)
+    assert score == 60

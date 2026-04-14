@@ -268,6 +268,19 @@ class Scorer:
 
         return True
 
+    FALLBACK_RUBRIC = (
+        "Rate this output 0-100. Just reply with a number.\n"
+        "0=terrible, 50=okay, 100=perfect."
+    )
+
+    def build_fallback_scoring_prompt(self, original_prompt: str, output: str) -> str:
+        """Minimal scoring prompt for when the primary scorer fails to parse."""
+        return (
+            f"Task: {original_prompt}\n\n"
+            f"Output:\n{output}\n\n"
+            f"{self.FALLBACK_RUBRIC}"
+        )
+
     def build_scoring_prompt(self, original_prompt: str, output: str) -> str:
         return (
             f"Original task: {original_prompt}\n\n"

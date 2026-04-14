@@ -369,6 +369,18 @@ class DilationController:
                     best_ever_output = current_best
                     best_ever_score = current_score
 
+                # Estimate inference calls: generation + scoring per branch
+                # + potential comparative/crossover/ensemble calls
+                est_calls = branch_factor  # generation
+                if self.improver.force_ensemble:
+                    est_calls += branch_factor * 2  # 2 scores per variant
+                else:
+                    est_calls += branch_factor  # 1 score per variant
+                if best_idx == -2:
+                    est_calls += 2  # crossover generation + scoring
+                if score_feedback_text:
+                    est_calls += 1  # feedback/detailed scoring call
+
                 metrics.record_cycle(
                     cycle=cycle + 1,
                     score=current_score,
@@ -381,6 +393,7 @@ class DilationController:
                     output_delta=output_delta,
                     output_length=len(current_best),
                     crossover_used=(best_idx == -2),
+                    inference_calls=est_calls,
                 )
 
                 total_elapsed = time.time() - start

@@ -297,6 +297,9 @@ class ImprovementEngine:
                     logger.info("Score was 0, retrying (%d/%d)", attempt + 1, retries)
                     time.sleep(min(0.5 * (2 ** attempt), 5.0))
                     continue
+                if score == 0 and attempt == retries:
+                    # All retries returned 0 — try fallback scoring
+                    return self._fallback_score(original_prompt, variant)
                 return score
             except Exception as e:
                 if attempt < retries:
@@ -305,9 +308,23 @@ class ImprovementEngine:
                                 attempt + 1, e, backoff)
                     time.sleep(backoff)
                     continue
-                logger.warning("Scoring failed after %d attempts: %s", attempt + 1, e)
-                return 0
+                logger.warning("Scoring failed after %d attempts: %s, trying fallback",
+                               attempt + 1, e)
+                return self._fallback_score(original_prompt, variant)
         return 0
+
+    def _fallback_score(self, original_prompt: str, variant: str) -> int:
+        """Last-resort scoring with a minimal prompt that's easy to parse."""
+        try:
+            prompt = self.scorer.build_fallback_scoring_prompt(original_prompt, variant)
+            raw = self.engine.generate(prompt, temperature=0.0)
+            score = self.scorer.parse_score(raw)
+            if score > 0:
+                logger.info("Fallback scoring succeeded: %d", score)
+            return score
+        except Exception:
+            logger.warning("Fallback scoring also failed")
+            return 0
 
     def fresh_attempt(self, original_prompt: str, directive: str,
                       best_directive: str | None = None,

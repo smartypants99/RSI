@@ -18,6 +18,7 @@ class CycleMetric:
     output_length: int = 0
     comparative_overruled: bool = False  # True if comparative check rejected winner
     crossover_used: bool = False  # True if crossover produced the winning variant
+    inference_calls: int = 0  # Number of LLM calls in this cycle
 
 
 @dataclass
@@ -280,6 +281,11 @@ class RunMetrics:
         return crossover_wins / len(improving)
 
     @property
+    def total_inference_calls(self) -> int:
+        """Total LLM inference calls across all cycles."""
+        return sum(c.inference_calls for c in self.cycles)
+
+    @property
     def diminishing_returns(self) -> bool:
         """True if last 3+ cycles averaged < 1 point improvement."""
         if len(self.cycles) < 3:
@@ -310,6 +316,7 @@ class RunMetrics:
             "superficial_change_rate": self.superficial_change_rate,
             "comparative_overrule_rate": self.comparative_overrule_rate,
             "crossover_win_rate": self.crossover_win_rate,
+            "total_inference_calls": self.total_inference_calls,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
         }
@@ -324,6 +331,7 @@ class RunMetrics:
             f"Score history: {' -> '.join(str(s) for s in d['score_history'])}",
             f"Avg cycle: {d['avg_cycle_time']:.2f}s",
             f"Efficiency: {d['efficiency']:.0%} ({d['wasted_cycles']} wasted cycles)",
+            f"Inference calls: {d['total_inference_calls']}",
         ]
         if self.best_directive:
             lines.append(f"Best directive: {self.best_directive}")

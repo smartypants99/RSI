@@ -1,4 +1,36 @@
 import re
+from dataclasses import dataclass
+
+
+@dataclass
+class DetailedScore:
+    correctness: int
+    completeness: int
+    quality: int
+    elegance: int
+
+    @property
+    def total(self) -> int:
+        return self.correctness + self.completeness + self.quality + self.elegance
+
+    @property
+    def weakest_aspect(self) -> str:
+        aspects = {
+            "correctness": self.correctness,
+            "completeness": self.completeness,
+            "quality": self.quality,
+            "elegance": self.elegance,
+        }
+        return min(aspects, key=aspects.get)
+
+    def to_dict(self) -> dict:
+        return {
+            "correctness": self.correctness,
+            "completeness": self.completeness,
+            "quality": self.quality,
+            "elegance": self.elegance,
+            "total": self.total,
+        }
 
 
 class Scorer:
@@ -20,6 +52,17 @@ class Scorer:
         "Respond with ONLY a single integer 0-100. Nothing else."
     )
 
+    DETAILED_RUBRIC = (
+        "You are a strict evaluator. Score each aspect 0-25.\n\n"
+        "- Correctness (0-25): Is it factually/logically correct? Any bugs or errors?\n"
+        "- Completeness (0-25): Does it fully address ALL aspects of the task?\n"
+        "- Quality (0-25): Is it well-structured, readable, and polished?\n"
+        "- Elegance (0-25): Is the approach clean, efficient, and well-designed?\n\n"
+        "Be harsh. Most aspects should score 10-18.\n"
+        "Respond in EXACTLY this format, nothing else:\n"
+        "C:## K:## Q:## E:##"
+    )
+
     COMPARATIVE_RUBRIC = (
         "You are comparing two outputs for the same task. Which is better?\n\n"
         "Criteria: Correctness, Completeness, Quality, Elegance.\n\n"
@@ -38,6 +81,13 @@ class Scorer:
             f"{self.RUBRIC}"
         )
 
+    def build_detailed_scoring_prompt(self, original_prompt: str, output: str) -> str:
+        return (
+            f"Original task: {original_prompt}\n\n"
+            f"Output to score:\n{output}\n\n"
+            f"{self.DETAILED_RUBRIC}"
+        )
+
     def build_comparative_prompt(
         self, original_prompt: str, output_a: str, output_b: str
     ) -> str:
@@ -52,6 +102,19 @@ class Scorer:
             return 0
         score = int(numbers[0])
         return max(0, min(100, score))
+
+    def parse_detailed_score(self, raw: str) -> DetailedScore:
+        """Parse 'C:20 K:18 Q:15 E:22' format into DetailedScore."""
+        defaults = {"c": 0, "k": 0, "q": 0, "e": 0}
+        matches = re.findall(r"([CKQE]):(\d+)", raw.upper())
+        for key, val in matches:
+            defaults[key.lower()] = max(0, min(25, int(val)))
+        return DetailedScore(
+            correctness=defaults["c"],
+            completeness=defaults["k"],
+            quality=defaults["q"],
+            elegance=defaults["e"],
+        )
 
     def parse_comparison(self, raw: str) -> str:
         """Returns 'A', 'B', or 'TIE'."""

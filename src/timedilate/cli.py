@@ -21,7 +21,7 @@ def parse_budget(value: str) -> float:
     return num * multipliers[unit]
 
 
-def run_dilation(prompt: str, config: TimeDilateConfig, resume: bool = False) -> DilationResult:
+def _run_dilation(prompt: str, config: TimeDilateConfig, resume: bool = False) -> DilationResult:
     engine = InferenceEngine(config)
     controller = DilationController(config, engine)
     total_cycles = config.dilation_factor - 1
@@ -60,7 +60,19 @@ def run_dilation(prompt: str, config: TimeDilateConfig, resume: bool = False) ->
     return result
 
 
-@click.command()
+# Keep run_dilation as public alias for backward compat with tests
+run_dilation = _run_dilation
+
+
+@click.group(invoke_without_command=True)
+@click.pass_context
+def main(ctx):
+    """AI Time Dilation Runtime -- make AI think longer in less time."""
+    if ctx.invoked_subcommand is None:
+        click.echo(ctx.get_help())
+
+
+@main.command()
 @click.argument("prompt")
 @click.option("--factor", default=2, help="Dilation factor (e.g., 2, 100, 1000000)")
 @click.option("--budget", default="30s", help="Advisory time budget (e.g., 5s, 30s, 5m)")
@@ -71,10 +83,9 @@ def run_dilation(prompt: str, config: TimeDilateConfig, resume: bool = False) ->
 @click.option("--metrics", "metrics_file", default=None, help="Save run metrics to JSON file")
 @click.option("--resume", is_flag=True, help="Resume from last checkpoint")
 @click.option("--verbose", is_flag=True, help="Show detailed progress")
-def main(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, verbose):
-    """AI Time Dilation Runtime -- make AI think longer in less time."""
+def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, verbose):
+    """Run time dilation on a prompt."""
     budget_seconds = parse_budget(budget)
-
     setup_logging(verbose=verbose)
 
     config = TimeDilateConfig(
@@ -92,7 +103,7 @@ def main(prompt, factor, budget, model, draft_model, branches, output_file, metr
     console.print(f"  Budget: {budget} (advisory)")
     console.print()
 
-    result = run_dilation(prompt, config, resume=resume)
+    result = _run_dilation(prompt, config, resume=resume)
 
     if resume and hasattr(result, 'resumed_from_cycle') and result.resumed_from_cycle > 0:
         console.print(f"[dim]Resumed from cycle {result.resumed_from_cycle}[/]")
@@ -103,9 +114,9 @@ def main(prompt, factor, budget, model, draft_model, branches, output_file, metr
         f"{result.elapsed_seconds:.1f}s | Score: {result.score}/100"
     )
     if result.interrupted:
-        console.print("[yellow]Interrupted — returning best result so far[/]")
+        console.print("[yellow]Interrupted -- returning best result so far[/]")
     if result.convergence_detected:
-        console.print("[yellow]Note: convergence detected — output may have plateaued[/]")
+        console.print("[yellow]Note: convergence detected -- output may have plateaued[/]")
     console.print()
     console.print(result.output)
 
@@ -122,6 +133,31 @@ def main(prompt, factor, budget, model, draft_model, branches, output_file, metr
     if metrics_file and result.metrics:
         result.metrics.save(metrics_file)
         console.print(f"[dim]Metrics saved to {metrics_file}[/]")
+
+
+@main.command()
+@click.option("--factors", default="1,2,5,10", help="Comma-separated dilation factors to test")
+@click.option("--model", default="Qwen/Qwen2.5-7B-Instruct", help="Model name or path")
+@click.option("--draft-model", default="Qwen/Qwen2.5-0.5B-Instruct", help="Draft model for speculative decoding")
+@click.option("--output-dir", default="benchmark_results", help="Directory for results")
+@click.option("--verbose", is_flag=True, help="Show detailed progress")
+def benchmark(factors, model, draft_model, output_dir, verbose):
+    """Run benchmark across multiple dilation factors."""
+    from timedilate.benchmark import run_benchmark, format_results
+
+    setup_logging(verbose=verbose)
+    factor_list = [int(f.strip()) for f in factors.split(",")]
+
+    console.print("[bold green]Time Dilation Benchmark[/]")
+    console.print(f"  Model: {model}")
+    console.print(f"  Factors: {factor_list}")
+    console.print()
+
+    engine = InferenceEngine(TimeDilateConfig(model=model, draft_model=draft_model))
+    results = run_benchmark(engine, factors=factor_list, output_dir=output_dir)
+
+    console.print(format_results(results))
+    console.print(f"\n[dim]Results saved to {output_dir}/results.json[/]")
 
 
 if __name__ == "__main__":

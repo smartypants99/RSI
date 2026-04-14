@@ -1,4 +1,4 @@
-from timedilate.scorer import Scorer
+from timedilate.scorer import Scorer, DetailedScore
 
 
 def test_build_scoring_prompt():
@@ -47,3 +47,39 @@ def test_parse_comparison():
 def test_scoring_rubric_has_calibration():
     scorer = Scorer()
     assert "harsh" in scorer.RUBRIC.lower() or "40-75" in scorer.RUBRIC
+
+
+def test_parse_detailed_score():
+    scorer = Scorer()
+    result = scorer.parse_detailed_score("C:20 K:18 Q:15 E:22")
+    assert result.correctness == 20
+    assert result.completeness == 18
+    assert result.quality == 15
+    assert result.elegance == 22
+    assert result.total == 75
+
+
+def test_parse_detailed_score_clamps():
+    scorer = Scorer()
+    result = scorer.parse_detailed_score("C:30 K:0 Q:25 E:25")
+    assert result.correctness == 25  # clamped to 25
+    assert result.completeness == 0
+
+
+def test_detailed_score_weakest_aspect():
+    score = DetailedScore(correctness=20, completeness=10, quality=18, elegance=22)
+    assert score.weakest_aspect == "completeness"
+
+
+def test_detailed_score_to_dict():
+    score = DetailedScore(correctness=20, completeness=18, quality=15, elegance=22)
+    d = score.to_dict()
+    assert d["total"] == 75
+    assert d["correctness"] == 20
+
+
+def test_build_detailed_scoring_prompt():
+    scorer = Scorer()
+    prompt = scorer.build_detailed_scoring_prompt("test task", "test output")
+    assert "C:##" in prompt
+    assert "Correctness" in prompt

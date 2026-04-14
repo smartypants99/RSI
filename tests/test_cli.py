@@ -1,4 +1,3 @@
-import click
 from click.testing import CliRunner
 from unittest.mock import patch, MagicMock
 from timedilate.cli import main, parse_budget
@@ -25,13 +24,21 @@ def test_cli_help():
     runner = CliRunner()
     result = runner.invoke(main, ["--help"])
     assert result.exit_code == 0
+    assert "run" in result.output
+    assert "benchmark" in result.output
+
+
+def test_run_subcommand_help():
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", "--help"])
+    assert result.exit_code == 0
     assert "budget" in result.output
     assert "factor" in result.output
 
 
-def test_cli_parses_args():
+def test_run_subcommand_parses_args():
     runner = CliRunner()
-    with patch("timedilate.cli.run_dilation") as mock_run:
+    with patch("timedilate.cli._run_dilation") as mock_run:
         mock_metrics = MagicMock()
         mock_metrics.improvement_rate = 0.8
         mock_metrics.total_improvement = 35
@@ -42,8 +49,17 @@ def test_cli_parses_args():
             elapsed_seconds=2.5,
             convergence_detected=False,
             interrupted=False,
+            resumed_from_cycle=0,
             metrics=mock_metrics,
         )
-        result = runner.invoke(main, ["Write hello", "--factor", "5", "--budget", "10s"])
+        result = runner.invoke(main, ["run", "Write hello", "--factor", "5", "--budget", "10s"])
         assert result.exit_code == 0
         mock_run.assert_called_once()
+
+
+def test_benchmark_subcommand_help():
+    runner = CliRunner()
+    result = runner.invoke(main, ["benchmark", "--help"])
+    assert result.exit_code == 0
+    assert "factors" in result.output
+    assert "output-dir" in result.output

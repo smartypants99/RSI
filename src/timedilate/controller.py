@@ -224,7 +224,9 @@ class DilationController:
                     no_improvement_count = 0
 
                 if (cycle + 1) % self.config.checkpoint_interval == 0:
-                    self.checkpoint.save(cycle + 1, current_best, current_score)
+                    self.checkpoint.save(cycle + 1, current_best, current_score,
+                                        prompt=prompt, task_type=task_type,
+                                        no_improvement_count=no_improvement_count)
 
                 completed_cycles = cycle + 1
 
@@ -239,7 +241,9 @@ class DilationController:
 
         except KeyboardInterrupt:
             # Save checkpoint on interrupt so we can resume
-            self.checkpoint.save(completed_cycles, current_best, current_score)
+            self.checkpoint.save(completed_cycles, current_best, current_score,
+                                prompt=prompt, task_type=task_type,
+                                no_improvement_count=no_improvement_count)
             return DilationResult(
                 output=current_best,
                 score=current_score,

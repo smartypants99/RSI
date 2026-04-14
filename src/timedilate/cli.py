@@ -65,6 +65,7 @@ run_dilation = _run_dilation
 
 
 @click.group(invoke_without_command=True)
+@click.version_option(package_name="timedilate")
 @click.pass_context
 def main(ctx):
     """AI Time Dilation Runtime -- make AI think longer in less time."""

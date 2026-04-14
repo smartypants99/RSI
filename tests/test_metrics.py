@@ -127,6 +127,31 @@ def test_best_directive_no_improvement():
     assert m.best_directive is None
 
 
+def test_points_per_cycle():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=80, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    m.record_cycle(cycle=2, score=82, previous_score=80, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.points_per_cycle == [10, 2]
+
+
+def test_diminishing_returns_detected():
+    m = RunMetrics(start_time=time.time())
+    for i in range(4):
+        m.record_cycle(cycle=i+1, score=70, previous_score=70, directive="d", directive_source="builtin",
+                       branch_count=1, best_variant_index=-1, elapsed_seconds=0.1)
+    assert m.diminishing_returns is True
+
+
+def test_diminishing_returns_not_detected():
+    m = RunMetrics(start_time=time.time())
+    for i in range(3):
+        m.record_cycle(cycle=i+1, score=70+i*5, previous_score=65+i*5, directive="d", directive_source="builtin",
+                       branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.diminishing_returns is False
+
+
 def test_empty_metrics():
     m = RunMetrics()
     assert m.improvement_rate == 0.0

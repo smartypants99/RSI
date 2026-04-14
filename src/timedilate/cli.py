@@ -83,11 +83,12 @@ def main(ctx):
 @click.option("--metrics", "metrics_file", default=None, help="Save run metrics to JSON file")
 @click.option("--resume", is_flag=True, help="Resume from last checkpoint")
 @click.option("--reflection", is_flag=True, help="Enable reflect-then-act for high-score refinement")
+@click.option("--structured-logs", is_flag=True, help="Emit JSON-structured logs")
 @click.option("--verbose", is_flag=True, help="Show detailed progress")
-def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, verbose):
+def run(prompt, factor, budget, model, draft_model, branches, output_file, metrics_file, resume, reflection, structured_logs, verbose):
     """Run time dilation on a prompt."""
     budget_seconds = parse_budget(budget)
-    setup_logging(verbose=verbose)
+    setup_logging(verbose=verbose, structured=structured_logs)
 
     config = TimeDilateConfig(
         model=model,
@@ -129,6 +130,8 @@ def run(prompt, factor, budget, model, draft_model, branches, output_file, metri
         console.print(f"  Avg cycle time: {m.avg_cycle_time:.2f}s")
         if m.score_inflation_rate > 0.8 and len(m.cycles) >= 3:
             console.print("[yellow]  Warning: high score inflation rate ({:.0%}) — scores may be unreliable[/]".format(m.score_inflation_rate))
+        if m.diminishing_returns:
+            console.print("[yellow]  Note: diminishing returns detected — consider lower dilation factor[/]")
 
     if output_file:
         with open(output_file, "w") as f:

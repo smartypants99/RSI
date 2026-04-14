@@ -116,6 +116,19 @@ class RunMetrics:
             return None
         return best.directive
 
+    @property
+    def points_per_cycle(self) -> list[float]:
+        """Score improvement per cycle — shows diminishing returns."""
+        return [max(0, c.score - c.previous_score) for c in self.cycles]
+
+    @property
+    def diminishing_returns(self) -> bool:
+        """True if last 3+ cycles averaged < 1 point improvement."""
+        if len(self.cycles) < 3:
+            return False
+        recent = self.points_per_cycle[-3:]
+        return sum(recent) / len(recent) < 1.0
+
     def to_dict(self) -> dict:
         return {
             "prompt": self.prompt,

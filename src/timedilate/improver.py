@@ -1,4 +1,5 @@
 import logging
+import time
 
 from timedilate.config import TimeDilateConfig
 from timedilate.scorer import Scorer
@@ -238,7 +239,18 @@ class ImprovementEngine:
 
         variants = []
         use_reflection = self.config.use_reflection and current_score >= 60
+        cycle_start = time.time()
+        budget_per_branch = self.config.budget_seconds / max(self.config.dilation_factor, 1) / max(self.config.branch_factor, 1)
+
         for i in range(self.config.branch_factor):
+            # Skip remaining branches if we've used >80% of per-cycle budget
+            if i > 0 and budget_per_branch > 0:
+                elapsed = time.time() - cycle_start
+                if elapsed > budget_per_branch * self.config.branch_factor * 0.8:
+                    logger.info("Skipping branch %d/%d — time budget exceeded (%.1fs)",
+                                i + 1, self.config.branch_factor, elapsed)
+                    break
+
             temp = self._branch_temperature(i)
             if i == 0 and use_reflection:
                 variant = self._generate_with_reflection(

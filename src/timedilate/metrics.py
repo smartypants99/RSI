@@ -58,6 +58,22 @@ class RunMetrics:
         return streak
 
     @property
+    def score_inflation_rate(self) -> float:
+        """Detect suspiciously consistent score increases.
+        Returns fraction of cycles with improvement — values >0.8 suggest inflation."""
+        if len(self.cycles) < 3:
+            return 0.0
+        improving = sum(1 for c in self.cycles if c.score > c.previous_score)
+        return improving / len(self.cycles)
+
+    @property
+    def max_score_jump(self) -> int:
+        """Largest single-cycle score increase."""
+        if not self.cycles:
+            return 0
+        return max((c.score - c.previous_score) for c in self.cycles)
+
+    @property
     def avg_cycle_time(self) -> float:
         """Average wall-clock seconds per cycle."""
         if not self.cycles:
@@ -86,6 +102,8 @@ class RunMetrics:
             "total_improvement": self.total_improvement,
             "avg_cycle_time": self.avg_cycle_time,
             "effective_dilation": self.effective_dilation,
+            "score_inflation_rate": self.score_inflation_rate,
+            "max_score_jump": self.max_score_jump,
             "score_history": self.score_history,
             "elapsed_seconds": time.time() - self.start_time if self.start_time else 0,
         }

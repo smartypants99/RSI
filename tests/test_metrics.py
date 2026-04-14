@@ -80,6 +80,24 @@ def test_effective_dilation():
     assert m.effective_dilation == 2.0  # 2 cycles / 1 second
 
 
+def test_score_inflation_rate():
+    m = RunMetrics(start_time=time.time())
+    # All 4 cycles improve — suspicious
+    for i in range(4):
+        m.record_cycle(cycle=i+1, score=60+i*10, previous_score=50+i*10, directive="d",
+                       directive_source="builtin", branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.score_inflation_rate == 1.0  # 100% improvement rate
+
+
+def test_max_score_jump():
+    m = RunMetrics(start_time=time.time())
+    m.record_cycle(cycle=1, score=70, previous_score=50, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    m.record_cycle(cycle=2, score=75, previous_score=70, directive="d", directive_source="builtin",
+                   branch_count=1, best_variant_index=0, elapsed_seconds=0.1)
+    assert m.max_score_jump == 20
+
+
 def test_empty_metrics():
     m = RunMetrics()
     assert m.improvement_rate == 0.0
@@ -88,3 +106,5 @@ def test_empty_metrics():
     assert m.score_history == []
     assert m.avg_cycle_time == 0.0
     assert m.effective_dilation == 0.0
+    assert m.score_inflation_rate == 0.0
+    assert m.max_score_jump == 0

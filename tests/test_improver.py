@@ -433,6 +433,28 @@ def test_crossover_combines_variants():
     assert "Solution B" in call_args
 
 
+def test_crossover_task_type_code():
+    """Crossover includes code-specific guidance when task_type is code."""
+    engine = make_mock_engine(["merged code"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    result = improver._crossover("test", "sol A", "sol B", task_type="code")
+    assert result == "merged code"
+    prompt_text = engine.generate.call_args_list[0][0][0]
+    assert "compiles" in prompt_text or "error handling" in prompt_text
+
+
+def test_crossover_task_type_prose():
+    """Crossover includes prose-specific guidance when task_type is prose."""
+    engine = make_mock_engine(["merged prose"])
+    config = TimeDilateConfig(branch_factor=1)
+    improver = ImprovementEngine(engine, config)
+    result = improver._crossover("test", "sol A", "sol B", task_type="prose")
+    assert result == "merged prose"
+    prompt_text = engine.generate.call_args_list[0][0][0]
+    assert "tone" in prompt_text or "arguments" in prompt_text
+
+
 def test_crossover_in_score_select():
     """When top 2 variants are close, crossover is attempted."""
     # v1=80, v2=75 (within 10), crossover="merged", cross_score=90

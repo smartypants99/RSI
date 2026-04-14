@@ -451,7 +451,7 @@ class ImprovementEngine:
             # Tournament uses comparisons, need to score the winner
             winner_score = self._score_variant(original_prompt, winner_variant, current_score=current_score)
         else:
-            winner_variant, winner_index, winner_score = self._score_select(original_prompt, variants, current_score=current_score, current_best=current_best)
+            winner_variant, winner_index, winner_score = self._score_select(original_prompt, variants, current_score=current_score, current_best=current_best, task_type=self.task_type)
         score_time = time.time() - score_start
         logger.info("Cycle timing: gen=%.2fs score=%.2fs total=%.2fs",
                      gen_time, score_time, gen_time + score_time)
@@ -508,7 +508,7 @@ class ImprovementEngine:
             logger.info("Deduplicated %d -> %d unique variants", len(variants), len(kept))
         return kept
 
-    def _score_select(self, original_prompt: str, variants: list[str], current_score: int = 0, current_best: str = "") -> tuple[str, int, int]:
+    def _score_select(self, original_prompt: str, variants: list[str], current_score: int = 0, current_best: str = "", task_type: str = "general") -> tuple[str, int, int]:
         """Score each variant, return (best_variant, best_index, best_score).
         Uses CoT scoring when there are multiple variants for better discrimination.
         Attempts crossover when top 2 variants have close scores.
@@ -548,7 +548,8 @@ class ImprovementEngine:
         # Try crossover if top 2 are close (within 10 points) and we have 2+ variants
         if len(scored) >= 2 and (scored[0][0] - scored[1][0]) <= 10:
             crossover = self._crossover(original_prompt, scored[0][2], scored[1][2],
-                                         score_a=scored[0][0], score_b=scored[1][0])
+                                         score_a=scored[0][0], score_b=scored[1][0],
+                                         task_type=task_type)
             if crossover:
                 cross_score = self._score_variant(original_prompt, crossover, use_cot=use_cot, current_score=current_score)
                 if cross_score > best_score:
@@ -580,7 +581,8 @@ class ImprovementEngine:
         return indexed[0][1], indexed[0][0]
 
     def _crossover(self, original_prompt: str, variant_a: str, variant_b: str,
-                   score_a: int = 0, score_b: int = 0) -> str | None:
+                   score_a: int = 0, score_b: int = 0,
+                   task_type: str = "general") -> str | None:
         """Combine the best parts of two variants into a new output."""
         try:
             score_context = ""
@@ -590,11 +592,22 @@ class ImprovementEngine:
                     f"Take more from the higher-scoring solution but incorporate "
                     f"any unique strengths from the other.\n\n"
                 )
+            task_guidance = ""
+            if task_type == "code":
+                task_guidance = (
+                    "This is code. Ensure the combined solution compiles/runs correctly. "
+                    "Merge the best logic, error handling, and structure from each.\n\n"
+                )
+            elif task_type == "prose":
+                task_guidance = (
+                    "This is prose. Merge the strongest arguments, examples, and phrasing "
+                    "from each. Ensure consistent tone and smooth transitions.\n\n"
+                )
             prompt = (
                 f"Original task: {original_prompt}\n\n"
                 f"Two candidate solutions were generated. Combine the best aspects of each "
                 f"into a single superior solution.\n\n"
-                f"{score_context}"
+                f"{task_guidance}{score_context}"
                 f"Solution A:\n{variant_a}\n\n"
                 f"Solution B:\n{variant_b}\n\n"
                 f"Output ONLY the combined, improved solution."

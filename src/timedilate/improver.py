@@ -437,7 +437,7 @@ class ImprovementEngine:
             # Tournament uses comparisons, need to score the winner
             winner_score = self._score_variant(original_prompt, winner_variant, current_score=current_score)
         else:
-            winner_variant, winner_index, winner_score = self._score_select(original_prompt, variants, current_score=current_score)
+            winner_variant, winner_index, winner_score = self._score_select(original_prompt, variants, current_score=current_score, current_best=current_best)
         score_time = time.time() - score_start
         logger.info("Cycle timing: gen=%.2fs score=%.2fs total=%.2fs",
                      gen_time, score_time, gen_time + score_time)
@@ -494,10 +494,11 @@ class ImprovementEngine:
             logger.info("Deduplicated %d -> %d unique variants", len(variants), len(kept))
         return kept
 
-    def _score_select(self, original_prompt: str, variants: list[str], current_score: int = 0) -> tuple[str, int, int]:
+    def _score_select(self, original_prompt: str, variants: list[str], current_score: int = 0, current_best: str = "") -> tuple[str, int, int]:
         """Score each variant, return (best_variant, best_index, best_score).
         Uses CoT scoring when there are multiple variants for better discrimination.
         Attempts crossover when top 2 variants have close scores.
+        When top variants are within 3 points, prefers the more different one.
         Skips scoring remaining variants if one already beats current by a wide margin."""
         use_cot = len(variants) > 1
         scored = []
@@ -518,6 +519,17 @@ class ImprovementEngine:
 
         scored.sort(reverse=True, key=lambda x: x[0])
         best_score, best_index, best_variant = scored[0]
+
+        # Diversity tiebreaker: when top variants are within 3 points,
+        # prefer the one most different from current_best (more likely genuine improvement)
+        if current_best and len(scored) >= 2 and (scored[0][0] - scored[1][0]) <= 3:
+            candidates = [s for s in scored if scored[0][0] - s[0] <= 3]
+            most_diverse = max(candidates,
+                               key=lambda s: 1.0 - self._similarity_ratio(s[2], current_best))
+            if most_diverse != scored[0]:
+                logger.info("Diversity tiebreaker: chose variant %d (score %d) over %d (score %d)",
+                            most_diverse[1], most_diverse[0], scored[0][1], scored[0][0])
+                best_score, best_index, best_variant = most_diverse
 
         # Try crossover if top 2 are close (within 10 points) and we have 2+ variants
         if len(scored) >= 2 and (scored[0][0] - scored[1][0]) <= 10:

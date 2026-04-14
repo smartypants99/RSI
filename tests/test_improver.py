@@ -455,6 +455,28 @@ def test_crossover_in_score_select():
     assert idx == -2  # crossover indicator
 
 
+def test_diversity_tiebreaker():
+    """When top variants score within 3 points, prefer the more different one."""
+    # v1 is similar to current_best, v2 is very different. Both score 80.
+    engine = make_mock_engine([
+        "original_tweaked",  # v1: similar to current_best
+        "completely_new_approach_xyz",  # v2: very different
+        "80",  # score for v1 (CoT used with 2 variants)
+        "79",  # score for v2 (within 3 points)
+    ])
+    config = TimeDilateConfig(branch_factor=2)
+    improver = ImprovementEngine(engine, config)
+    best, score, idx = improver.run_cycle(
+        original_prompt="test",
+        current_best="original_version",
+        current_score=50,
+        directive="Improve.",
+    )
+    # Should prefer v2 (more different) even though v1 scored 1 point higher
+    assert best == "completely_new_approach_xyz"
+    assert score == 79
+
+
 def test_validate_variant_rejects_echo():
     """Variant that echoes the prompt is rejected."""
     config = TimeDilateConfig(branch_factor=1)

@@ -196,7 +196,11 @@ class DilationController:
 
             # Step 1: Critique
             if self.config.use_self_critique:
-                critique = self._critique(prompt, output, score)
+                try:
+                    critique = self._critique(prompt, output, score)
+                except Exception as e:
+                    logger.warning("Critique failed on cycle %d: %s — using generic prompt", cycle, e)
+                    critique = "Improve the response."
             else:
                 critique = "Improve the response."
 
@@ -257,11 +261,19 @@ class DilationController:
             if no_improve_count >= self.config.convergence_patience:
                 logger.info("Convergence detected at score %d, trying fresh approach...", best_score)
                 prior_best = best_score
-                fresh = self._fresh_attempt(prompt, best_output, best_score)
-                fresh_score = self._score(prompt, fresh)
+                try:
+                    fresh = self._fresh_attempt(prompt, best_output, best_score)
+                    fresh_score = self._score(prompt, fresh)
+                except Exception as e:
+                    logger.warning("Fresh attempt failed on cycle %d: %s — skipping", cycle, e)
+                    no_improve_count = 0
+                    convergence_resets += 1
+                    if on_cycle:
+                        on_cycle(cycle, num_cycles or cycle, best_score, time.time() - start)
+                    continue
                 fresh_improved = fresh_score > prior_best
                 history.append(CycleRecord(
-                    cycle=cycle, action="fresh", improved=fresh_improved,
+                    cycle=cycle + 1, action="fresh", improved=fresh_improved,
                     score_before=prior_best, score_after=fresh_score,
                 ))
                 if fresh_improved:
@@ -284,18 +296,20 @@ class DilationController:
         avg_cycle = (
             sum(c.elapsed_s for c in history) / len(history) if history else 0.0
         )
+        # cycles_completed counts refine cycles that produced a candidate (action=="refine")
+        cycles_completed = sum(1 for c in history if c.action == "refine")
         logger.info(
             "Dilation complete: %d cycles in %.1fs (avg %.2fs/cycle), score %s -> %d (+%d), "
             "%d improvements, %d resets, %d score-cache hits",
-            cycle - 1, elapsed_total, avg_cycle, initial_score_val, best_score,
+            cycles_completed, elapsed_total, avg_cycle, initial_score_val, best_score,
             best_score - (initial_score_val or 0), improvements, convergence_resets,
             self._score_cache_hits,
         )
         return DilationResult(
             output=best_output,
             dilation_factor=self.config.dilation_factor,
-            cycles_completed=cycle - 1,
-            total_cycles=num_cycles or cycle - 1,
+            cycles_completed=cycles_completed,
+            total_cycles=num_cycles if num_cycles else cycles_completed,
             elapsed_seconds=elapsed_total,
             model_used=self.config.model,
             score=best_score,
@@ -351,14 +365,20 @@ class DilationController:
                 word = word.strip(".,!()[]:")
                 if word.isdigit():
                     s = min(100, max(0, int(word)))
-                    self._score_cache[key] = s
+                    self._cache_put(key, s)
                     return s
             logger.warning("Score parse failed on: %r — defaulting to 50", result[:60])
-            self._score_cache[key] = 50
+            self._cache_put(key, 50)
             return 50
         except Exception as e:
-            logger.warning("Scoring failed: %s — defaulting to 50", e)
+            logger.error("Scoring failed: %s — defaulting to 50 (not cached)", e)
             return 50
+
+    def _cache_put(self, key: str, value: int) -> None:
+        self._score_cache[key] = value
+        self._score_cache.move_to_end(key)
+        while len(self._score_cache) > _SCORE_CACHE_MAX:
+            self._score_cache.popitem(last=False)
 
     def _critique(self, prompt: str, output: str, score: int) -> str:
         """Have the AI critique its own output to find weaknesses."""

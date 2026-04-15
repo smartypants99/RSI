@@ -69,7 +69,8 @@ def main(ctx):
 @click.option("--max-tokens", default=4096, type=int, help="Max output tokens per generation.")
 # Hardware / vLLM
 @click.option("--gpu-mem-util", "gpu_mem_util", default=None, type=float,
-              help="Fraction of GPU memory vLLM may reserve (0.1-0.99).")
+              help="Fraction of GPU memory vLLM may reserve (0.1-0.99). "
+                   "Engine auto-retries init at 0.60 -> 0.45 -> 0.30 on OOM.")
 @click.option("--max-model-len", default=None, type=int,
               help="Cap model context length (reduces KV cache memory).")
 @click.option("--dtype", default=None,

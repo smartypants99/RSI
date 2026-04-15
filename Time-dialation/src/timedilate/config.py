@@ -62,7 +62,7 @@ class TimeDilateConfig:
             raise ConfigError(
                 f"gpu_memory_utilization must be in 0.1-0.99, got {self.gpu_memory_utilization}"
             )
-        if self.dtype not in ("auto", "float16", "bfloat16", "float32", "half", "bf16"):
+        if self.dtype not in ("auto", "float16", "bfloat16", "float32"):
             raise ConfigError(
                 f"dtype must be one of auto/float16/bfloat16/float32, got {self.dtype}"
             )

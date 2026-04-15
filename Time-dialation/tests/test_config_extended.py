@@ -45,7 +45,7 @@ def test_validate_rejects_bad_dtype():
 
 
 def test_validate_accepts_all_valid_dtypes():
-    for d in ("auto", "float16", "bfloat16", "float32", "half", "bf16"):
+    for d in ("auto", "float16", "bfloat16", "float32"):
         TimeDilateConfig(dtype=d).validate()
 
 

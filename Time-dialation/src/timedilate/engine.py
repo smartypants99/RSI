@@ -122,8 +122,6 @@ class DilationEngine:
             max_tokens=max_tokens or self.config.max_tokens,
             temperature=temperature if temperature is not None else self.config.temperature,
         )
-        if self.config.seed is not None:
-            kwargs["seed"] = self.config.seed
         if stop:
             kwargs["stop"] = list(stop)
         return SamplingParams(**kwargs)

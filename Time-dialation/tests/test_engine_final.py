@@ -168,12 +168,15 @@ def test_stop_tuple_accepted_as_sequence():
 
 # --- Seed propagation ---
 
-def test_seed_set_propagates_to_llm_and_sampling_params():
+def test_seed_set_propagates_to_llm_only_preserves_branch_diversity():
+    """Seed goes to LLM() (reproducible base sampler) but NOT to SamplingParams
+    per-call — otherwise branch_factor with temperature spread would collapse
+    to a single output."""
     _reset()
     engine = DilationEngine(TimeDilateConfig(seed=7))
     engine.generate("p")
     assert mock_vllm.LLM.call_args.kwargs["seed"] == 7
-    assert mock_vllm.SamplingParams.call_args.kwargs["seed"] == 7
+    assert "seed" not in mock_vllm.SamplingParams.call_args.kwargs
 
 
 def test_seed_none_not_in_kwargs():
@@ -184,19 +187,16 @@ def test_seed_none_not_in_kwargs():
     assert "seed" not in mock_vllm.SamplingParams.call_args.kwargs
 
 
-def test_seed_determinism_two_engines_same_kwargs():
+def test_seed_determinism_two_engines_same_llm_seed():
     _reset()
     DilationEngine(TimeDilateConfig(seed=42)).generate("hello")
     first_llm = mock_vllm.LLM.call_args.kwargs["seed"]
-    first_sp = mock_vllm.SamplingParams.call_args.kwargs["seed"]
 
     _reset()
     DilationEngine(TimeDilateConfig(seed=42)).generate("hello")
     second_llm = mock_vllm.LLM.call_args.kwargs["seed"]
-    second_sp = mock_vllm.SamplingParams.call_args.kwargs["seed"]
 
     assert first_llm == second_llm == 42
-    assert first_sp == second_sp == 42
 
 
 # --- dtype / enforce_eager / swap_space ---

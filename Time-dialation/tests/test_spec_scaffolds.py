@@ -54,11 +54,14 @@ def test_swap_space_propagates():
     assert "swap_space" in kw or "swap_space_gb" in kw
 
 
-def test_seed_propagates_to_sampling_params():
+def test_seed_propagates_to_llm_only():
+    """Seed on LLM() only — per-call SamplingParams stays seedless so
+    branch_factor + temperature spread preserves diversity."""
     _reset()
     engine = DilationEngine(TimeDilateConfig(seed=1234))
     engine.generate("p")
-    assert "seed" in mock_vllm.SamplingParams.call_args.kwargs
+    assert mock_vllm.LLM.call_args.kwargs.get("seed") == 1234
+    assert "seed" not in mock_vllm.SamplingParams.call_args.kwargs
 
 
 # --- Engine: stop sequences + batched generate ---
@@ -141,7 +144,8 @@ def test_pairwise_tiebreak_method_exists():
 
 # --- Engine: seed determinism (sanity probe) ---
 
-def test_same_seed_passes_to_sampling_params():
+def test_same_seed_passes_to_llm_only():
     _reset()
     DilationEngine(TimeDilateConfig(seed=42)).generate("hello")
-    assert mock_vllm.SamplingParams.call_args.kwargs.get("seed") == 42
+    assert mock_vllm.LLM.call_args.kwargs.get("seed") == 42
+    assert "seed" not in mock_vllm.SamplingParams.call_args.kwargs

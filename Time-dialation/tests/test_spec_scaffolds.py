@@ -63,18 +63,13 @@ def test_seed_propagates_to_sampling_params():
 
 # --- Engine: stop sequences + batched generate ---
 
-@pytest.mark.xfail(reason="engine.generate does not yet accept stop=")
 def test_stop_sequences_propagate():
     _reset()
     engine = DilationEngine(TimeDilateConfig())
-    try:
-        engine.generate("p", stop=["\n\n", "END"])
-    except TypeError:
-        pytest.xfail("generate() does not accept stop kwarg")
+    engine.generate("p", stop=["\n\n", "END"])
     assert "stop" in mock_vllm.SamplingParams.call_args.kwargs
 
 
-@pytest.mark.xfail(reason="batched generate() not yet implemented")
 def test_batched_generate_returns_list():
     _reset()
     o1, o2 = MagicMock(), MagicMock()
@@ -146,7 +141,6 @@ def test_pairwise_tiebreak_method_exists():
 
 # --- Engine: seed determinism (sanity probe) ---
 
-@pytest.mark.xfail(reason="depends on seed wiring into SamplingParams")
 def test_same_seed_passes_to_sampling_params():
     _reset()
     DilationEngine(TimeDilateConfig(seed=42)).generate("hello")

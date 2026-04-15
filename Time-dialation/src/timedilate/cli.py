@@ -170,15 +170,15 @@ def run(prompt, factor, model, time_budget, max_tokens,
         if quiet:
             return
         score_trajectory.append(int(score))
+        progress = f"{cycle}/{total}" if total else f"{cycle} [{elapsed:.1f}s budget]"
         if stream_progress:
             spark = sparkline(score_trajectory)
-            total_s = f"/{total}" if total else ""
             console.print(
-                f"  [dim]cycle {cycle}{total_s}[/] "
+                f"  [dim]cycle {progress}[/] "
                 f"[bold]{score:3d}[/]/100  {spark}  [dim]{elapsed:.1f}s[/]"
             )
         else:
-            console.print(f"  [dim]Cycle {cycle}/{total} — score: {score} — {elapsed:.1f}s[/]")
+            console.print(f"  [dim]Cycle {progress} — score: {score} — {elapsed:.1f}s[/]")
 
     controller = DilationController(config)
     result = controller.run(prompt, on_cycle=on_cycle)

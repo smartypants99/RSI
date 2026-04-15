@@ -157,6 +157,15 @@ class DilationEngine:
                 elapsed = time.time() - start
 
                 texts = [o.outputs[0].text for o in outputs]
+
+                empty = [i for i, t in enumerate(texts) if not t or not t.strip()]
+                if empty and attempt < retries:
+                    logger.warning(
+                        "Empty response at indices %s on attempt %d, retrying",
+                        empty, attempt + 1,
+                    )
+                    continue
+
                 token_counts: list[int] = []
                 input_counts: list[int] = []
                 for o in outputs:
@@ -185,14 +194,7 @@ class DilationEngine:
                 self._total_calls += len(texts)
                 self._total_latency += elapsed
 
-                empty = [i for i, t in enumerate(texts) if not t or not t.strip()]
                 if empty:
-                    if attempt < retries:
-                        logger.warning(
-                            "Empty response at indices %s on attempt %d, retrying",
-                            empty, attempt + 1,
-                        )
-                        continue
                     raise InferenceError(
                         f"Model returned empty response after retries (indices={empty})"
                     )

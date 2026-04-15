@@ -5,8 +5,31 @@ build-backend = "hatchling.build"
 [project]
 name = "timedilate"
 version = "1.0.0"
-description = "AI Time Dilation Runtime"
+description = "AI Time Dilation Runtime — give AI more subjective thinking time"
+readme = "README.md"
 requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Time Dilation Contributors" },
+]
+keywords = [
+    "ai", "llm", "inference", "vllm", "reasoning",
+    "self-critique", "time-dilation", "agent",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "vllm>=0.6.0",
     "click>=8.0",
@@ -19,8 +42,14 @@ dev = [
     "pytest-cov",
 ]
 
+[project.urls]
+Homepage = "https://github.com/smartypants99/TD.org"
+Repository = "https://github.com/smartypants99/TD.org"
+Issues = "https://github.com/smartypants99/TD.org/issues"
+
 [project.scripts]
 timedilate = "timedilate.cli:main"
+td = "timedilate.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/timedilate"]

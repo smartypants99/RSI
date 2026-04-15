@@ -5,6 +5,7 @@ at full precision and full output. The dilation (more thinking)
 happens in the controller, not here.
 """
 import logging
+import re
 import time
 from typing import Sequence
 
@@ -15,18 +16,40 @@ logger = logging.getLogger(__name__)
 # Fallback utilizations tried in order when the first init OOMs.
 _OOM_FALLBACK_UTILS = (0.45, 0.30)
 
+# Word-boundary OOM detector. Phrases covered:
+#  - torch: "CUDA out of memory", "out of memory"
+#  - vLLM KV cache: "no available memory", "insufficient memory",
+#    "cannot allocate", "not enough KV cache blocks", "KV cache"
+#  - bare acronyms: "OOM", "CUDA OOM", "CUDA error: out"
+_OOM_PATTERN = re.compile(
+    r"\b(oom|out of memory|cuda oom|cuda error: out|no available memory|"
+    r"no memory available|insufficient memory|cannot allocate|"
+    r"not enough kv cache|kv cache allocation)\b",
+    re.IGNORECASE,
+)
+
+# Exception class names that indicate OOM, matched against the full MRO so
+# subclasses and top-level aliases (e.g. torch.OutOfMemoryError) are caught.
+_OOM_CLASS_NAMES = frozenset({
+    "OutOfMemoryError", "CUDAOutOfMemoryError", "OutOfMemoryException",
+})
+
 
 class InferenceError(RuntimeError):
     """Raised when inference fails after retries."""
     pass
 
 
+class HealthCheckError(RuntimeError):
+    """Health check failed for a non-transient reason (programmer/wiring error)."""
+    pass
+
+
 def _looks_like_oom(exc: BaseException) -> bool:
-    msg = str(exc).lower()
-    needles = ("out of memory", "oom", "cuda error: out", "no memory", "cuda oom")
-    return any(n in msg for n in needles) or exc.__class__.__name__ in (
-        "OutOfMemoryError", "CUDAOutOfMemoryError",
-    )
+    for cls in type(exc).__mro__:
+        if cls.__name__ in _OOM_CLASS_NAMES:
+            return True
+    return bool(_OOM_PATTERN.search(str(exc)))
 
 
 class DilationEngine:
@@ -46,6 +69,7 @@ class DilationEngine:
         self._last_token_counts: list[int] = []
         self._last_input_token_counts: list[int] = []
         self._last_usage: dict = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        self._last_health_status: str = "unknown"
 
     def _build_llm_kwargs(self, gpu_util: float) -> dict:
         kwargs = dict(
@@ -97,18 +121,39 @@ class DilationEngine:
                     "OOM at gpu_mem_util=%.2f, retrying at %.2f: %s",
                     util, utils_to_try[idx + 1], e,
                 )
-        raise InferenceError(f"Model initialization failed: {last_error}")
+        if last_error is not None and _looks_like_oom(last_error):
+            logger.error("Exhausted OOM fallbacks; last util attempted was %.2f",
+                         utils_to_try[-1])
+        raise InferenceError(f"Model initialization failed: {last_error}") from last_error
 
     def health_check(self) -> bool:
-        """Tiny generation to confirm the model is live. Returns True on success."""
+        """Tiny generation to confirm the model is live.
+
+        Returns True on success, False on OOM or transient runtime failure.
+        Raises HealthCheckError for programmer/wiring errors (ImportError,
+        AttributeError, TypeError) since those are not recoverable at runtime.
+        The last-classified failure category is recorded on `self._last_health_status`.
+        """
         try:
             self.initialize()
             from vllm import SamplingParams
             params = SamplingParams(max_tokens=4, temperature=0.0)
             outputs = self._model.generate(["ping"], params)
-            return bool(outputs and outputs[0].outputs)
+            ok = bool(outputs and outputs[0].outputs)
+            self._last_health_status = "ok" if ok else "empty"
+            return ok
+        except (ImportError, AttributeError, TypeError) as e:
+            self._last_health_status = "wiring_error"
+            logger.error("Health check hit a wiring error (not recoverable): %s",
+                         e, exc_info=True)
+            raise HealthCheckError(str(e)) from e
         except Exception as e:
-            logger.warning("Health check failed: %s", e)
+            if _looks_like_oom(e):
+                self._last_health_status = "oom"
+                logger.error("Health check OOM — gpu_memory_utilization is over budget: %s", e)
+            else:
+                self._last_health_status = "runtime_error"
+                logger.warning("Health check failed (transient): %s", e)
             return False
 
     def _make_sampling_params(
@@ -147,37 +192,46 @@ class DilationEngine:
 
         params = self._make_sampling_params(max_tokens, temperature, stop)
 
+        # Buffers spanning all attempts — on retries only the empty indices are
+        # re-issued and their replacements spliced into these buffers. This
+        # keeps token cost proportional to what failed, not to batch size.
+        n = len(prompts)
+        texts: list[str] = [""] * n
+        token_counts: list[int] = [0] * n
+        input_counts: list[int] = [0] * n
+        pending: list[int] = list(range(n))
+
         last_error: BaseException | None = None
+        total_elapsed = 0.0
         for attempt in range(retries + 1):
             try:
+                retry_prompts = [prompts[i] for i in pending]
                 start = time.time()
-                outputs = self._model.generate(prompts, params)
-                elapsed = time.time() - start
+                outputs = self._model.generate(retry_prompts, params)
+                total_elapsed += time.time() - start
 
-                texts = [o.outputs[0].text for o in outputs]
+                for slot_idx, out in zip(pending, outputs):
+                    out0 = out.outputs[0]
+                    texts[slot_idx] = out0.text
+                    tids = getattr(out0, "token_ids", None)
+                    try:
+                        token_counts[slot_idx] = len(tids) if tids is not None else 0
+                    except TypeError:
+                        token_counts[slot_idx] = 0
+                    pids = getattr(out, "prompt_token_ids", None)
+                    try:
+                        input_counts[slot_idx] = len(pids) if pids is not None else 0
+                    except TypeError:
+                        input_counts[slot_idx] = 0
 
-                empty = [i for i, t in enumerate(texts) if not t or not t.strip()]
-                if empty and attempt < retries:
+                pending = [i for i in pending if not texts[i] or not texts[i].strip()]
+                if pending and attempt < retries:
                     logger.warning(
-                        "Empty response at indices %s on attempt %d, retrying",
-                        empty, attempt + 1,
+                        "Empty response at indices %s on attempt %d, retrying only those",
+                        pending, attempt + 1,
                     )
                     continue
 
-                token_counts: list[int] = []
-                input_counts: list[int] = []
-                for o in outputs:
-                    out0 = o.outputs[0]
-                    tids = getattr(out0, "token_ids", None)
-                    try:
-                        token_counts.append(len(tids) if tids is not None else 0)
-                    except TypeError:
-                        token_counts.append(0)
-                    pids = getattr(o, "prompt_token_ids", None)
-                    try:
-                        input_counts.append(len(pids) if pids is not None else 0)
-                    except TypeError:
-                        input_counts.append(0)
                 self._last_token_counts = token_counts
                 self._last_input_token_counts = input_counts
                 in_sum, out_sum = sum(input_counts), sum(token_counts)
@@ -188,15 +242,13 @@ class DilationEngine:
                     "output_tokens": out_sum,
                     "total_tokens": in_sum + out_sum,
                 }
+                self._total_calls += n
+                self._total_latency += total_elapsed
 
-                self._total_calls += len(texts)
-                self._total_latency += elapsed
-
-                if empty:
+                if pending:
                     raise InferenceError(
-                        f"Model returned empty response after retries (indices={empty})"
+                        f"Model returned empty response after retries (indices={pending})"
                     )
-
                 return texts if batched else texts[0]
             except InferenceError:
                 raise
@@ -207,7 +259,9 @@ class DilationEngine:
                     logger.warning("Inference failed (attempt %d/%d): %s",
                                    attempt + 1, retries + 1, e)
                     continue
-        raise InferenceError(f"Inference failed after {retries + 1} attempts: {last_error}")
+        raise InferenceError(
+            f"Inference failed after {retries + 1} attempts: {last_error}"
+        ) from last_error
 
     def generate_batch(
         self,

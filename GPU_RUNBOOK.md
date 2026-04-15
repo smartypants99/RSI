@@ -152,6 +152,22 @@ timedilate run "..." --factor 1000000 --time-budget 30 \
 ### Qwen3 tokenizer errors
 - Usually `trust_remote_code` or tokenizer version. Upgrade: `pip install -U transformers tokenizers`.
 - If vLLM complains about chat template: pin `transformers>=4.45` (Qwen3 chat template requires recent transformers).
+- `AttributeError` on tokenizer import usually means a stale `tokenizer_config.json` from an older Qwen variant in the HF cache. Remedy: `rm -rf ~/.cache/huggingface/hub/models--Qwen--Qwen3-8B` and re-pull.
+
+### dtype / NaN logits
+- Default `--dtype auto` picks bfloat16 on Ampere/Hopper (good for Qwen3) and float16 on older cards (T4/V100).
+- If you see NaN logits on T4/V100, force `--dtype float16` explicitly.
+
+### Pairing max-model-len with enforce-eager
+- Qwen3-8B native context is 32768. With `--enforce-eager` there's no CUDA graph reuse, so per-token KV cost goes up.
+- On <25 GiB free, keep `--max-model-len` at 4096; do not exceed 8192 when also using `--gpu-mem-util 0.30`.
+
+### Slow disk / network-mounted HF cache
+- Default `--swap-space 4` can thrash if disk is slow (e.g., network-mounted cache). For low-VRAM + slow disk, set `--swap-space 0` and accept a smaller effective batch.
+
+### Health check failures
+- `health_check()` raising `HealthCheckError` (ImportError/AttributeError/TypeError) is a wiring bug, NOT OOM — check `vllm` install and Python version, not the GPU.
+- True OOM manifests as `health_check()` returning False with `_last_health_status="oom"`.
 
 ### Empty / truncated responses
 - Raise `--max-tokens` (default 4096). For long-horizon runs bump to 8192–16384.

@@ -1,601 +1,869 @@
-"""Verifier — checks every step of every reasoning chain for logical validity.
+"""Verifier — real multi-layer verification of reasoning chains.
 
-The key insight: verification is easier than generation. A step-by-step proof
-can be checked mechanically even if producing it requires creativity.
+Layers (in order, cheap → expensive):
+  1. Structural: chain non-empty, min-step count, conclusion present.
+  2. Logical validity: contradictions within a step and across prior steps,
+     circular reasoning (step justified only by its own conclusion),
+     non-sequitur detection (justification shares no terms with content).
+  3. Step completeness: each step builds on prior + premises (lexical +
+     symbolic overlap) without introducing hidden premises.
+  4. Assumption grounding: declared assumptions are actually referenced in
+     the step content; no material claim lacks a declared assumption or
+     prior-step derivation.
+  5. Domain execution:
+       - math   → sympy.simplify(lhs - rhs) == 0 and per-step equation check
+       - code   → sandboxed subprocess with timeout + RLIMIT, run embedded
+                  tests or sanity-execute the function.
+  6. Model-assisted escalation: when calibrated confidence lies in the
+     uncertain band, ask the model to adjudicate.
 
-This verifier operates at multiple levels:
-1. Structural: does the chain have proper form?
-2. Referential: does each step build on prior steps?
-3. Logical: do the inferences actually follow?
-4. Consistency: does the chain contradict itself?
-5. Completeness: does the conclusion follow from the chain?
+Confidence is a *calibrated weighted score in [0,1]*, not checks_passed /
+checks_total. Each signal contributes its weight × its own confidence; the
+aggregate is normalized by the sum of weights actually used.
 """
 
+from __future__ import annotations
+
+import ast
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import Optional
 
 from ..utils.config import VerifierConfig
+from ..utils.sympy_utils import (
+    HAS_SYMPY as _HAS_SYMPY,
+    sympify_safe as _sympify_safe,
+    equation_valid as _sympy_equation_valid,
+    numeric_equiv as _numeric_equiv,
+    normalize_answer as _normalize_answer,
+    solve_single_var as _sympy_solve_single_var,
+    gather_equations as _shared_gather_equations,
+)
+from ..utils.sandbox import run_python_sandboxed as _run_code_sandboxed
+from ..generator.data_generator import TrainingSample, ReasoningStep
 
 logger = logging.getLogger(__name__)
-from ..generator.data_generator import TrainingSample, ReasoningStep
+
+if _HAS_SYMPY:
+    import sympy  # type: ignore
+else:
+    sympy = None  # type: ignore
+
+
+# ──────────────────────────── data classes ────────────────────────────
+
+@dataclass
+class CheckOutcome:
+    name: str
+    weight: float
+    confidence: float  # in [0, 1]
+    passed: bool
+    detail: str = ""
 
 
 @dataclass
 class StepVerification:
-    """Verification result for a single reasoning step."""
     step_number: int
     valid: bool
-    issues: list[str] = field(default_factory=list)
     confidence: float = 0.0
-    checks_passed: list[str] = field(default_factory=list)
-    checks_failed: list[str] = field(default_factory=list)
+    checks: list[CheckOutcome] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
 
 
 @dataclass
 class VerificationResult:
-    """Full verification result for a training sample."""
     accepted: bool
     step_results: list[StepVerification] = field(default_factory=list)
+    chain_checks: list[CheckOutcome] = field(default_factory=list)
     overall_confidence: float = 0.0
     rejection_reasons: list[str] = field(default_factory=list)
-    total_checks: int = 0
-    checks_passed: int = 0
+    escalated_to_model: bool = False
 
 
-# Common logical connectors that indicate inferential structure.
-# Includes both logical connectors AND mathematical/procedural language
-# (math proofs use "substituting", "applying" more than "therefore").
-# Multi-word markers checked via substring, single-word markers checked via
-# word-boundary regex to avoid "so" matching "also", "since" matching "convincing".
-_INFERENCE_MARKERS_MULTI = {
-    "given that", "it follows", "means that", "leads to", "results in",
-    "we can conclude", "this shows", "which gives",
-    "by definition", "from the formula", "using the",
-    "we get", "we obtain", "we find", "this is because",
-    # Math/science-specific inference language — without these, valid justifications
-    # like "by the chain rule" or "by induction" fail the inferential check.
-    # Avoid overly broad 2-word phrases ("by the", "from the") that match
-    # any English text — require 3+ words or specific rule names.
-    "according to", "by induction", "by contradiction",
-    "we know that", "we have that", "which means that",
-    "this gives us", "by the formula", "by the rule",
-    "by the definition", "by the theorem", "by the chain",
-    "from the equation", "from the definition", "from the result",
-}
-_INFERENCE_MARKERS_SINGLE = re.compile(
-    r'\b(?:therefore|thus|hence|consequently|because|since|implies|'
-    r'substituting|applying|evaluating|computing|simplifying|'
-    r'rearranging|expanding|factoring|yields)\b'
+# ───────────────────────── heuristic constants ─────────────────────────
+
+_RE_STEP_REF = re.compile(r"\bstep\s*\d+\b", re.IGNORECASE)
+_RE_PRIOR_REF = re.compile(r"\b(?:above|previous|earlier|prior)\b", re.IGNORECASE)
+_RE_MATH_TOKEN = re.compile(r"\d|\^|[+\-*/=<>]")
+_RE_EQUATION = re.compile(r"([A-Za-z_][A-Za-z_0-9]*|\([^()=]+\)|[^=]{1,60}?)\s*=\s*([^=]+)")
+_RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_RE_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+
+_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be",
+    "been", "being", "to", "of", "in", "on", "at", "by", "for", "with",
+    "from", "as", "that", "this", "these", "those", "it", "its", "we",
+    "our", "you", "your", "they", "their", "i", "he", "she", "him", "her",
+    "step", "steps", "then", "so", "if", "thus", "hence", "therefore",
+    "because", "since", "given", "have", "has", "had", "will", "can",
+    "could", "should", "would", "may", "might", "must", "do", "does",
+    "did", "done", "also", "only", "just", "more", "less", "than", "some",
+    "any", "all", "no", "not", "yes",
+})
+
+_INFERENCE_MARKERS = re.compile(
+    r"\b(?:therefore|thus|hence|consequently|because|since|implies|"
+    r"substituting|applying|evaluating|computing|simplifying|rearranging|"
+    r"expanding|factoring|yields|it follows|by (?:induction|contradiction|"
+    r"the (?:chain|product|quotient|power) rule|definition|theorem|lemma|"
+    r"assumption|hypothesis)|from the (?:formula|equation|definition|result)|"
+    r"we (?:get|obtain|find|know|have|conclude))\b",
+    re.IGNORECASE,
 )
 
-# Contradiction indicators
-_RE_STEP_REF = re.compile(r'step\s*\d')
-_RE_PRIOR_REF = re.compile(r'(?:above|previous|earlier)')
-_RE_MATH_TOKEN = re.compile(r'\d|^[a-z]\^')
-
-_REF_STOPWORDS = frozenset({
-    "this", "that", "with", "from", "have", "which", "where", "there",
-    "their", "about", "would", "could", "should", "been", "were", "they",
-    "them", "then", "than", "what", "when", "will", "each", "made",
-    "after", "before", "into", "more", "also", "very", "just", "only",
-    "step", "value", "result", "number", "since", "using", "given",
-    "first", "second", "third", "next", "above", "below", "need",
-    "know", "find", "show", "solve", "answer", "problem", "equation",
-    "total", "equal", "means", "case", "take", "make", "like", "some",
-})
-
-# Short math/science terms that are meaningful for reference tracking despite
-# being under the 5-char threshold. Without these, a step that references "sin",
-# "log", or "sum" from a prior step fails the reference check.
-_MATH_SHORT_WORDS = frozenset({
-    "sin", "cos", "tan", "log", "exp", "sum", "max", "min", "gcd", "mod",
-    "lim", "int", "det", "dim", "div", "abs", "arg", "inf", "sup",
-})
-
-_NEGATION_PAIRS_RAW = [
-    ("is", "is not"), ("are", "are not"), ("can", "cannot"),
-    ("increase", "decrease"), ("increasing", "decreasing"),
-    ("more", "less"), ("greater", "smaller"), ("positive", "negative"),
-    ("always", "never"), ("possible", "impossible"),
-]
-# Precompute word sets — these were reconstructed via set(pos.split()) on every
-# step × prior × pair iteration (400+ times per sample). Frozen at module level.
 _NEGATION_PAIRS = [
-    (frozenset(pos.split()), frozenset(neg.split()))
-    for pos, neg in _NEGATION_PAIRS_RAW
+    ({"is"}, {"is", "not"}),
+    ({"are"}, {"are", "not"}),
+    ({"can"}, {"cannot"}),
+    ({"equals"}, {"does", "not", "equal"}),
+    ({"increases"}, {"decreases"}),
+    ({"increasing"}, {"decreasing"}),
+    ({"positive"}, {"negative"}),
+    ({"always"}, {"never"}),
+    ({"possible"}, {"impossible"}),
+    ({"true"}, {"false"}),
 ]
+_NEGATION_PAIRS = [(frozenset(p), frozenset(n)) for p, n in _NEGATION_PAIRS]
 
-# Words too common to signal meaningful context overlap in contradiction checks
-_TRIVIAL_WORDS = frozenset({
-    "the", "and", "for", "that", "this", "with", "from", "are",
-    "was", "were", "has", "have", "had", "will", "can", "its",
-    # Reasoning words that inflate overlap without indicating logical connection
-    "step", "value", "answer", "number", "result", "because", "therefore",
-    "then", "since", "thus", "hence", "given", "find", "solve", "show",
-    "know", "need", "note", "means", "equal", "total",
-})
 
-# Words from prompt templates that appear in nearly every question — not meaningful
-# for checking whether a step references the original problem.
-_TEMPLATE_WORDS = frozenset({
-    "solve", "following", "problem", "reasoning", "steps",
-    "explain", "answer", "shows", "prove", "given",
-    "every", "using", "write", "which", "their", "about",
-    "should", "would", "could", "being", "those", "these",
-    "there", "where", "other", "after", "before", "between",
-})
+def _words(text: str) -> set[str]:
+    return {w.lower() for w in _RE_WORD.findall(text or "")}
 
+
+def _significant(text: str) -> set[str]:
+    return {w for w in _words(text) if len(w) > 3 and w not in _STOPWORDS}
+
+
+def _cfg(cfg: VerifierConfig, name: str, default):
+    return getattr(cfg, name, default)
+
+
+# Sympy and sandbox helpers now live in src/utils/{sympy_utils,sandbox}.py —
+# see the imports at the top of this file.
+
+
+# ──────────────────────────── the verifier ────────────────────────────
 
 class Verifier:
-    """Validates reasoning chains at structural, referential, and logical levels."""
-
     def __init__(self, config: VerifierConfig):
         self.config = config
-        self._model_verifier = None  # set during escalation
+        self._model_verifier = None
 
-    def set_model_verifier(self, model_loader):
-        """Enable model-assisted verification (escalation phase)."""
+        # Pull tunables with fallbacks so we work even if architect hasn't
+        # updated VerifierConfig yet.
+        self.code_timeout = _cfg(config, "code_exec_timeout", 5)
+        self.code_memory_mb = _cfg(config, "code_exec_memory_mb", 256)
+        self.enable_sympy = _cfg(config, "enable_sympy_math_check", True) and _HAS_SYMPY
+        self.enable_code_exec = _cfg(config, "enable_code_exec_check", True)
+        self.escalate_below = _cfg(config, "escalate_to_model_below", 0.75)
+        self.escalate_above = _cfg(config, "escalate_to_model_above", 0.50)
+        self.max_prior = _cfg(config, "max_prior_steps_to_compare", 8)
+        self.allow_model_override_reject = _cfg(config, "allow_model_override_reject", True)
+        self.weights: dict = _cfg(config, "check_weights", {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5,
+            "structural": 0.75,
+        })
+
+    def set_model_verifier(self, model_loader) -> None:
         self._model_verifier = model_loader
 
+    # ───── public API ─────
+
     def verify_batch(self, samples: list[TrainingSample]) -> list[TrainingSample]:
-        """Verify a batch of samples. Returns only accepted samples.
+        """Verify a batch of samples, returning only those that pass."""
+        results = [(s, self._verify_heuristic(s)) for s in samples]
 
-        Model-assisted verification is batched for efficiency — heuristic checks
-        run first, then model verification runs in one batched call for all
-        samples that passed heuristic checks.
-        """
-        # Phase 1: Heuristic verification (fast, no GPU)
-        heuristic_results: list[tuple[TrainingSample, VerificationResult]] = []
-        for sample in samples:
-            result = self._verify_heuristic(sample)
-            heuristic_results.append((sample, result))
+        if (_cfg(self.config, "use_model_verification", False)
+                and self._model_verifier is not None):
+            self._batch_model_escalation(results)
 
-        # Phase 2: Batched model verification for passing samples.
-        # Wrapped in try/except — if model inference fails (OOM, etc.), we still
-        # have valid heuristic results. Model verification is a bonus, not a gate.
-        if self.config.use_model_verification and self._model_verifier:
-            try:
-                # Include borderline rejections (within 15% of threshold) so the
-                # model can overturn false heuristic rejections. Pure heuristics
-                # can't catch valid reasoning that happens to miss a keyword.
-                borderline_threshold = self.config.min_confidence_for_accept * 0.85
-                candidates = [(s, r) for s, r in heuristic_results
-                              if r.overall_confidence >= borderline_threshold]
-                if candidates:
-                    prompts = []
-                    for sample, _ in candidates:
-                        chain_text = sample._build_full_response()
-                        prompts.append(
-                            f"You are a logic checker. Examine this reasoning chain for errors.\n\n"
-                            f"PROBLEM:\n{sample.prompt}\n\n"
-                            f"REASONING:\n{chain_text}\n\n"
-                            f"Is every step logically valid? Does the conclusion follow? "
-                            f"Answer ONLY 'VALID' or 'INVALID: <reason>'."
-                        )
-                    # Chunk to avoid OOM — verification prompts are long (~500 tokens each)
-                    verify_batch_size = 16
-                    responses = []
-                    for start in range(0, len(prompts), verify_batch_size):
-                        batch = prompts[start:start + verify_batch_size]
-                        responses.extend(self._model_verifier.generate_batch(
-                            batch, max_new_tokens=256, temperature=0.0,
-                        ))
-                    # Guard against length mismatch — if generate_batch returns
-                    # fewer responses than prompts (OOM mid-batch), zip silently
-                    # drops trailing candidates, leaving them with stale state.
-                    if len(responses) != len(candidates):
-                        logger.warning(
-                            f"Model verification returned {len(responses)} responses for "
-                            f"{len(candidates)} candidates — skipping model verification"
-                        )
-                        raise RuntimeError("response count mismatch")
-                    for (sample, result), response in zip(candidates, responses):
-                        result.total_checks += 1
-                        resp_text = response.strip()
-                        first_word = re.sub(r'[*`_]', '', resp_text.split()[0]).upper() if resp_text else ""
-                        if first_word == "VALID":
-                            result.checks_passed += 1
-                        else:
-                            # Preserve the model's reason — "INVALID: step 2 assumes X"
-                            # is far more useful for debugging than a generic message.
-                            model_reason = resp_text[:200] if resp_text else "no response"
-                            result.rejection_reasons.append(f"Model verification: {model_reason}")
-                        # Recompute confidence with model check included.
-                        # Model can both downgrade (INVALID) and upgrade (VALID for
-                        # borderline samples) the acceptance decision.
-                        result.overall_confidence = result.checks_passed / max(result.total_checks, 1)
-                        result.accepted = result.overall_confidence >= self.config.min_confidence_for_accept
-            except Exception as e:
-                logger.warning(f"Model-assisted verification failed ({type(e).__name__}): {e} — using heuristic results only")
-
-        verified = []
-        for sample, result in heuristic_results:
-            if result.accepted and result.overall_confidence >= self.config.min_confidence_for_accept:
+        out: list[TrainingSample] = []
+        for sample, res in results:
+            if res.accepted:
                 sample.verified = True
-                sample.confidence = result.overall_confidence
-                sample.verification_notes = f"Passed {result.checks_passed}/{result.total_checks} checks"
-                verified.append(sample)
+                sample.confidence = res.overall_confidence
+                sample.verification_notes = self._format_notes(res)
+                out.append(sample)
             else:
                 sample.verified = False
-                sample.verification_notes = "; ".join(result.rejection_reasons)
-        return verified
+                sample.confidence = res.overall_confidence
+                sample.verification_notes = self._format_notes(res)
+        return out
 
     def verify(self, sample: TrainingSample) -> VerificationResult:
-        """Verify a single sample (public API, includes model verification)."""
-        result = self._verify_heuristic(sample)
-        if self.config.use_model_verification and self._model_verifier:
-            # Include borderline samples (within 15% of threshold) — same policy
-            # as verify_batch. Without this, single-sample verification is stricter
-            # than batch verification, causing inconsistent accept/reject decisions.
-            borderline_threshold = self.config.min_confidence_for_accept * 0.85
-            if result.overall_confidence >= borderline_threshold:
-                model_valid, model_reason = self._model_verify(sample)
-                result.total_checks += 1
-                if model_valid:
-                    result.checks_passed += 1
-                else:
-                    result.rejection_reasons.append(f"Model verification: {model_reason}")
-                result.overall_confidence = result.checks_passed / max(result.total_checks, 1)
-                result.accepted = result.overall_confidence >= self.config.min_confidence_for_accept
-        return result
+        """Verify a single sample with optional model escalation."""
+        res = self._verify_heuristic(sample)
+        if (_cfg(self.config, "use_model_verification", False)
+                and self._model_verifier is not None
+                and self._in_escalation_band(res.overall_confidence)):
+            self._apply_model_escalation(sample, res)
+        return res
+
+    # ───── core pipeline ─────
 
     def _verify_heuristic(self, sample: TrainingSample) -> VerificationResult:
-        """Heuristic verification without model-assisted check."""
         if not sample.reasoning_chain:
             return VerificationResult(
                 accepted=False,
+                overall_confidence=0.0,
                 rejection_reasons=["No reasoning chain present"],
             )
 
-        step_results = []
-        total_checks = 0
-        checks_passed = 0
+        weighted_sum = 0.0
+        weight_total = 0.0
+        rejection_reasons: list[str] = []
 
+        # Parse-confidence prior from the generator: low values signal shaky
+        # extraction, not invalid reasoning. Treat as a soft weighted signal.
+        pc = getattr(sample, "parse_confidence", 1.0)
+        if pc is not None and pc < 1.0:
+            weighted_sum += 0.5 * max(0.0, pc)
+            weight_total += 0.5
+            if pc < 0.5:
+                rejection_reasons.append(
+                    f"[parse] low generator parse_confidence ({pc:.2f})"
+                )
+        parse_issues = getattr(sample, "parse_issues", None) or []
+        if parse_issues:
+            # Don't gate on these — but surface them so inspector can see why
+            # a sample is borderline.
+            for pi in parse_issues[:2]:
+                rejection_reasons.append(f"[parse] {pi}")
+
+        # Structural (chain-level)
+        chain_outcomes = self._chain_checks(sample)
+        for o in chain_outcomes:
+            weighted_sum += o.weight * o.confidence
+            weight_total += o.weight
+            if not o.passed:
+                rejection_reasons.append(f"[chain/{o.name}] {o.detail}")
+
+        # Step-level checks
+        step_results: list[StepVerification] = []
         for i, step in enumerate(sample.reasoning_chain):
-            prior_steps = sample.reasoning_chain[:i]
-            step_result = self._verify_step(step, prior_steps, sample.prompt)
-            step_results.append(step_result)
-            total_checks += len(step_result.checks_passed) + len(step_result.checks_failed)
-            checks_passed += len(step_result.checks_passed)
+            prior = sample.reasoning_chain[max(0, i - self.max_prior):i]
+            sv = self._verify_step(step, prior, sample)
+            step_results.append(sv)
+            for o in sv.checks:
+                weighted_sum += o.weight * o.confidence
+                weight_total += o.weight
+                if not o.passed:
+                    rejection_reasons.append(
+                        f"[step {step.step_number}/{o.name}] {o.detail}"
+                    )
 
-            if not step_result.valid and self.config.reject_on_any_gap:
-                return VerificationResult(
-                    accepted=False,
-                    step_results=step_results,
-                    overall_confidence=checks_passed / max(total_checks, 1),
-                    rejection_reasons=[
-                        f"Step {step.step_number}: {'; '.join(step_result.issues)}"
-                    ],
-                    total_checks=total_checks,
-                    checks_passed=checks_passed,
-                )
+        # Domain execution (whole-sample)
+        dom_outcomes = self._domain_execution(sample)
+        for o in dom_outcomes:
+            weighted_sum += o.weight * o.confidence
+            weight_total += o.weight
+            if not o.passed:
+                rejection_reasons.append(f"[domain/{o.name}] {o.detail}")
 
-        chain_issues, chain_checks_run = self._verify_chain(sample)
-        total_checks += chain_checks_run
-        chain_passed = chain_checks_run - len(chain_issues)
-        checks_passed += chain_passed
-        if chain_issues:
-            if self.config.reject_on_any_gap:
-                return VerificationResult(
-                    accepted=False,
-                    step_results=step_results,
-                    overall_confidence=checks_passed / max(total_checks, 1),
-                    rejection_reasons=chain_issues,
-                    total_checks=total_checks,
-                    checks_passed=checks_passed,
-                )
+        overall = weighted_sum / weight_total if weight_total > 0 else 0.0
+        threshold = _cfg(self.config, "min_confidence_for_accept", 0.85)
+        accepted = overall >= threshold
 
-        overall_confidence = checks_passed / max(total_checks, 1)
-        accepted = overall_confidence >= self.config.min_confidence_for_accept
+        if _cfg(self.config, "reject_on_any_gap", False):
+            if any(not o.passed for o in chain_outcomes + dom_outcomes):
+                accepted = False
+            if any(not c.passed for sv in step_results for c in sv.checks):
+                accepted = False
 
-        # Collect all failure reasons for rejected samples — not just the
-        # aggregate confidence. Without this, debugging why samples are rejected
-        # requires reconstructing the checks from step_results.
-        rejection_reasons = []
-        if not accepted:
-            rejection_reasons.append(f"Confidence {overall_confidence:.2f} below threshold {self.config.min_confidence_for_accept}")
-            if chain_issues:
-                rejection_reasons.extend(chain_issues)
+        if not accepted and not rejection_reasons:
+            rejection_reasons.append(
+                f"Confidence {overall:.2f} below threshold {threshold:.2f}"
+            )
 
         return VerificationResult(
             accepted=accepted,
             step_results=step_results,
-            overall_confidence=overall_confidence,
+            chain_checks=chain_outcomes + dom_outcomes,
+            overall_confidence=overall,
             rejection_reasons=rejection_reasons,
-            total_checks=total_checks,
-            checks_passed=checks_passed,
         )
+
+    # ───── chain-level checks ─────
+
+    def _chain_checks(self, sample: TrainingSample) -> list[CheckOutcome]:
+        w_struct = self.weights.get("structural", 0.75)
+        outcomes: list[CheckOutcome] = []
+
+        has_conc = bool(sample.response and len(sample.response.strip()) >= 3)
+        outcomes.append(CheckOutcome(
+            "has_conclusion", w_struct, 1.0 if has_conc else 0.0,
+            has_conc, "" if has_conc else "missing or trivial conclusion",
+        ))
+
+        min_steps = _cfg(self.config, "min_chain_steps", 2)
+        n = len(sample.reasoning_chain)
+        ok = n >= min_steps
+        conf = 1.0 if ok else n / max(min_steps, 1)
+        outcomes.append(CheckOutcome(
+            "min_steps", w_struct, conf, ok,
+            "" if ok else f"only {n} step(s); need {min_steps}",
+        ))
+
+        # Conclusion connects to final step
+        if sample.reasoning_chain and sample.response:
+            last = sample.reasoning_chain[-1]
+            last_sig = _significant(f"{last.content} {last.justification}")
+            last_nums = set(_RE_NUMBER.findall(last.content + " " + last.justification))
+            conc_sig = _significant(sample.response)
+            conc_nums = set(_RE_NUMBER.findall(sample.response))
+            overlap_w = len(last_sig & conc_sig)
+            overlap_n = len(last_nums & conc_nums)
+            connected = overlap_w >= 1 or overlap_n >= 1 or len(conc_sig) <= 1
+            outcomes.append(CheckOutcome(
+                "conclusion_connects", self.weights.get("logical_validity", 1.0),
+                min(1.0, 0.3 + 0.2 * overlap_w + 0.3 * overlap_n) if connected else 0.2,
+                connected,
+                "" if connected else "final step shares no terms/numbers with conclusion",
+            ))
+        return outcomes
+
+    # ───── step-level checks ─────
 
     def _verify_step(
         self,
         step: ReasoningStep,
-        prior_steps: list[ReasoningStep],
-        original_prompt: str,
+        prior: list[ReasoningStep],
+        sample: TrainingSample,
     ) -> StepVerification:
-        """Verify a single reasoning step with multiple check types."""
-        passed = []
-        failed = []
-        # Use position in chain (no prior steps = first step) rather than
-        # step_number, which depends on what the model wrote (could be 0, 2, etc.)
-        is_first_step = len(prior_steps) == 0
+        checks: list[CheckOutcome] = []
+        is_first = len(prior) == 0
 
-        # Check 1: Content substance
-        if step.content and len(step.content.strip()) >= 10:
-            passed.append("content_substance")
-        else:
-            failed.append("content_substance")
+        # 1. content substance
+        w_log = self.weights.get("logical_validity", 1.0)
+        content_ok = bool(step.content and len(step.content.strip()) >= 8)
+        checks.append(CheckOutcome(
+            "content_substance", self.weights.get("structural", 0.75),
+            1.0 if content_ok else 0.0, content_ok,
+            "" if content_ok else "content empty or trivial",
+        ))
 
-        # Check 2: Justification exists and is meaningful.
-        # Skip for first step — it typically restates the problem ("Given: ..."),
-        # which is grounding, not inference. Check 4 already verifies grounding.
-        # Penalizing both would double-count, and for 2-step chains (the minimum),
-        # a single unjustified first step would push confidence below threshold.
-        if self.config.check_logical_validity and not is_first_step:
-            if step.justification and step.justification != "implicit" and len(step.justification) >= 10:
-                passed.append("justification_present")
-                # Check 2b: justification uses inferential language
-                just_lower = step.justification.lower()
-                has_inference = (any(m in just_lower for m in _INFERENCE_MARKERS_MULTI)
-                                or bool(_INFERENCE_MARKERS_SINGLE.search(just_lower)))
-                if has_inference:
-                    passed.append("justification_inferential")
+        # 2. justification inferential (skip first step)
+        if _cfg(self.config, "check_logical_validity", True) and not is_first:
+            j = step.justification or ""
+            has_j = j and j != "implicit" and len(j.strip()) >= 8
+            has_inf = bool(_INFERENCE_MARKERS.search(j)) if has_j else False
+            conf = 1.0 if has_inf else (0.5 if has_j else 0.0)
+            checks.append(CheckOutcome(
+                "justification_inferential", w_log, conf, has_inf,
+                "" if has_inf else ("no inferential marker" if has_j else "no justification"),
+            ))
+
+            # 2b. non-sequitur: justification must share terms with content
+            if has_j:
+                j_sig = _significant(j)
+                c_sig = _significant(step.content)
+                overlap = len(j_sig & c_sig)
+                # justification may legitimately introduce new terms (rule names),
+                # so only flag when overlap is literally zero AND justification is long.
+                not_sequitur = overlap >= 1 or len(j_sig) <= 2
+                checks.append(CheckOutcome(
+                    "not_non_sequitur", w_log,
+                    1.0 if overlap >= 2 else (0.7 if not_sequitur else 0.2),
+                    not_sequitur,
+                    "" if not_sequitur else "justification shares no terms with content",
+                ))
+
+            # 2c. anti-circular: justification must not restate the conclusion
+            if has_j:
+                j_norm = re.sub(r"\W+", " ", j.lower()).strip()
+                c_norm = re.sub(r"\W+", " ", step.content.lower()).strip()
+                if c_norm and j_norm and (j_norm in c_norm or c_norm in j_norm):
+                    checks.append(CheckOutcome(
+                        "non_circular", w_log, 0.1, False,
+                        "justification is a restatement of the conclusion",
+                    ))
                 else:
-                    failed.append("justification_inferential")
-            else:
-                failed.append("justification_present")
+                    checks.append(CheckOutcome(
+                        "non_circular", w_log, 1.0, True, "",
+                    ))
 
-        # Check 3: References prior steps (not for first step)
-        if self.config.check_step_completeness and prior_steps:
-            if self._step_references_prior(step, prior_steps):
-                passed.append("references_prior")
-            else:
-                failed.append("references_prior")
+        # 3. step completeness: references prior (non-first)
+        if _cfg(self.config, "check_step_completeness", True) and prior:
+            refs, ref_conf = self._references_prior(step, prior)
+            checks.append(CheckOutcome(
+                "references_prior", self.weights.get("step_completeness", 1.0),
+                ref_conf, refs,
+                "" if refs else "no lexical/symbolic link to any of the last prior steps",
+            ))
 
-        # Check 4: First step grounds in problem
-        if self.config.check_assumption_grounding and is_first_step:
-            if self._step_grounds_in_prompt(step, original_prompt):
-                passed.append("grounded_in_prompt")
-            else:
-                failed.append("grounded_in_prompt")
+        # 4. assumption grounding
+        if _cfg(self.config, "check_assumption_grounding", True):
+            a_ok, a_conf, a_msg = self._assumption_grounding(step, prior, sample, is_first)
+            checks.append(CheckOutcome(
+                "assumption_grounding",
+                self.weights.get("assumption_grounding", 1.0),
+                a_conf, a_ok, a_msg,
+            ))
 
-        # Check 5: No internal contradiction within step
-        if self._check_internal_consistency(step):
-            passed.append("internal_consistency")
-        else:
-            failed.append("internal_consistency")
+        # 5. internal consistency
+        ic_ok = self._internal_consistency(step)
+        checks.append(CheckOutcome(
+            "internal_consistency", self.weights.get("consistency", 1.5),
+            1.0 if ic_ok else 0.0, ic_ok,
+            "" if ic_ok else "self-contradiction detected within step",
+        ))
 
-        # Check 6: Step doesn't contradict prior steps
-        if prior_steps:
-            if self._check_cross_step_consistency(step, prior_steps):
-                passed.append("cross_step_consistency")
-            else:
-                failed.append("cross_step_consistency")
+        # 6. cross-step consistency
+        if prior:
+            cs_ok = self._cross_step_consistency(step, prior)
+            checks.append(CheckOutcome(
+                "cross_step_consistency", self.weights.get("consistency", 1.5),
+                1.0 if cs_ok else 0.0, cs_ok,
+                "" if cs_ok else "contradicts a recent prior step",
+            ))
 
-        # Check 7: Assumptions are explicit when present (first step only).
-        # Only penalize if the step makes claims that need grounding but lists
-        # no assumptions. Steps that simply restate the problem need none.
-        if is_first_step:
-            if step.assumptions:
-                passed.append("assumptions_stated")
-            elif step.justification and step.justification != "implicit":
-                # Step has a justification → making a claim → should state assumptions
-                failed.append("assumptions_stated")
-            else:
-                # Step is just restating/setting up — mark as passed to keep the
-                # check count closer to non-first steps. Without this, first steps
-                # run fewer checks (3-4 vs 6), making each check worth 25-33% of
-                # confidence vs 17% for non-first steps — a single first-step failure
-                # tanks overall confidence disproportionately.
-                passed.append("assumptions_stated")
+        # 7. per-step math equation check (if sympy available and domain=math)
+        if self.enable_sympy and sample.domain == "math":
+            math_check = self._math_step_check(step)
+            if math_check is not None:
+                checks.append(math_check)
 
-        valid = len(failed) == 0
-        confidence = len(passed) / max(len(passed) + len(failed), 1)
-
-        issues = [f"Failed check: {f}" for f in failed]
+        valid = all(c.passed for c in checks)
+        total_w = sum(c.weight for c in checks) or 1.0
+        conf = sum(c.weight * c.confidence for c in checks) / total_w
+        issues = [f"{c.name}: {c.detail}" for c in checks if not c.passed]
 
         return StepVerification(
             step_number=step.step_number,
             valid=valid,
+            confidence=conf,
+            checks=checks,
             issues=issues,
-            confidence=confidence,
-            checks_passed=passed,
-            checks_failed=failed,
         )
 
-    def _step_references_prior(self, step: ReasoningStep, prior_steps: list[ReasoningStep]) -> bool:
-        """Check if a step references concepts from ANY single prior step."""
-        step_text = re.sub(r'[*`_]', '', f"{step.content} {step.justification}".lower())
+    # ───── fine-grained helpers ─────
 
-        # Quick check: explicit step number or back-reference
-        if _RE_STEP_REF.search(step_text) or _RE_PRIOR_REF.search(step_text):
+    def _references_prior(
+        self, step: ReasoningStep, prior: list[ReasoningStep]
+    ) -> tuple[bool, float]:
+        text = f"{step.content} {step.justification}"
+        if _RE_STEP_REF.search(text) or _RE_PRIOR_REF.search(text):
+            return True, 1.0
+
+        step_sig = _significant(text)
+        step_nums = set(_RE_NUMBER.findall(text))
+        step_math = {w for w in _words(text) if _RE_MATH_TOKEN.search(w)}
+
+        best = 0.0
+        for p in prior:
+            p_text = f"{p.content} {p.justification}"
+            p_sig = _significant(p_text)
+            p_nums = set(_RE_NUMBER.findall(p_text))
+            p_math = {w for w in _words(p_text) if _RE_MATH_TOKEN.search(w)}
+            w_overlap = len(step_sig & p_sig)
+            n_overlap = len(step_nums & p_nums)
+            m_overlap = len(step_math & p_math)
+            score = min(1.0, 0.2 * w_overlap + 0.3 * n_overlap + 0.25 * m_overlap)
+            if score > best:
+                best = score
+
+        return best >= 0.3, best
+
+    def _assumption_grounding(
+        self,
+        step: ReasoningStep,
+        prior: list[ReasoningStep],
+        sample: TrainingSample,
+        is_first: bool,
+    ) -> tuple[bool, float, str]:
+        # Two-sided check:
+        #   (a) every declared assumption should appear (term-wise) somewhere
+        #       in the step content/justification (i.e., actually used).
+        #   (b) material claims that aren't trivially derivable from prior
+        #       steps / prompt should have a declared assumption.
+        declared = [a for a in (step.assumptions or []) if a and a.lower() not in
+                    ("none", "n/a", "implicit", "")]
+
+        if declared:
+            content_sig = _significant(f"{step.content} {step.justification}")
+            used_count = 0
+            for a in declared:
+                a_sig = _significant(a)
+                if a_sig and (a_sig & content_sig):
+                    used_count += 1
+                elif not a_sig:  # short symbolic assumption like "x>0"
+                    a_words = _words(a)
+                    if a_words & _words(step.content + " " + step.justification):
+                        used_count += 1
+            frac = used_count / len(declared)
+            if frac >= 0.5:
+                return True, 0.5 + 0.5 * frac, ""
+            return False, 0.3 * frac, f"{used_count}/{len(declared)} declared assumptions not referenced in step"
+
+        # No declared assumptions.
+        if is_first:
+            # First step: grounded iff it references the prompt.
+            prompt_sig = _significant(sample.prompt)
+            prompt_nums = set(_RE_NUMBER.findall(sample.prompt))
+            step_sig = _significant(step.content + " " + step.justification)
+            step_nums = set(_RE_NUMBER.findall(step.content + " " + step.justification))
+            w_overlap = len(prompt_sig & step_sig)
+            n_overlap = len(prompt_nums & step_nums)
+            if w_overlap >= 2 or n_overlap >= 1:
+                return True, min(1.0, 0.4 + 0.15 * w_overlap + 0.2 * n_overlap), ""
+            # Very short prompts: 1 word overlap suffices
+            if len(prompt_sig) <= 3 and w_overlap >= 1:
+                return True, 0.7, ""
+            return False, 0.2, "first step does not ground in the problem prompt"
+
+        # Non-first step with no assumptions is fine *if* it references prior.
+        refs, conf = self._references_prior(step, prior)
+        if refs:
+            return True, conf, ""
+        return False, 0.3, "no assumptions declared and no prior-step link (possible hidden premise)"
+
+    def _internal_consistency(self, step: ReasoningStep) -> bool:
+        text = f"{step.content}. {step.justification}".lower()
+        # Split on sentence terminators that are not decimal points
+        sents = [s.strip() for s in re.split(r"(?<!\d)\.(?!\d)|[!?;]", text) if s.strip()]
+        if len(sents) < 2:
             return True
-
-        # Check each prior step individually — we need coherent overlap with
-        # ONE step, not scattered words across many.
-        # Optimization: only check the last 5 prior steps (most likely referents).
-        step_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\']', ' ', step_text)))
-        for prior in prior_steps[-5:]:
-            # Include prior's justification — it often contains the key terms
-            # the next step references (e.g., "by the Pythagorean theorem").
-            prior_text = prior.content
-            if prior.justification and prior.justification != "implicit":
-                prior_text = f"{prior_text} {prior.justification}"
-            clean_prior = re.sub(r'[*`_]', '', prior_text.lower())
-            prior_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\']', ' ', clean_prior)))
-            significant = {w for w in prior_words if len(w) > 4 and w not in _REF_STOPWORDS}
-            # Include math-relevant short words (sin, cos, log, sum, max, min, etc.)
-            # and tokens containing digits/operators — these are domain-specific terms
-            # that strongly signal a real reference, not coincidence.
-            significant |= {w for w in prior_words if _RE_MATH_TOKEN.search(w)}
-            significant |= {w for w in prior_words if len(w) == 3 and w in _MATH_SHORT_WORDS}
-            # Use word-set intersection, not substring — prevents partial matches
-            overlap = len(significant & step_words)
-            # Lower threshold for short steps (conclusion-like "Therefore F = 50")
-            # that reference variables/values from prior steps but use few words.
-            threshold = 2 if len(step_words) < 15 else 3
-            if overlap >= threshold:
-                return True
-
-        return False
-
-    def _step_grounds_in_prompt(self, step: ReasoningStep, prompt: str) -> bool:
-        """Check if the first step references the original problem."""
-        step_text = re.sub(r'[*`_]', '', f"{step.content} {step.justification}".lower())
-        # Strip punctuation so "velocity." matches "velocity", "x=5" stays as-is
-        step_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\']', ' ', step_text)))
-        prompt_clean = re.sub(r'[*`_]', '', prompt.lower())
-        prompt_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\']', ' ', prompt_clean)))
-        significant = {w for w in prompt_words if len(w) > 4 and w not in _TEMPLATE_WORDS}
-        # Include math tokens (x^3, 2x, etc.) and short domain words from the prompt
-        significant |= {w for w in prompt_words if _RE_MATH_TOKEN.search(w)}
-        significant |= {w for w in prompt_words if len(w) == 3 and w in _MATH_SHORT_WORDS}
-        # Use word-set membership, not substring — "force" shouldn't match "reinforce"
-        overlap = len(significant & step_words)
-        # Lower threshold when the prompt has very few significant words (common
-        # in math: "Find the derivative of x^3") — 1 match is sufficient grounding
-        # when there are few words to match on.
-        threshold = 1 if len(significant) <= 3 else 2
-        return overlap >= threshold
-
-    def _check_internal_consistency(self, step: ReasoningStep) -> bool:
-        """Check if a step contradicts itself (bidirectional)."""
-        # Include justification — it can contradict the content (e.g., content
-        # says "x = 5" while justification says "since x cannot equal 5").
-        parts = [step.content]
-        if step.justification and step.justification != "implicit":
-            parts.append(step.justification)
-        text = " ".join(parts).lower()
-        # Split on sentence-ending punctuation and semicolons, but NOT decimal points.
-        # Naive [.!?] splits "3.14" into "3" and "14", creating nonsensical
-        # fragments that false-positive on contradiction checks for math/science.
-        # Semicolons are important — "x is positive; x is not positive" is a
-        # contradiction that's invisible when treated as one sentence.
-        sentences = [s.strip() for s in re.split(r'(?<!\d)\.(?!\d)|[!?;]', text) if s.strip()]
-
-        if len(sentences) < 2:
-            return True
-
-        def _clean_words(s):
-            return set(re.findall(r'\S+', re.sub(r'[.,!?;:"\'()\[\]{}+=<>]', ' ', s)))
-
-        for i, s1 in enumerate(sentences):
-            s1_words = _clean_words(s1)
-            for s2 in sentences[i + 1:]:
-                s2_words = _clean_words(s2)
-                for pos_words, neg_words in _NEGATION_PAIRS:
-                    for a, a_words, b, b_words in [(s1, s1_words, s2, s2_words), (s2, s2_words, s1, s1_words)]:
-                        if pos_words <= a_words and neg_words <= b_words:
-                            a_context = a_words - pos_words - _TRIVIAL_WORDS
-                            b_context = b_words - neg_words - _TRIVIAL_WORDS
-                            if len(a_context & b_context) >= 3:
-                                return False
-        return True
-
-    def _check_cross_step_consistency(self, step: ReasoningStep, prior_steps: list[ReasoningStep]) -> bool:
-        """Check if a step contradicts any recent prior step (bidirectional).
-
-        Only checks the last 5 prior steps — contradicting step 1 from step 50
-        is usually legitimate (problem setup vs. derived result), and checking
-        all O(N) prior steps per step makes verification O(N²) per sample.
-        """
-        # Include justification text — a step's justification can contradict
-        # prior content (or vice versa), and checking only content misses this.
-        step_parts = [step.content]
-        if step.justification and step.justification != "implicit":
-            step_parts.append(step.justification)
-        step_text = " ".join(step_parts).lower()
-        step_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\'()\[\]{}+=<>]', ' ', step_text)))
-
-        for prior in prior_steps[-5:]:
-            prior_parts = [prior.content]
-            if prior.justification and prior.justification != "implicit":
-                prior_parts.append(prior.justification)
-            prior_text = " ".join(prior_parts).lower()
-            prior_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\'()\[\]{}+=<>]', ' ', prior_text)))
-            for pos_words, neg_words in _NEGATION_PAIRS:
-                # Direction 1: prior asserts, step negates
-                if pos_words <= prior_words and neg_words <= step_words:
-                    prior_context = prior_words - pos_words - _TRIVIAL_WORDS
-                    step_context = step_words - neg_words - _TRIVIAL_WORDS
-                    if len(prior_context & step_context) >= 3:
+        sent_words = [_words(s) for s in sents]
+        for i in range(len(sents)):
+            for j in range(i + 1, len(sents)):
+                a, b = sent_words[i], sent_words[j]
+                for pos, neg in _NEGATION_PAIRS:
+                    if pos <= a and neg <= b and len((a - pos) & (b - neg)) >= 3:
                         return False
-                # Direction 2: prior negates, step asserts
-                if neg_words <= prior_words and pos_words <= step_words:
-                    prior_context = prior_words - neg_words - _TRIVIAL_WORDS
-                    step_context = step_words - pos_words - _TRIVIAL_WORDS
-                    if len(prior_context & step_context) >= 3:
+                    if neg <= a and pos <= b and len((a - neg) & (b - pos)) >= 3:
                         return False
         return True
 
-    def _verify_chain(self, sample: TrainingSample) -> tuple[list[str], int]:
-        """Chain-level verification checks. Returns (issues, checks_run)."""
-        issues = []
-        checks_run = 0
+    def _cross_step_consistency(self, step: ReasoningStep, prior: list[ReasoningStep]) -> bool:
+        s_words = _words(step.content + " " + step.justification)
+        for p in prior:
+            p_words = _words(p.content + " " + p.justification)
+            for pos, neg in _NEGATION_PAIRS:
+                if pos <= p_words and neg <= s_words and len((p_words - pos) & (s_words - neg)) >= 3:
+                    return False
+                if neg <= p_words and pos <= s_words and len((p_words - neg) & (s_words - pos)) >= 3:
+                    return False
+            # Numeric contradiction: same variable assigned different values
+            for var, val in self._extract_assignments(p.content):
+                for var2, val2 in self._extract_assignments(step.content):
+                    if var == var2 and val != val2:
+                        eq = _sympy_equation_valid(val, val2)
+                        if eq is False:
+                            return False
+        return True
 
-        # Check 1: Must have a conclusion
-        checks_run += 1
-        if not sample.response or len(sample.response.strip()) < 5:
-            issues.append("No conclusion or conclusion too brief")
+    @staticmethod
+    def _extract_assignments(text: str) -> list[tuple[str, str]]:
+        out = []
+        for m in _RE_EQUATION.finditer(text):
+            lhs = m.group(1).strip()
+            rhs = m.group(2).strip()
+            if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", lhs):
+                # trim trailing prose from rhs
+                rhs = re.split(r"[,.;]| and ", rhs, maxsplit=1)[0].strip()
+                if rhs:
+                    out.append((lhs, rhs))
+        return out
 
-        # Check 2: Must have minimum steps
-        checks_run += 1
-        min_steps = self.config.min_chain_steps
-        if len(sample.reasoning_chain) < min_steps:
-            issues.append(f"Only {len(sample.reasoning_chain)} step(s) — need at least {min_steps}")
+    # ───── domain execution ─────
 
-        # Check 3: Conclusion must follow from final step (only when both exist)
-        if sample.reasoning_chain and sample.response:
-            checks_run += 1
-            last_step = sample.reasoning_chain[-1]
-            # Strip punctuation for consistent matching — "42." should match "42",
-            # "answer," should match "answer". Every other check does this.
-            # Include justification — the last step's justification often contains
-            # the connecting term to the conclusion (e.g., "by substitution, x = 5").
-            last_text = last_step.content
-            if last_step.justification and last_step.justification != "implicit":
-                last_text = f"{last_text} {last_step.justification}"
-            last_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\']', ' ', last_text.lower())))
-            conclusion_words = set(re.findall(r'\S+', re.sub(r'[.,!?;:"\']', ' ', sample.response.lower())))
-            # Include numeric tokens (any word containing digits) regardless of length
-            # so conclusions like "42" or "x=5" match final steps mentioning them
-            significant_last = {w for w in last_words if (len(w) > 3 and w not in _TRIVIAL_WORDS) or any(c.isdigit() for c in w)}
-            # Use a lower length threshold for conclusion words — conclusions
-            # are often very short ("no", "yes", "42"). Without this, short text
-            # conclusions produce an empty significant_conc, and the intersection
-            # is always empty, causing check 3 to ALWAYS fail for short answers.
-            significant_conc = {w for w in conclusion_words if (len(w) > 2 and w not in _TRIVIAL_WORDS) or any(c.isdigit() for c in w)}
-            if not (significant_last & significant_conc):
-                issues.append("Final step does not connect to conclusion — logical gap")
+    def _math_step_check(self, step: ReasoningStep) -> Optional[CheckOutcome]:
+        w = self.weights.get("domain_exec", 2.0)
+        equations = list(_RE_EQUATION.finditer(step.content))
+        if not equations:
+            return None
+        decided = 0
+        correct = 0
+        for m in equations[:3]:  # cap to avoid explosion
+            lhs = m.group(1).strip()
+            rhs = m.group(2).strip()
+            rhs = re.split(r"[,.;]| and | so ", rhs, maxsplit=1)[0].strip()
+            res = _sympy_equation_valid(lhs, rhs)
+            if res is None:
+                continue
+            decided += 1
+            if res:
+                correct += 1
+        if decided == 0:
+            return None
+        ok = correct == decided
+        return CheckOutcome(
+            "math_equation_check", w,
+            correct / decided, ok,
+            "" if ok else f"{decided - correct}/{decided} equations fail symbolic check",
+        )
 
-        return issues, checks_run
+    def _math_sample_checks(self, sample: TrainingSample, w: float) -> list[CheckOutcome]:
+        """Solve equations gathered from prompt + chain and verify conclusion."""
+        out: list[CheckOutcome] = []
 
-    def _model_verify(self, sample: TrainingSample) -> tuple[bool, str]:
-        """Use the model itself to verify a reasoning chain (escalation phase).
+        # Direct answer equivalence: if the sample has an expected answer,
+        # normalize both and check symbolic/numeric equivalence.
+        expected = getattr(sample, "expected_answer", None)
+        if expected and sample.response:
+            norm_exp = _normalize_answer(str(expected))
+            norm_got = _normalize_answer(sample.response)
+            eq = _numeric_equiv(norm_exp, norm_got)
+            if eq is True:
+                out.append(CheckOutcome(
+                    "answer_equivalence", w * 2.0, 1.0, True, "",
+                ))
+            elif eq is False:
+                out.append(CheckOutcome(
+                    "answer_equivalence", w * 6.0, 0.0, False,
+                    f"answer '{norm_got}' != expected '{norm_exp}'",
+                ))
+            # eq is None: undecidable, skip
 
-        Returns (is_valid, reason_text). reason_text is the model's explanation
-        when invalid, or empty string when valid.
-        """
-        if not self._model_verifier:
-            return True, ""
+        prompt_eqs = self._gather_equations(sample.prompt)
+        chain_eqs: list[tuple[str, str]] = []
+        for st in sample.reasoning_chain:
+            chain_eqs.extend(self._gather_equations(st.content))
+        conclusion_eqs = self._gather_equations(sample.response or "")
 
-        chain_text = sample._build_full_response()
-        verify_prompt = (
-            f"You are a logic checker. Examine this reasoning chain for errors.\n\n"
+        # 1. Problem-ground truth: solve the prompt equations.
+        gt = _sympy_solve_single_var(prompt_eqs) if prompt_eqs else {}
+
+        # 2. Chain assignments — solutions the model claims.
+        chain_assign = _sympy_solve_single_var(chain_eqs) if chain_eqs else {}
+
+        # 3. Conclusion assignments — the final claimed answer(s).
+        conc_assign = _sympy_solve_single_var(conclusion_eqs) if conclusion_eqs else {}
+
+        # Check: does the conclusion satisfy the problem?
+        if gt and conc_assign:
+            agree = 0
+            total = 0
+            for var, gt_val in gt.items():
+                if var in conc_assign:
+                    total += 1
+                    try:
+                        if sympy.simplify(gt_val - conc_assign[var]) == 0:
+                            agree += 1
+                    except Exception:
+                        pass
+            if total:
+                frac = agree / total
+                ok = frac >= 0.99
+                out.append(CheckOutcome(
+                    "sympy_conclusion_solves_problem", w if ok else w * 6.0,
+                    frac, ok,
+                    "" if ok else f"conclusion does not solve the problem's equation(s) ({agree}/{total})",
+                ))
+
+        # Check: does the chain's claimed value match the true value?
+        if gt and chain_assign:
+            agree = 0
+            total = 0
+            for var, val in chain_assign.items():
+                if var in gt:
+                    total += 1
+                    try:
+                        if sympy.simplify(val - gt[var]) == 0:
+                            agree += 1
+                    except Exception:
+                        pass
+            if total:
+                frac = agree / total
+                ok = frac >= 0.99
+                out.append(CheckOutcome(
+                    "sympy_chain_consistent", w * 0.75, frac, ok,
+                    "" if ok else f"chain derives values inconsistent with the problem ({agree}/{total})",
+                ))
+        return out
+
+    _gather_equations = staticmethod(_shared_gather_equations)
+
+    def _domain_execution(self, sample: TrainingSample) -> list[CheckOutcome]:
+        outcomes: list[CheckOutcome] = []
+        w = self.weights.get("domain_exec", 2.0)
+
+        if sample.domain == "math" and self.enable_sympy:
+            outcomes.extend(self._math_sample_checks(sample, w))
+
+        if sample.domain == "code" and self.enable_code_exec:
+            code = self._extract_code(sample)
+            if code:
+                tests = self._extract_tests(sample)
+                source = code
+                if tests:
+                    source = code + "\n\n# --- tests ---\n" + "\n".join(tests)
+                ok, detail = _run_code_sandboxed(
+                    source, self.code_timeout, self.code_memory_mb
+                )
+                # Weight failures extra heavily — a failing sandbox is near-
+                # proof of invalidity for code samples.
+                fail_weight = w * 3.0
+                outcomes.append(CheckOutcome(
+                    "code_sandbox_exec", w if ok else fail_weight,
+                    1.0 if ok else 0.0, ok,
+                    "" if ok else f"sandbox failed: {detail[:160]}",
+                ))
+            else:
+                outcomes.append(CheckOutcome(
+                    "code_sandbox_exec", w * 0.5,
+                    0.3, False, "no extractable Python code found in code sample",
+                ))
+        return outcomes
+
+    @staticmethod
+    def _extract_code(sample: TrainingSample) -> Optional[str]:
+        """Pull Python source out of response / last step."""
+        texts = [sample.response or ""]
+        if sample.reasoning_chain:
+            texts.append(sample.reasoning_chain[-1].content)
+        for t in texts:
+            # Fenced code block
+            m = re.search(r"```(?:python)?\s*\n(.*?)```", t, re.DOTALL)
+            if m:
+                src = m.group(1).strip()
+                if Verifier._is_valid_python(src):
+                    return src
+            # Raw def/class
+            m = re.search(r"((?:def|class)\s+\w+.*)", t, re.DOTALL)
+            if m and Verifier._is_valid_python(m.group(1)):
+                return m.group(1)
+        return None
+
+    @staticmethod
+    def _is_valid_python(src: str) -> bool:
+        try:
+            ast.parse(src)
+            return True
+        except SyntaxError:
+            return False
+
+    @staticmethod
+    def _extract_tests(sample: TrainingSample) -> list[str]:
+        """Pull 'Test: expr == val' lines from the prompt."""
+        out = []
+        for m in re.finditer(
+            r"(?:^|[\n.;])\s*(?:Test|assert|Example)s?\s*[:]?\s*([^\n.;]+)",
+            sample.prompt or "",
+            re.IGNORECASE,
+        ):
+            expr = m.group(1).strip().rstrip(".")
+            if "==" in expr or expr.startswith("assert"):
+                stmt = expr if expr.startswith("assert") else f"assert {expr}"
+                out.append(stmt)
+        return out[:10]
+
+    # ───── model escalation ─────
+
+    def _in_escalation_band(self, conf: float) -> bool:
+        return self.escalate_above <= conf < self.escalate_below
+
+    def _apply_model_escalation(self, sample: TrainingSample, res: VerificationResult):
+        valid, reason = self._model_verify_one(sample)
+        res.escalated_to_model = True
+        w = self.weights.get("logical_validity", 1.0) * 2.0
+        # Re-blend: treat the model verdict as one more weighted signal.
+        blended = res.overall_confidence + w * (1.0 if valid else 0.0)
+        denom_prev = 1.0  # already normalized
+        res.overall_confidence = blended / (denom_prev + w)
+        threshold = _cfg(self.config, "min_confidence_for_accept", 0.85)
+        if valid:
+            if res.overall_confidence >= threshold:
+                res.accepted = True
+        else:
+            if self.allow_model_override_reject:
+                res.accepted = False
+                res.rejection_reasons.append(f"Model: {reason[:200]}")
+
+    def _batch_model_escalation(
+        self, results: list[tuple[TrainingSample, VerificationResult]]
+    ):
+        candidates = [
+            (s, r) for s, r in results if self._in_escalation_band(r.overall_confidence)
+        ]
+        if not candidates:
+            return
+        prompts = [self._build_verify_prompt(s) for s, _ in candidates]
+        try:
+            responses: list[str] = self._model_verifier.generate_batch(
+                prompts, max_new_tokens=256, temperature=0.0,
+            )
+            if len(responses) != len(candidates):
+                logger.warning("model escalation response count mismatch; skipping")
+                return
+            for (sample, res), resp in zip(candidates, responses):
+                valid, reason = self._parse_model_verdict(resp)
+                res.escalated_to_model = True
+                w = self.weights.get("logical_validity", 1.0) * 2.0
+                res.overall_confidence = (res.overall_confidence + w * (1.0 if valid else 0.0)) / (1.0 + w)
+                threshold = _cfg(self.config, "min_confidence_for_accept", 0.85)
+                if valid and res.overall_confidence >= threshold:
+                    res.accepted = True
+                elif not valid and self.allow_model_override_reject:
+                    res.accepted = False
+                    res.rejection_reasons.append(f"Model: {reason[:200]}")
+        except Exception as e:
+            logger.warning(f"model escalation failed ({type(e).__name__}): {e}")
+
+    def _model_verify_one(self, sample: TrainingSample) -> tuple[bool, str]:
+        resp = self._model_verifier.generate(
+            self._build_verify_prompt(sample), max_new_tokens=256, temperature=0.0
+        )
+        return self._parse_model_verdict(resp)
+
+    @staticmethod
+    def _build_verify_prompt(sample: TrainingSample) -> str:
+        chain = sample._build_full_response()
+        return (
+            "<|im_start|>system\n"
+            "You are a strict, impartial logic verifier. You check reasoning chains "
+            "for correctness. You have no bias toward accepting or rejecting — "
+            "report exactly what you find.<|im_end|>\n"
+            "<|im_start|>user\n"
             f"PROBLEM:\n{sample.prompt}\n\n"
-            f"REASONING:\n{chain_text}\n\n"
-            f"Is every step logically valid? Does the conclusion follow? "
-            f"Answer ONLY 'VALID' or 'INVALID: <reason>'."
+            f"REASONING CHAIN:\n{chain}\n\n"
+            "Verify ALL of the following:\n"
+            "1. Does each step follow logically from prior steps and/or the problem premises?\n"
+            "2. Are there any contradictions or circular reasoning?\n"
+            "3. Does the conclusion follow from the final step?\n"
+            "4. Is the final answer correct for the given problem?\n\n"
+            "Respond with EXACTLY one of:\n"
+            "- VALID\n"
+            "- INVALID: <specific reason citing the step number and error>\n\n"
+            "Do NOT explain your reasoning. Output only VALID or INVALID: <reason>."
+            "<|im_end|>\n"
+            "<|im_start|>assistant\n"
         )
 
-        response = self._model_verifier.generate(
-            verify_prompt,
-            max_new_tokens=256,
-            temperature=0.0,
-        )
-        resp_text = response.strip()
-        # Strip markdown formatting — models may respond "**VALID**" or "`VALID`"
-        first_word = re.sub(r'[*`_]', '', resp_text.split()[0]).upper() if resp_text else ""
-        if first_word == "VALID":
+    @staticmethod
+    def _parse_model_verdict(resp: str) -> tuple[bool, str]:
+        txt = (resp or "").strip()
+        if not txt:
+            return False, "no response"
+        # Strip chat template artifacts and markdown wrapping
+        txt = re.sub(r'<\|im_(?:start|end)\|>.*?\n?', '', txt).strip()
+        txt = re.sub(r'^```\w*\s*\n?', '', txt).strip()
+        txt = re.sub(r'\n?```\s*$', '', txt).strip()
+        # Normalize: strip leading punctuation, markdown emphasis, whitespace
+        normalized = re.sub(r'^[\s*`_#>\-]+', '', txt).upper()
+        if not normalized:
+            return False, "empty response after cleanup"
+        # Check for VALID (but not INVALID)
+        if re.match(r'^VALID\b', normalized) and not normalized.startswith("INVALID"):
             return True, ""
-        return False, resp_text[:200] if resp_text else "no response"
+        # Check for INVALID with reason
+        m = re.match(r'^INVALID\s*[:\-–—]\s*(.*)', normalized, re.DOTALL)
+        if m:
+            return False, m.group(1).strip()[:200] or "no reason given"
+        # Fallback: if model refused or went off-topic, treat as inconclusive
+        # (reject to be safe)
+        return False, txt[:200]
+
+    @staticmethod
+    def _format_notes(res: VerificationResult) -> str:
+        head = f"conf={res.overall_confidence:.2f}"
+        if res.escalated_to_model:
+            head += " (escalated)"
+        if res.rejection_reasons:
+            return head + " | " + "; ".join(res.rejection_reasons[:3])
+        return head + " | all checks passed"

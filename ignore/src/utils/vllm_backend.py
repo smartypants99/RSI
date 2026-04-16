@@ -7,8 +7,12 @@ So we swap between them:
   - After training: HF unloaded, vLLM reloaded (with merged weights from saved checkpoint)
 """
 
+from __future__ import annotations
+
 import gc
 import logging
+import shutil
+import time
 import torch
 from pathlib import Path
 
@@ -20,11 +24,15 @@ class VLLMModelLoader:
     and swaps to HF only for training. Has the same interface as ModelLoader."""
 
     def __init__(self, model_path: str, dtype: str = "bfloat16",
-                 max_model_len: int = 4096, gpu_memory_utilization: float = 0.90):
+                 max_model_len: int = 4096, gpu_memory_utilization: float = 0.90,
+                 allow_remote_code: bool = False,
+                 quantization_config: dict | None = None):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
         self.gpu_memory_utilization = gpu_memory_utilization
+        self.allow_remote_code = bool(allow_remote_code)
+        self.quantization_config = quantization_config
         self._llm = None
         self._tokenizer = None
         self._sampling_params_cls = None
@@ -33,10 +41,28 @@ class VLLMModelLoader:
         self._hf_tokenizer = None
         # Track the current model path (changes after checkpoint save)
         self._current_model_path = model_path
+        # Expose a config-like object so components that read model_loader.config
+        # (e.g., CustomLoRATrainer accessing config.max_seq_length) work uniformly.
+        from .config import ModelConfig
+        self.config = ModelConfig(
+            model_path=model_path,
+            dtype=dtype,
+            max_seq_length=max_model_len,
+            allow_remote_code=allow_remote_code,
+            quantization_config=quantization_config,
+        )
 
     def load(self):
-        """Load vLLM engine (called by ImprovementLoop._setup)."""
-        self._load_vllm()
+        """Load vLLM engine (called by ImprovementLoop._setup).
+
+        Falls back to HF if vLLM fails to load (GPU incompatibility, OOM, etc.).
+        """
+        try:
+            self._load_vllm()
+        except Exception as e:
+            logger.warning(f"vLLM failed to load ({type(e).__name__}: {e}). Falling back to HF backend.")
+            self._llm = None
+            self._load_hf()
         return self
 
     def _load_vllm(self):
@@ -50,7 +76,7 @@ class VLLMModelLoader:
             dtype=self.dtype,
             max_model_len=self.max_model_len,
             gpu_memory_utilization=self.gpu_memory_utilization,
-            trust_remote_code=True,
+            trust_remote_code=self.allow_remote_code,
             disable_log_stats=True,
         )
         self._tokenizer = self._llm.get_tokenizer()
@@ -62,6 +88,18 @@ class VLLMModelLoader:
         """Destroy vLLM engine and free GPU memory."""
         if self._llm is not None:
             logger.info("Unloading vLLM to free GPU memory for training")
+            import contextlib
+            with contextlib.suppress(Exception):
+                from vllm.distributed.parallel_state import (
+                    destroy_model_parallel,
+                    destroy_distributed_environment,
+                )
+                destroy_model_parallel()
+                destroy_distributed_environment()
+            with contextlib.suppress(Exception):
+                import ray
+                if ray.is_initialized():
+                    ray.shutdown()
             del self._llm
             self._llm = None
             gc.collect()
@@ -73,24 +111,60 @@ class VLLMModelLoader:
         logger.info(f"Loading HF model for training: {self._current_model_path}")
 
         self._hf_tokenizer = AutoTokenizer.from_pretrained(
-            self._current_model_path, trust_remote_code=True)
+            self._current_model_path, trust_remote_code=self.allow_remote_code)
         if self._hf_tokenizer.pad_token is None:
             self._hf_tokenizer.pad_token = self._hf_tokenizer.eos_token
 
         target_dtype = getattr(torch, self.dtype)
         from transformers import __version__ as _tf_version
         dtype_key = "dtype" if int(_tf_version.split(".")[0]) >= 5 else "torch_dtype"
-        self._hf_model = AutoModelForCausalLM.from_pretrained(
-            self._current_model_path,
-            device_map="auto",
-            trust_remote_code=True,
-            **{dtype_key: target_dtype},
-        )
+        load_kwargs = {
+            "device_map": "auto",
+            "trust_remote_code": self.allow_remote_code,
+            dtype_key: target_dtype,
+            "attn_implementation": "flash_attention_2",
+        }
+        if self.quantization_config:
+            try:
+                from transformers import BitsAndBytesConfig
+                qc = dict(self.quantization_config)
+                if "bnb_4bit_compute_dtype" in qc and isinstance(qc["bnb_4bit_compute_dtype"], str):
+                    qc["bnb_4bit_compute_dtype"] = getattr(torch, qc["bnb_4bit_compute_dtype"])
+                load_kwargs["quantization_config"] = BitsAndBytesConfig(**qc)
+            except ImportError:
+                logger.warning("bitsandbytes not installed — ignoring quantization_config")
+        # Retry with backoff for transient network errors during model download.
+        last_err = None
+        for attempt in range(3):
+            try:
+                self._hf_model = AutoModelForCausalLM.from_pretrained(
+                    self._current_model_path,
+                    **load_kwargs,
+                )
+                break
+            except (ValueError, ImportError):
+                # Flash attention not available — fall back to default
+                load_kwargs.pop("attn_implementation", None)
+                self._hf_model = AutoModelForCausalLM.from_pretrained(
+                    self._current_model_path,
+                    **load_kwargs,
+                )
+                break
+            except (OSError, ConnectionError, TimeoutError) as e:
+                last_err = e
+                if attempt < 2:
+                    wait = 2 ** attempt * 5
+                    logger.warning(f"HF model load failed (attempt {attempt+1}/3): {e}. Retrying in {wait}s.")
+                    time.sleep(wait)
+        else:
+            raise RuntimeError(f"HF model load failed after 3 attempts: {last_err}") from last_err
 
     def _unload_hf(self):
         """Unload HF model and free GPU memory."""
         if self._hf_model is not None:
             logger.info("Unloading HF model to free GPU memory for vLLM")
+            for p in self._hf_model.parameters():
+                p.grad = None
             del self._hf_model
             self._hf_model = None
             del self._hf_tokenizer
@@ -173,17 +247,25 @@ class VLLMModelLoader:
 
     # ---- Training swap interface ----
 
-    def swap_to_hf_for_training(self):
+    def swap_to_hf_for_training(self) -> None:
         """Unload vLLM, load HF model for LoRA training."""
         self._unload_vllm()
         self._load_hf()
 
-    def swap_to_vllm_after_training(self, checkpoint_path: str | None = None):
-        """Save HF model to checkpoint, unload HF, reload vLLM with merged weights."""
+    def swap_to_vllm_after_training(self, checkpoint_path: str | None = None) -> None:
+        """Unload HF, reload vLLM with merged weights. Falls back to HF on failure."""
         if checkpoint_path:
             self._current_model_path = checkpoint_path
         self._unload_hf()
-        self._load_vllm()
+        # If vLLM is already loaded (e.g. resume path called before training),
+        # unload it first so _load_vllm doesn't leak the prior engine's GPU mem.
+        self._unload_vllm()
+        try:
+            self._load_vllm()
+        except Exception as e:
+            logger.warning(f"vLLM reload failed ({type(e).__name__}: {e}). Falling back to HF.")
+            self._llm = None
+            self._load_hf()
 
     # ---- Compatibility with ModelLoader interface ----
 
@@ -199,9 +281,10 @@ class VLLMModelLoader:
 
         if self._hf_model is not None:
             capture = ActivationCapture()
-            capture.register(self._hf_model, layer_names)
+            hf_model = self._hf_model
             @contextmanager
             def real():
+                capture.register(hf_model, layer_names)
                 try:
                     yield capture
                 finally:
@@ -213,7 +296,7 @@ class VLLMModelLoader:
     def get_layer_info(self) -> dict:
         """Layer info requires HF model. Return empty dict in vLLM mode."""
         if self._hf_model is not None:
-            from ..utils.model_loader import _chunked_norm
+            from .model_loader import _chunked_norm
             skip_suffixes = ("embed_tokens.weight", "lm_head.weight",
                              "layernorm.weight", "layer_norm.weight",
                              "norm.weight", "ln_f.weight")
@@ -230,12 +313,19 @@ class VLLMModelLoader:
             return layers
         return {}
 
-    def save_checkpoint(self, path: Path, cycle: int):
+    def save_checkpoint(self, path: Path, cycle: int) -> None:
         """Save model checkpoint (only works in HF mode)."""
         if self._hf_model is None:
             logger.warning("Cannot save checkpoint — HF model not loaded")
             return
         save_path = path / f"cycle_{cycle}"
         save_path.mkdir(parents=True, exist_ok=True)
+        # Check disk space — warn if less than 1GB free.
+        try:
+            free = shutil.disk_usage(save_path).free
+            if free < 1024 * 1024 * 1024:
+                logger.warning(f"Low disk space ({free // 1024 // 1024}MB free) — checkpoint save may fail")
+        except OSError:
+            pass
         self._hf_model.save_pretrained(save_path)
         self._hf_tokenizer.save_pretrained(save_path)

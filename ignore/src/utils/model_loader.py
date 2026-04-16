@@ -1,11 +1,16 @@
 """Model loading and management utilities."""
 
+import logging
+import shutil
+import time
 import torch
 from pathlib import Path
 from typing import Optional
 from contextlib import contextmanager
 
 from .config import ModelConfig
+
+logger = logging.getLogger(__name__)
 
 
 class ActivationStats:
@@ -90,13 +95,14 @@ class ActivationCapture:
 
     def _make_hook(self, name: str):
         def hook(module, input, output):
-            tensor = None
-            if isinstance(output, torch.Tensor):
-                tensor = output.detach()
-            elif isinstance(output, tuple) and output and isinstance(output[0], torch.Tensor):
-                tensor = output[0].detach()
-            if tensor is not None:
-                self.activations[name] = ActivationStats(tensor)
+            with torch.no_grad():
+                tensor = None
+                if isinstance(output, torch.Tensor):
+                    tensor = output.detach()
+                elif isinstance(output, tuple) and output and isinstance(output[0], torch.Tensor):
+                    tensor = output[0].detach()
+                if tensor is not None:
+                    self.activations[name] = ActivationStats(tensor)
         return hook
 
     def clear(self):
@@ -139,9 +145,10 @@ class ModelLoader:
 
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        trust = bool(getattr(self.config, "allow_remote_code", False))
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.config.model_path,
-            trust_remote_code=True,
+            trust_remote_code=trust,
         )
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token
@@ -153,16 +160,38 @@ class ModelLoader:
         load_kwargs = {
             "device_map": self.config.device_map,
             dtype_key: target_dtype,
-            "trust_remote_code": True,
+            "trust_remote_code": trust,
+            "attn_implementation": "flash_attention_2",
         }
 
         if self.config.quantization_config:
             load_kwargs["quantization_config"] = self._build_quant_config()
 
-        self._model = AutoModelForCausalLM.from_pretrained(
-            self.config.model_path,
-            **load_kwargs,
-        )
+        # Retry model download with exponential backoff for transient network errors.
+        last_err = None
+        for attempt in range(3):
+            try:
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    self.config.model_path,
+                    **load_kwargs,
+                )
+                break
+            except (ValueError, ImportError):
+                # Flash attention not available — fall back to default
+                load_kwargs.pop("attn_implementation", None)
+                self._model = AutoModelForCausalLM.from_pretrained(
+                    self.config.model_path,
+                    **load_kwargs,
+                )
+                break
+            except (OSError, ConnectionError, TimeoutError) as e:
+                last_err = e
+                if attempt < 2:
+                    wait = 2 ** attempt * 5
+                    logger.warning(f"Model download failed (attempt {attempt+1}/3): {e}. Retrying in {wait}s.")
+                    time.sleep(wait)
+        else:
+            raise RuntimeError(f"Model download failed after 3 attempts: {last_err}") from last_err
         # KV cache is enabled for inference speed. Trainer disables it during training.
         return self
 
@@ -309,9 +338,29 @@ class ModelLoader:
             }
         return layers
 
-    def save_checkpoint(self, path: Path, cycle: int):
+    def save_checkpoint(self, path: Path, cycle: int) -> None:
         """Save model checkpoint for a given cycle."""
         save_path = path / f"cycle_{cycle}"
         save_path.mkdir(parents=True, exist_ok=True)
+        # Check disk space — warn if less than 1GB free (small models may still fit).
+        try:
+            free = shutil.disk_usage(save_path).free
+            if free < 1024 * 1024 * 1024:
+                logger.warning(f"Low disk space ({free // 1024 // 1024}MB free) — checkpoint save may fail")
+        except OSError:
+            pass
         self._model.save_pretrained(save_path)
         self._tokenizer.save_pretrained(save_path)
+
+    def load_from_checkpoint(self, checkpoint_path: str) -> None:
+        """Reload model weights from a saved checkpoint (for early stopping revert)."""
+        from transformers import AutoModelForCausalLM
+        logger.info(f"Reloading model from checkpoint: {checkpoint_path}")
+        dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
+        dtype = dtype_map.get(self.config.dtype, torch.bfloat16)
+        kwargs = {"torch_dtype": dtype, "device_map": self.config.device_map}
+        if self.config.quantization_config:
+            from transformers import BitsAndBytesConfig
+            kwargs["quantization_config"] = BitsAndBytesConfig(**self.config.quantization_config)
+        self._model = AutoModelForCausalLM.from_pretrained(checkpoint_path, **kwargs)
+        self._model.eval()

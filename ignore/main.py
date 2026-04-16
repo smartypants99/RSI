@@ -4,8 +4,11 @@ import argparse
 import logging
 from pathlib import Path
 
-from src.utils.config import SystemConfig, ModelConfig
+from src.utils.config import SystemConfig, ModelConfig, VLLMConfig
 from src.orchestrator.loop import ImprovementLoop
+
+
+logger = logging.getLogger(__name__)
 
 
 def main():
@@ -24,7 +27,7 @@ def main():
     parser.add_argument("--questions-per-domain", type=int, default=None, help="Diagnostic questions per domain (default: 200)")
     parser.add_argument("--samples-per-weakness", type=int, default=None, help="Training samples per weakness (default: 100)")
     parser.add_argument("--use-vllm", action="store_true", help="Use vLLM for 5-10x faster inference (pip install vllm)")
-    parser.add_argument("--gpu-memory-utilization", type=float, default=0.90, help="vLLM GPU memory fraction (default: 0.90)")
+    parser.add_argument("--gpu-memory-utilization", type=float, default=0.85, help="vLLM GPU memory fraction (default: 0.85)")
     parser.add_argument("--load-in-8bit", action="store_true", help="Load model in 8-bit quantization (halves memory, needs bitsandbytes)")
     parser.add_argument("--load-in-4bit", action="store_true", help="Load model in 4-bit quantization (quarters memory, needs bitsandbytes)")
     args = parser.parse_args()
@@ -42,6 +45,8 @@ def main():
         ],
     )
 
+    if args.load_in_8bit and args.load_in_4bit:
+        parser.error("--load-in-8bit and --load-in-4bit are mutually exclusive")
     config = SystemConfig()
     quant_config = None
     if args.load_in_8bit:
@@ -69,32 +74,46 @@ def main():
 
     # vLLM mode: use VLLMModelLoader instead of default ModelLoader
     if args.use_vllm:
-        from src.utils.vllm_backend import VLLMModelLoader
-        config._use_vllm = True
-        config._vllm_args = {
-            "model_path": args.model,
-            "dtype": args.dtype,
-            "max_model_len": config.model.max_seq_length,
-            "gpu_memory_utilization": args.gpu_memory_utilization,
-        }
+        config.use_vllm = True
+        config.vllm = VLLMConfig(
+            model_path=args.model,
+            dtype=args.dtype,
+            max_model_len=config.model.max_seq_length,
+            gpu_memory_utilization=args.gpu_memory_utilization,
+            quantization_config=quant_config,
+        )
 
     loop = ImprovementLoop(config)
 
     try:
         loop.run()
     except KeyboardInterrupt:
-        logger = logging.getLogger(__name__)
         logger.info("\nInterrupted — cleaning up and saving checkpoint + report")
+        # Ignore a second Ctrl-C during critical cleanup — aborting strip_lora
+        # mid-way leaves a mix of LoRALayer/Linear modules that would be saved.
+        import signal
+        prev_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
         try:
-            loop.trainer.strip_lora()
-        except Exception:
-            pass
-        if loop.history:
             try:
-                loop._save_checkpoint(loop.history[-1].cycle)
-            except Exception:
-                pass
-        loop._save_final_report()
+                loop.trainer.strip_lora()
+            except Exception as e:
+                logger.debug(f"strip_lora during cleanup failed: {e}")
+            try:
+                import torch
+                torch.cuda.empty_cache()
+            except Exception as e:
+                logger.debug(f"empty_cache during cleanup failed: {e}")
+            if loop.history:
+                try:
+                    loop._save_checkpoint(loop.history[-1].cycle)
+                except Exception as e:
+                    logger.warning(f"Checkpoint save during cleanup failed: {e}")
+            try:
+                loop._save_final_report()
+            except Exception as e:
+                logger.warning(f"Final report save during cleanup failed: {e}")
+        finally:
+            signal.signal(signal.SIGINT, prev_handler)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 torch>=2.0
 transformers>=4.30
+accelerate>=0.20
 sympy>=1.12
 vllm>=0.8.0
+bitsandbytes>=0.41

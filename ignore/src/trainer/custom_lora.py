@@ -7,7 +7,10 @@ Key innovations over standard LoRA:
 - Training loss weighted by sample confidence
 """
 
+from __future__ import annotations
+
 import math
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -67,7 +70,7 @@ class LoRALayer(nn.Module):
         self.original = original_layer
         self.rank = rank
         self.alpha = alpha
-        self.scaling = alpha / rank
+        self.scaling = alpha / max(rank, 1)
         self.weakness_scale = weakness_scale
         # Track if original is Conv1D (transposed weight) for merge
         self._is_conv1d = _HFConv1D is not None and isinstance(original_layer, _HFConv1D)
@@ -203,6 +206,11 @@ class TrainingDataset(Dataset):
             # Confidence of 0.0 means unset — use 1.0 as default so it doesn't
             # zero out the loss. Verified samples always have confidence > 0.
             weight = sample.confidence if sample.confidence > 0 else 1.0
+            # Amplify weight by weakness severity so the trainer focuses harder
+            # on samples generated for severe weaknesses. severity is in [0,1];
+            # 0.0 means unset (pre-rebuild samples) so leaves weight unchanged.
+            severity = getattr(sample, "severity_at_generation", 0.0) or 0.0
+            weight = weight * (1.0 + severity)
             entry["sample_weight"] = torch.tensor(weight, dtype=torch.float32)
             self._encoded.append(entry)
 
@@ -225,6 +233,7 @@ class TrainingMetrics:
     learning_rate: float
     lora_layers_injected: int = 0
     avg_rank: float = 0.0
+    undertrained: bool = False
 
 
 class CustomLoRATrainer:
@@ -238,9 +247,9 @@ class CustomLoRATrainer:
         self.config = config
         self.model_loader = model_loader
         self._lora_layers: dict[str, LoRALayer] = {}
-        self._original_layers: dict[str, nn.Linear] = {}  # store originals for cleanup
+        self._original_layers: dict[str, nn.Module] = {}  # Linear or Conv1D
 
-    def inject_lora(self, weak_layers: Optional[dict[str, float]] = None):
+    def inject_lora(self, weak_layers: Optional[dict[str, float]] = None) -> None:
         """Inject LoRA layers, removing any existing ones first."""
         # CRITICAL: Remove any existing LoRA layers before injecting new ones
         self.strip_lora()
@@ -284,7 +293,7 @@ class CustomLoRATrainer:
             # stays constant. Without this, weak layers (high rank) get tiny scaling
             # that counteracts the extra capacity, while strong layers (low rank) get
             # amplified scaling — the opposite of what we want.
-            adjusted_alpha = int(self.config.lora_alpha * adjusted_rank / self.config.lora_rank)
+            adjusted_alpha = int(self.config.lora_alpha * adjusted_rank / max(self.config.lora_rank, 1))
 
             lora_layer = LoRALayer(
                 original_layer=module,
@@ -306,7 +315,7 @@ class CustomLoRATrainer:
         avg_rank = sum(ranks) / len(ranks) if ranks else 0
         logger.info(f"Injected {len(self._lora_layers)} LoRA layers, avg rank: {avg_rank:.0f}")
 
-    def strip_lora(self):
+    def strip_lora(self) -> None:
         """Remove all LoRA layers and restore originals.
 
         IMPORTANT: Does NOT unfreeze original weights. The base model weights
@@ -334,7 +343,11 @@ class CustomLoRATrainer:
         verified_samples: list[TrainingSample],
         cycle: int,
     ) -> TrainingMetrics:
-        """Train on verified samples only."""
+        """Train on verified samples only.
+
+        OOM recovery: if torch.cuda.OutOfMemoryError occurs during training,
+        halves the batch size and retries once. If the retry also OOMs, raises.
+        """
         if not verified_samples:
             return TrainingMetrics(cycle=cycle, avg_loss=0, final_loss=0,
                                   steps=0, samples_used=0, samples_rejected=0,
@@ -352,9 +365,31 @@ class CustomLoRATrainer:
         if samples_rejected > 0:
             logger.info(f"  Skipped {samples_rejected} samples (prompt too long for sequence length)")
 
+        batch_size = self.config.batch_size
+        # Cross-cycle LR decay: early cycles do coarse correction (higher LR),
+        # later cycles do refinement (lower LR). Decay by sqrt to avoid
+        # decaying too aggressively — cycle 1 gets full LR, cycle 100 gets 1/10.
+        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+        return self._train_inner(dataset, model, tokenizer, cycle, batch_size,
+                                 samples_rejected, verified_samples, cycle_lr,
+                                 retry_on_oom=True)
+
+    def _train_inner(
+        self,
+        dataset: 'TrainingDataset',
+        model,
+        tokenizer,
+        cycle: int,
+        batch_size: int,
+        samples_rejected: int,
+        verified_samples: list[TrainingSample],
+        cycle_lr: float,
+        retry_on_oom: bool = True,
+    ) -> TrainingMetrics:
+        """Inner training loop, separated to allow OOM retry with smaller batch."""
         dataloader = DataLoader(
             dataset,
-            batch_size=self.config.batch_size,
+            batch_size=batch_size,
             shuffle=self.config.num_epochs > 1,  # Curriculum order for single epoch; shuffle for multi-epoch to avoid order overfitting
             drop_last=False,
         )
@@ -367,10 +402,6 @@ class CustomLoRATrainer:
                                   steps=0, samples_used=len(verified_samples),
                                   samples_rejected=0, learning_rate=self.config.learning_rate)
 
-        # Cross-cycle LR decay: early cycles do coarse correction (higher LR),
-        # later cycles do refinement (lower LR). Decay by sqrt to avoid
-        # decaying too aggressively — cycle 1 gets full LR, cycle 100 gets 1/10.
-        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
         optimizer = torch.optim.AdamW(
             lora_params,
             lr=cycle_lr,
@@ -439,6 +470,8 @@ class CustomLoRATrainer:
                         # Track unweighted loss for metrics — weighted loss varies with
                         # confidence distribution, making cross-cycle comparison unreliable.
                         unweighted_loss = per_sample_loss.mean().item()
+                        # Free intermediate tensors immediately to reduce peak memory
+                        del logits, labels, per_token, valid_tokens, per_sample_loss
                     else:
                         loss = outputs.loss
                         unweighted_loss = loss.item()
@@ -447,31 +480,54 @@ class CustomLoRATrainer:
                     loss.backward()
                     accum_count += 1
 
+                    last_loss = unweighted_loss
                     if accum_count % self.config.gradient_accumulation_steps == 0:
                         torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
                         optimizer.step()
                         scheduler.step()
                         optimizer.zero_grad()
                         step_count += 1
-                        last_loss = unweighted_loss
 
                     total_loss += unweighted_loss
                     batch_count += 1
 
-            # Flush any remaining accumulated gradients
+            # Flush any remaining accumulated gradients. last_loss already holds
+            # the most recent batch's unweighted loss from the loop above.
             if accum_count % self.config.gradient_accumulation_steps != 0:
                 torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
                 step_count += 1
-                last_loss = total_loss / max(batch_count, 1)  # approximate final loss
+        except torch.cuda.OutOfMemoryError:
+            # OOM during training — clean up, then retry with halved batch if allowed.
+            logger.warning(f"OOM during training (batch_size={batch_size})")
+            del optimizer, scheduler
+            if hasattr(model, "gradient_checkpointing_disable"):
+                model.gradient_checkpointing_disable()
+            model.config.use_cache = True
+            model.eval()
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            if retry_on_oom and batch_size > 1:
+                new_bs = max(1, batch_size // 2)
+                logger.warning(f"  Retrying with batch_size={new_bs}")
+                return self._train_inner(
+                    dataset, model, tokenizer, cycle, new_bs,
+                    samples_rejected, verified_samples, cycle_lr,
+                    retry_on_oom=False,
+                )
+            raise
         finally:
             # Cleanup: free optimizer/scheduler VRAM, restore inference mode.
             # In a finally block so model state is restored even if training OOMs —
             # without this, a caught exception leaves the model in train() mode with
             # use_cache=False, wasting VRAM on the next diagnostic phase.
-            del optimizer, scheduler
+            try:
+                del optimizer, scheduler
+            except UnboundLocalError:
+                pass  # already deleted in OOM handler
             if hasattr(model, "gradient_checkpointing_disable"):
                 model.gradient_checkpointing_disable()
             model.config.use_cache = True  # re-enable KV cache for inference
@@ -513,12 +569,20 @@ class CustomLoRATrainer:
 
         return LambdaLR(optimizer, lr_lambda)
 
-    def save_lora_weights(self, path: Path, cycle: int):
+    def save_lora_weights(self, path: Path, cycle: int) -> None:
         """Save only the LoRA weights."""
         if not self._lora_layers:
             return
         save_path = path / f"lora_cycle_{cycle}"
         save_path.mkdir(parents=True, exist_ok=True)
+        # Check disk space before writing — 100MB headroom for LoRA weights.
+        try:
+            free = shutil.disk_usage(save_path).free
+            if free < 100 * 1024 * 1024:
+                logger.error(f"Disk nearly full ({free // 1024 // 1024}MB free) — skipping LoRA weight save")
+                return
+        except OSError as e:
+            logger.warning(f"Could not check disk space: {e}")
         state_dict = {}
         for name, layer in self._lora_layers.items():
             # Save in bfloat16 to halve disk usage — LoRA params are trained in
@@ -530,17 +594,23 @@ class CustomLoRATrainer:
             state_dict[f"{name}.weakness_scale"] = torch.tensor(layer.weakness_scale)
         torch.save(state_dict, save_path / "lora_weights.pt")
 
-    def load_lora_weights(self, path: Path):
+    def load_lora_weights(self, path: Path | str) -> None:
         """Load saved LoRA weights and inject them into the model.
 
         Uses the saved rank/weakness_scale directly rather than recomputing from
         health values, ensuring A/B weight shapes match exactly.
         """
+        path = Path(path)
         weights_path = path / "lora_weights.pt"
         if not weights_path.exists():
             raise FileNotFoundError(f"No LoRA weights at {weights_path}")
 
-        state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+        try:
+            state_dict = torch.load(weights_path, map_location="cpu", weights_only=True)
+        except Exception as e:
+            raise RuntimeError(f"Corrupt checkpoint at {weights_path}: {e}") from e
+        if not state_dict:
+            raise RuntimeError(f"Empty checkpoint at {weights_path}")
         self.strip_lora()
 
         model = self.model_loader.model
@@ -566,7 +636,7 @@ class CustomLoRATrainer:
                 continue
 
             self._original_layers[name] = module
-            adjusted_alpha = int(self.config.lora_alpha * saved_rank / self.config.lora_rank)
+            adjusted_alpha = int(self.config.lora_alpha * saved_rank / max(self.config.lora_rank, 1))
 
             lora_layer = LoRALayer(
                 original_layer=module,
@@ -588,7 +658,7 @@ class CustomLoRATrainer:
 
         logger.info(f"Loaded LoRA weights from {path} ({len(self._lora_layers)} layers)")
 
-    def merge_lora(self):
+    def merge_lora(self) -> None:
         """Merge LoRA weights into base model, then strip LoRA layers.
 
         IMPORTANT: Only use lora_scaling (alpha/rank) for the merge, NOT weakness_scale.
@@ -602,7 +672,12 @@ class CustomLoRATrainer:
                 # Skip layers where B is still all zeros (initialized to zero and
                 # received no gradient). The merge would be a no-op but allocates
                 # a full (out_features × in_features) matrix for the matmul result.
-                if not lora_layer.lora_B.any():
+                # Use a small-magnitude threshold instead of `.any()` — after
+                # gradient checkpointing + hooks, B can accumulate numerical noise
+                # (~1e-10) without meaningful gradient signal, yet `.any()` returns
+                # True and the merge allocates a full (out × in) matrix for a
+                # near-zero delta.
+                if float(lora_layer.lora_B.detach().abs().max()) < 1e-6:
                     skipped += 1
                     continue
                 orig = lora_layer.original.weight
@@ -616,10 +691,21 @@ class CustomLoRATrainer:
                 if lora_layer._is_conv1d:
                     delta = delta.T
                 orig.data += delta
+        total = len(self._lora_layers)
         if skipped:
-            logger.info(f"  Skipped {skipped} zero-contribution LoRA layers during merge")
+            logger.info(f"  Skipped {skipped}/{total} zero-contribution LoRA layers during merge")
+        if total and skipped / total > 0.5:
+            logger.warning(
+                f"  Undertrained: {skipped}/{total} LoRA layers had zero B matrix. "
+                f"Training likely did not produce meaningful gradients this cycle."
+            )
+            self._last_merge_undertrained = True
+        else:
+            self._last_merge_undertrained = False
 
         # After merging, strip LoRA so next cycle starts clean
         self.strip_lora()
         # Reclaim VRAM from freed LoRA parameters before post-training eval
+        import gc
+        gc.collect()
         torch.cuda.empty_cache()

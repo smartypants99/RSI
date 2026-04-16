@@ -32,16 +32,23 @@ _SECRET_PATTERNS = [
     re.compile(r"""(?i)api[_-]?key\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]"""),
 ]
 
+# Maximum stdout/stderr chars to keep before truncating (prevents print floods)
+_MAX_OUTPUT_CHARS = 64 * 1024  # 64 KiB
+
 
 def _scrub(s: str) -> str:
+    """Redact secrets and sanitize non-ASCII from output."""
     s = s.encode("ascii", "replace").decode("ascii")
     for pat in _SECRET_PATTERNS:
         s = pat.sub("[REDACTED]", s)
     return s
 
+
 _PRELUDE = textwrap.dedent(
     """
-    import resource, sys
+    import resource, sys, builtins
+
+    # ── Resource limits ──
     resource.setrlimit(resource.RLIMIT_CPU, ({cpu}, {cpu}))
     try:
         resource.setrlimit(resource.RLIMIT_AS, ({mem}, {mem}))
@@ -61,12 +68,15 @@ _PRELUDE = textwrap.dedent(
         pass
     sys.setrecursionlimit(1000)
 
+    # ── Module blocklist ──
     _BLOCKED_MODULES = {{
         "socket", "ssl", "urllib", "urllib.request", "urllib3", "http",
         "http.client", "ftplib", "telnetlib", "smtplib", "poplib",
         "imaplib", "requests", "httpx", "asyncio", "subprocess",
-        "multiprocessing", "ctypes", "cffi",
+        "multiprocessing", "ctypes", "cffi", "importlib", "signal",
     }}
+
+    # ── Syscall / audit-event blocklist ──
     _BLOCKED_EVENTS = {{
         "socket.connect", "socket.bind", "socket.gethostbyname",
         "urllib.Request", "subprocess.Popen", "os.exec", "os.fork",
@@ -77,11 +87,37 @@ _PRELUDE = textwrap.dedent(
         "os.putenv", "os.unsetenv",
         "code.__new__",
     }}
+
     import os as _os_mod
     _WORKDIR_PREFIX = _os_mod.path.realpath(_os_mod.getcwd())
     if not _WORKDIR_PREFIX.endswith(_os_mod.sep):
         _WORKDIR_PREFIX = _WORKDIR_PREFIX + _os_mod.sep
 
+    # ── Disable dangerous builtins ──
+    _real_import = builtins.__import__
+
+    def _safe_import(name, *args, **kwargs):
+        top = name.split(".")[0]
+        if name in _BLOCKED_MODULES or top in _BLOCKED_MODULES:
+            raise PermissionError(f"import blocked: {{name}}")
+        return _real_import(name, *args, **kwargs)
+
+    builtins.__import__ = _safe_import
+
+    # Neuter eval/exec/compile so even indirect calls fail
+    _orig_eval = builtins.eval
+    _orig_exec = builtins.exec
+
+    def _blocked_eval(*a, **kw):
+        raise PermissionError("eval() is blocked in sandbox")
+
+    def _blocked_exec(*a, **kw):
+        raise PermissionError("exec() is blocked in sandbox")
+
+    builtins.eval = _blocked_eval
+    builtins.exec = _blocked_exec
+
+    # ── Audit hook ──
     def _audit(event, args):
         if event == "import":
             name = args[0] if args else ""
@@ -98,18 +134,31 @@ _PRELUDE = textwrap.dedent(
                     raise PermissionError("open: non-decodable path")
             if isinstance(path, int):
                 return
-            if not isinstance(path, str):
+            if isinstance(path, str):
+                mode = args[1] if len(args) > 1 else "r"
+                if isinstance(mode, str) and any(c in mode for c in "wxa+"):
+                    raise PermissionError(f"open for writing blocked: {{path}}")
+                abs_p = _os_mod.path.realpath(path) if path else ""
+                if not abs_p.startswith(_WORKDIR_PREFIX):
+                    raise PermissionError(f"open outside workdir: {{path}}")
+            else:
                 raise PermissionError("open: non-string path")
-            abs_p = _os_mod.path.realpath(path) if path else ""
-            if not abs_p.startswith(_WORKDIR_PREFIX):
-                raise PermissionError(f"open outside workdir: {{path}}")
 
     sys.addaudithook(_audit)
+
+    # Block sys.exit so snippets can't silently exit with code 0
+    def _blocked_exit(*a, **kw):
+        raise PermissionError("sys.exit() is blocked in sandbox")
+    sys.exit = _blocked_exit
+
+    # Clean up os module from user namespace
+    del _os_mod
     """
 ).strip()
 
 
 def _preexec():
+    """Detach child into its own session for clean kill-group."""
     try:
         os.setsid()
     except OSError:
@@ -164,6 +213,13 @@ def run_python_sandboxed(
             except subprocess.TimeoutExpired:
                 pass
             return False, f"timeout after {timeout_s}s"
+
+        # Truncate excessive output (print floods)
+        if stdout and len(stdout) > _MAX_OUTPUT_CHARS:
+            stdout = stdout[:_MAX_OUTPUT_CHARS] + "\n... [truncated]"
+        if stderr and len(stderr) > _MAX_OUTPUT_CHARS:
+            stderr = stderr[:_MAX_OUTPUT_CHARS] + "\n... [truncated]"
+
         if proc.returncode == 0:
             return True, _scrub(stdout or "")[-500:]
         return False, _scrub(stderr or stdout or "")[-500:]

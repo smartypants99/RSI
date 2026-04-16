@@ -341,10 +341,18 @@ def _gen_quadratic(rng: random.Random, difficulty: str) -> dict:
     c = r1 * r2
     roots = sorted({r1, r2})
     expected = ", ".join(str(r) for r in roots)
-    sign_b = "+" if b >= 0 else "-"
-    sign_c = "+" if c >= 0 else "-"
+
+    # Build clean prompt — omit zero-coefficient terms to avoid
+    # nonsensical prompts like "x^2 + 0x + 0 = 0".
+    terms = ["x^2"]
+    if b != 0:
+        sign_b = "+" if b > 0 else "-"
+        terms.append(f"{sign_b} {abs(b)}x")
+    if c != 0:
+        sign_c = "+" if c > 0 else "-"
+        terms.append(f"{sign_c} {abs(c)}")
     return {
-        "prompt": f"Find all real roots of x^2 {sign_b} {abs(b)}x {sign_c} {abs(c)} = 0. List them.",
+        "prompt": f"Find all real roots of {' '.join(terms)} = 0. List them.",
         "expected": expected,
         "check_type": "numeric_set",
         "subdomain": "algebra",
@@ -1021,9 +1029,8 @@ def _generate_params(param_type: str, seed: int) -> dict:
     if param_type == "coin_flip":
         n = rng.choice([3, 4, 5])
         k = rng.randint(1, n - 1)
-        prob = comb(n, k) / (2**n)
-        frac = Fraction(prob).limit_denominator(1000)
-        return {"n": str(n), "k": str(k), "prob_answer": str(frac)}
+        frac = Fraction(comb(n, k), 2 ** n)
+        return {"n": str(n), "k": str(k), "prob_answer": f"{frac.numerator}/{frac.denominator}"}
 
     if param_type == "projectile":
         v = rng.choice([10, 20, 30, 40])
@@ -1319,9 +1326,10 @@ class DiagnosticsEngine:
                 prog_budget = max(0, target - len(questions))
                 if prog_budget < target // 2:
                     prog_budget = target  # we'll cap later
+                prog_count = 0
                 attempts = 0
                 max_attempts = prog_budget * 4 + 64
-                while len([q for q in questions if q.get("_prog")]) < prog_budget and attempts < max_attempts:
+                while prog_count < prog_budget and attempts < max_attempts:
                     attempts += 1
                     difficulty = self._sample_difficulty(rng, diff_mix)
                     gen = rng.choice(gens)
@@ -1338,6 +1346,7 @@ class DiagnosticsEngine:
                         continue
                     self._seen_hashes.add(h)
                     questions.append(q)
+                    prog_count += 1
                     if len(questions) >= target:
                         break
 

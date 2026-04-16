@@ -18,6 +18,19 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_VLLM_AVAILABLE = None
+
+def _check_vllm():
+    """Lazy check for vLLM availability. Cached after first call."""
+    global _VLLM_AVAILABLE
+    if _VLLM_AVAILABLE is None:
+        try:
+            import vllm  # noqa: F401
+            _VLLM_AVAILABLE = True
+        except ImportError:
+            _VLLM_AVAILABLE = False
+    return _VLLM_AVAILABLE
+
 
 class VLLMModelLoader:
     """Drop-in replacement for ModelLoader that uses vLLM for inference
@@ -57,6 +70,16 @@ class VLLMModelLoader:
 
         Falls back to HF if vLLM fails to load (GPU incompatibility, OOM, etc.).
         """
+        if not _check_vllm():
+            logger.warning("vLLM not installed. Falling back to HF backend.")
+            self._load_hf()
+            return self
+
+        if not torch.cuda.is_available():
+            logger.warning("CUDA not available. Falling back to HF backend.")
+            self._load_hf()
+            return self
+
         try:
             self._load_vllm()
         except Exception as e:
@@ -102,8 +125,12 @@ class VLLMModelLoader:
                     ray.shutdown()
             del self._llm
             self._llm = None
+            # Clear vLLM tokenizer — it's tied to the destroyed engine.
+            # _load_hf will set _hf_tokenizer, and _load_vllm will set _tokenizer.
+            self._tokenizer = None
             gc.collect()
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def _load_hf(self):
         """Load HF model for training."""
@@ -167,16 +194,21 @@ class VLLMModelLoader:
                 p.grad = None
             del self._hf_model
             self._hf_model = None
+        if self._hf_tokenizer is not None:
             del self._hf_tokenizer
             self._hf_tokenizer = None
-            gc.collect()
+        gc.collect()
+        if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     # ---- Inference interface (used by diagnostics, generator, verifier) ----
 
     @property
     def tokenizer(self):
-        return self._tokenizer or self._hf_tokenizer
+        tok = self._tokenizer or self._hf_tokenizer
+        if tok is None:
+            raise RuntimeError("No tokenizer loaded. Call load() first.")
+        return tok
 
     @property
     def model(self):
@@ -189,7 +221,7 @@ class VLLMModelLoader:
     def device(self):
         if self._hf_model is not None:
             return next(self._hf_model.parameters()).device
-        return torch.device("cuda:0")
+        return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def generate(self, prompt: str, max_new_tokens: int = 2048,
                  temperature: float = 0.7, top_p: float = 0.9) -> str:
@@ -203,10 +235,11 @@ class VLLMModelLoader:
 
         if self._llm is not None:
             # vLLM path (fast)
+            greedy = temperature <= 0
             params = self._sampling_params_cls(
                 max_tokens=max_new_tokens,
-                temperature=temperature if temperature > 0 else 0.0,
-                top_p=top_p if temperature > 0 else 1.0,
+                temperature=0.0 if greedy else temperature,
+                top_p=1.0 if greedy else top_p,
             )
             outputs = self._llm.generate(prompts, params)
             return [o.outputs[0].text for o in outputs]
@@ -256,10 +289,17 @@ class VLLMModelLoader:
         """Unload HF, reload vLLM with merged weights. Falls back to HF on failure."""
         if checkpoint_path:
             self._current_model_path = checkpoint_path
+            self.config.model_path = checkpoint_path
         self._unload_hf()
         # If vLLM is already loaded (e.g. resume path called before training),
         # unload it first so _load_vllm doesn't leak the prior engine's GPU mem.
         self._unload_vllm()
+
+        if not _check_vllm() or not torch.cuda.is_available():
+            logger.warning("vLLM or CUDA not available after training. Falling back to HF.")
+            self._load_hf()
+            return
+
         try:
             self._load_vllm()
         except Exception as e:
@@ -329,3 +369,15 @@ class VLLMModelLoader:
             pass
         self._hf_model.save_pretrained(save_path)
         self._hf_tokenizer.save_pretrained(save_path)
+
+    def load_from_checkpoint(self, checkpoint_path: str) -> None:
+        """Reload model from a saved checkpoint. Works in both vLLM and HF mode."""
+        if self._llm is not None:
+            # vLLM mode: swap to the new checkpoint
+            self.swap_to_vllm_after_training(checkpoint_path)
+        else:
+            # HF mode: reload HF model
+            self._current_model_path = checkpoint_path
+            self.config.model_path = checkpoint_path
+            self._unload_hf()
+            self._load_hf()

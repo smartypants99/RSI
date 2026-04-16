@@ -88,7 +88,7 @@ _RE_PRIOR_REF = re.compile(r"\b(?:above|previous|earlier|prior)\b", re.IGNORECAS
 _RE_MATH_TOKEN = re.compile(r"\d|\^|[+\-*/=<>]")
 _RE_EQUATION = re.compile(r"([A-Za-z_][A-Za-z_0-9]*|\([^()=]+\)|[^=]{1,60}?)\s*=\s*([^=]+)")
 _RE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_RE_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
+_RE_NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:/\d+)?")
 
 _STOPWORDS = frozenset({
     "the", "a", "an", "and", "or", "but", "is", "are", "was", "were", "be",
@@ -123,8 +123,20 @@ _NEGATION_PAIRS = [
     ({"always"}, {"never"}),
     ({"possible"}, {"impossible"}),
     ({"true"}, {"false"}),
+    ({"greater"}, {"less"}),
+    ({"convergent"}, {"divergent"}),
+    ({"converges"}, {"diverges"}),
+    ({"exists"}, {"does", "not", "exist"}),
+    ({"even"}, {"odd"}),
+    ({"finite"}, {"infinite"}),
 ]
 _NEGATION_PAIRS = [(frozenset(p), frozenset(n)) for p, n in _NEGATION_PAIRS]
+
+# Quantifier conflicts: "for all X" vs "there exists X such that not"
+_QUANTIFIER_ALL = re.compile(r"\b(?:for\s+all|every|each|any)\b", re.IGNORECASE)
+_QUANTIFIER_EXISTS_NOT = re.compile(
+    r"\b(?:there\s+exists?|some)\b.*?\bnot\b", re.IGNORECASE
+)
 
 
 def _words(text: str) -> set[str]:
@@ -139,8 +151,12 @@ def _cfg(cfg: VerifierConfig, name: str, default):
     return getattr(cfg, name, default)
 
 
-# Sympy and sandbox helpers now live in src/utils/{sympy_utils,sandbox}.py —
-# see the imports at the top of this file.
+def _jaccard(a: set, b: set) -> float:
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
 
 
 # ──────────────────────────── the verifier ────────────────────────────
@@ -150,13 +166,11 @@ class Verifier:
         self.config = config
         self._model_verifier = None
 
-        # Pull tunables with fallbacks so we work even if architect hasn't
-        # updated VerifierConfig yet.
         self.code_timeout = _cfg(config, "code_exec_timeout", 5)
         self.code_memory_mb = _cfg(config, "code_exec_memory_mb", 256)
         self.enable_sympy = _cfg(config, "enable_sympy_math_check", True) and _HAS_SYMPY
         self.enable_code_exec = _cfg(config, "enable_code_exec_check", True)
-        self.escalate_below = _cfg(config, "escalate_to_model_below", 0.75)
+        self.escalate_below = _cfg(config, "escalate_to_model_below", 0.85)
         self.escalate_above = _cfg(config, "escalate_to_model_above", 0.50)
         self.max_prior = _cfg(config, "max_prior_steps_to_compare", 8)
         self.allow_model_override_reject = _cfg(config, "allow_model_override_reject", True)
@@ -184,15 +198,11 @@ class Verifier:
 
         out: list[TrainingSample] = []
         for sample, res in results:
+            sample.verified = res.accepted
+            sample.confidence = res.overall_confidence
+            sample.verification_notes = self._format_notes(res)
             if res.accepted:
-                sample.verified = True
-                sample.confidence = res.overall_confidence
-                sample.verification_notes = self._format_notes(res)
                 out.append(sample)
-            else:
-                sample.verified = False
-                sample.confidence = res.overall_confidence
-                sample.verification_notes = self._format_notes(res)
         return out
 
     def verify(self, sample: TrainingSample) -> VerificationResult:
@@ -207,6 +217,7 @@ class Verifier:
     # ───── core pipeline ─────
 
     def _verify_heuristic(self, sample: TrainingSample) -> VerificationResult:
+        # Edge case: empty reasoning chain
         if not sample.reasoning_chain:
             return VerificationResult(
                 accepted=False,
@@ -218,8 +229,7 @@ class Verifier:
         weight_total = 0.0
         rejection_reasons: list[str] = []
 
-        # Parse-confidence prior from the generator: low values signal shaky
-        # extraction, not invalid reasoning. Treat as a soft weighted signal.
+        # Parse-confidence prior from the generator
         pc = getattr(sample, "parse_confidence", 1.0)
         if pc is not None and pc < 1.0:
             weighted_sum += 0.5 * max(0.0, pc)
@@ -230,8 +240,6 @@ class Verifier:
                 )
         parse_issues = getattr(sample, "parse_issues", None) or []
         if parse_issues:
-            # Don't gate on these — but surface them so inspector can see why
-            # a sample is borderline.
             for pi in parse_issues[:2]:
                 rejection_reasons.append(f"[parse] {pi}")
 
@@ -266,6 +274,8 @@ class Verifier:
                 rejection_reasons.append(f"[domain/{o.name}] {o.detail}")
 
         overall = weighted_sum / weight_total if weight_total > 0 else 0.0
+        # Clamp to [0, 1]
+        overall = max(0.0, min(1.0, overall))
         threshold = _cfg(self.config, "min_confidence_for_accept", 0.85)
         accepted = overall >= threshold
 
@@ -303,6 +313,7 @@ class Verifier:
         min_steps = _cfg(self.config, "min_chain_steps", 2)
         n = len(sample.reasoning_chain)
         ok = n >= min_steps
+        # Single-step proofs: don't assign 0 confidence, give partial credit
         conf = 1.0 if ok else n / max(min_steps, 1)
         outcomes.append(CheckOutcome(
             "min_steps", w_struct, conf, ok,
@@ -318,13 +329,39 @@ class Verifier:
             conc_nums = set(_RE_NUMBER.findall(sample.response))
             overlap_w = len(last_sig & conc_sig)
             overlap_n = len(last_nums & conc_nums)
+            # For very short conclusions (e.g. just a number), relax word overlap
             connected = overlap_w >= 1 or overlap_n >= 1 or len(conc_sig) <= 1
+            # Also check if the conclusion's answer appears anywhere in the chain
+            if not connected and conc_nums:
+                for step in sample.reasoning_chain:
+                    step_nums = set(_RE_NUMBER.findall(step.content))
+                    if conc_nums & step_nums:
+                        connected = True
+                        overlap_n = 1
+                        break
             outcomes.append(CheckOutcome(
                 "conclusion_connects", self.weights.get("logical_validity", 1.0),
                 min(1.0, 0.3 + 0.2 * overlap_w + 0.3 * overlap_n) if connected else 0.2,
                 connected,
                 "" if connected else "final step shares no terms/numbers with conclusion",
             ))
+
+        # Monotonic progress: steps should not be exact duplicates
+        if len(sample.reasoning_chain) >= 2:
+            dup_count = 0
+            for i in range(1, len(sample.reasoning_chain)):
+                prev_c = sample.reasoning_chain[i - 1].content.strip().lower()
+                curr_c = sample.reasoning_chain[i].content.strip().lower()
+                if prev_c and curr_c and prev_c == curr_c:
+                    dup_count += 1
+            if dup_count > 0:
+                frac = dup_count / (len(sample.reasoning_chain) - 1)
+                outcomes.append(CheckOutcome(
+                    "no_duplicate_steps", w_struct,
+                    max(0.0, 1.0 - frac), dup_count == 0,
+                    f"{dup_count} duplicate consecutive step(s)" if dup_count else "",
+                ))
+
         return outcomes
 
     # ───── step-level checks ─────
@@ -363,29 +400,28 @@ class Verifier:
                 j_sig = _significant(j)
                 c_sig = _significant(step.content)
                 overlap = len(j_sig & c_sig)
-                # justification may legitimately introduce new terms (rule names),
-                # so only flag when overlap is literally zero AND justification is long.
-                not_sequitur = overlap >= 1 or len(j_sig) <= 2
+                # Also check numeric overlap — math justifications often share
+                # numbers rather than words
+                j_nums = set(_RE_NUMBER.findall(j))
+                c_nums = set(_RE_NUMBER.findall(step.content))
+                num_overlap = len(j_nums & c_nums)
+                not_sequitur = overlap >= 1 or num_overlap >= 1 or len(j_sig) <= 2
                 checks.append(CheckOutcome(
                     "not_non_sequitur", w_log,
-                    1.0 if overlap >= 2 else (0.7 if not_sequitur else 0.2),
+                    1.0 if (overlap >= 2 or num_overlap >= 1) else (0.7 if not_sequitur else 0.2),
                     not_sequitur,
                     "" if not_sequitur else "justification shares no terms with content",
                 ))
 
             # 2c. anti-circular: justification must not restate the conclusion
             if has_j:
-                j_norm = re.sub(r"\W+", " ", j.lower()).strip()
-                c_norm = re.sub(r"\W+", " ", step.content.lower()).strip()
-                if c_norm and j_norm and (j_norm in c_norm or c_norm in j_norm):
-                    checks.append(CheckOutcome(
-                        "non_circular", w_log, 0.1, False,
-                        "justification is a restatement of the conclusion",
-                    ))
-                else:
-                    checks.append(CheckOutcome(
-                        "non_circular", w_log, 1.0, True, "",
-                    ))
+                circ = self._detect_circular(step.content, j)
+                checks.append(CheckOutcome(
+                    "non_circular", w_log,
+                    0.1 if circ else 1.0,
+                    not circ,
+                    "justification is a restatement of the conclusion" if circ else "",
+                ))
 
         # 3. step completeness: references prior (non-first)
         if _cfg(self.config, "check_step_completeness", True) and prior:
@@ -443,6 +479,33 @@ class Verifier:
 
     # ───── fine-grained helpers ─────
 
+    @staticmethod
+    def _detect_circular(content: str, justification: str) -> bool:
+        """Detect if justification is circular (restates the conclusion).
+
+        Uses both substring containment and Jaccard similarity on significant
+        words. A high Jaccard with no novel terms in the justification means
+        the justification is just rephrasing the content.
+        """
+        j_norm = re.sub(r"\W+", " ", justification.lower()).strip()
+        c_norm = re.sub(r"\W+", " ", content.lower()).strip()
+        if not c_norm or not j_norm:
+            return False
+        # Direct substring containment
+        if j_norm in c_norm or c_norm in j_norm:
+            return True
+        # Jaccard on significant words — if justification adds nothing new
+        j_sig = _significant(justification)
+        c_sig = _significant(content)
+        if not j_sig:
+            return False
+        jacc = _jaccard(j_sig, c_sig)
+        # If >80% overlap AND justification introduces no novel significant terms
+        novel = j_sig - c_sig
+        if jacc > 0.8 and len(novel) <= 1:
+            return True
+        return False
+
     def _references_prior(
         self, step: ReasoningStep, prior: list[ReasoningStep]
     ) -> tuple[bool, float]:
@@ -476,24 +539,20 @@ class Verifier:
         sample: TrainingSample,
         is_first: bool,
     ) -> tuple[bool, float, str]:
-        # Two-sided check:
-        #   (a) every declared assumption should appear (term-wise) somewhere
-        #       in the step content/justification (i.e., actually used).
-        #   (b) material claims that aren't trivially derivable from prior
-        #       steps / prompt should have a declared assumption.
         declared = [a for a in (step.assumptions or []) if a and a.lower() not in
                     ("none", "n/a", "implicit", "")]
 
         if declared:
             content_sig = _significant(f"{step.content} {step.justification}")
+            content_words = _words(f"{step.content} {step.justification}")
             used_count = 0
             for a in declared:
                 a_sig = _significant(a)
                 if a_sig and (a_sig & content_sig):
                     used_count += 1
-                elif not a_sig:  # short symbolic assumption like "x>0"
+                elif not a_sig:
                     a_words = _words(a)
-                    if a_words & _words(step.content + " " + step.justification):
+                    if a_words & content_words:
                         used_count += 1
             frac = used_count / len(declared)
             if frac >= 0.5:
@@ -502,7 +561,6 @@ class Verifier:
 
         # No declared assumptions.
         if is_first:
-            # First step: grounded iff it references the prompt.
             prompt_sig = _significant(sample.prompt)
             prompt_nums = set(_RE_NUMBER.findall(sample.prompt))
             step_sig = _significant(step.content + " " + step.justification)
@@ -511,12 +569,10 @@ class Verifier:
             n_overlap = len(prompt_nums & step_nums)
             if w_overlap >= 2 or n_overlap >= 1:
                 return True, min(1.0, 0.4 + 0.15 * w_overlap + 0.2 * n_overlap), ""
-            # Very short prompts: 1 word overlap suffices
             if len(prompt_sig) <= 3 and w_overlap >= 1:
                 return True, 0.7, ""
             return False, 0.2, "first step does not ground in the problem prompt"
 
-        # Non-first step with no assumptions is fine *if* it references prior.
         refs, conf = self._references_prior(step, prior)
         if refs:
             return True, conf, ""
@@ -524,7 +580,6 @@ class Verifier:
 
     def _internal_consistency(self, step: ReasoningStep) -> bool:
         text = f"{step.content}. {step.justification}".lower()
-        # Split on sentence terminators that are not decimal points
         sents = [s.strip() for s in re.split(r"(?<!\d)\.(?!\d)|[!?;]", text) if s.strip()]
         if len(sents) < 2:
             return True
@@ -537,16 +592,47 @@ class Verifier:
                         return False
                     if neg <= a and pos <= b and len((a - neg) & (b - pos)) >= 3:
                         return False
+                # Quantifier conflict: "for all X" in one sentence vs
+                # "there exists X ... not" in another about the same subject
+                if (_QUANTIFIER_ALL.search(sents[i]) and
+                        _QUANTIFIER_EXISTS_NOT.search(sents[j])):
+                    shared = (a & b) - _STOPWORDS
+                    if len(shared) >= 2:
+                        return False
+                if (_QUANTIFIER_ALL.search(sents[j]) and
+                        _QUANTIFIER_EXISTS_NOT.search(sents[i])):
+                    shared = (a & b) - _STOPWORDS
+                    if len(shared) >= 2:
+                        return False
+
+        # Numeric self-contradiction: same variable assigned two different values
+        assignments = self._extract_assignments(text)
+        seen: dict[str, str] = {}
+        for var, val in assignments:
+            if var in seen:
+                eq = _sympy_equation_valid(seen[var], val)
+                if eq is False:
+                    return False
+            else:
+                seen[var] = val
+
         return True
 
     def _cross_step_consistency(self, step: ReasoningStep, prior: list[ReasoningStep]) -> bool:
         s_words = _words(step.content + " " + step.justification)
+        s_text = (step.content + " " + step.justification).lower()
         for p in prior:
             p_words = _words(p.content + " " + p.justification)
+            p_text = (p.content + " " + p.justification).lower()
             for pos, neg in _NEGATION_PAIRS:
                 if pos <= p_words and neg <= s_words and len((p_words - pos) & (s_words - neg)) >= 3:
                     return False
                 if neg <= p_words and pos <= s_words and len((p_words - neg) & (s_words - pos)) >= 3:
+                    return False
+            # Quantifier conflicts across steps
+            if (_QUANTIFIER_ALL.search(p_text) and _QUANTIFIER_EXISTS_NOT.search(s_text)):
+                shared = (p_words & s_words) - _STOPWORDS
+                if len(shared) >= 2:
                     return False
             # Numeric contradiction: same variable assigned different values
             for var, val in self._extract_assignments(p.content):
@@ -564,7 +650,6 @@ class Verifier:
             lhs = m.group(1).strip()
             rhs = m.group(2).strip()
             if re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", lhs):
-                # trim trailing prose from rhs
                 rhs = re.split(r"[,.;]| and ", rhs, maxsplit=1)[0].strip()
                 if rhs:
                     out.append((lhs, rhs))
@@ -579,7 +664,7 @@ class Verifier:
             return None
         decided = 0
         correct = 0
-        for m in equations[:3]:  # cap to avoid explosion
+        for m in equations[:3]:
             lhs = m.group(1).strip()
             rhs = m.group(2).strip()
             rhs = re.split(r"[,.;]| and | so ", rhs, maxsplit=1)[0].strip()
@@ -602,23 +687,22 @@ class Verifier:
         """Solve equations gathered from prompt + chain and verify conclusion."""
         out: list[CheckOutcome] = []
 
-        # Direct answer equivalence: if the sample has an expected answer,
-        # normalize both and check symbolic/numeric equivalence.
+        # Direct answer equivalence
         expected = getattr(sample, "expected_answer", None)
         if expected and sample.response:
             norm_exp = _normalize_answer(str(expected))
             norm_got = _normalize_answer(sample.response)
-            eq = _numeric_equiv(norm_exp, norm_got)
-            if eq is True:
-                out.append(CheckOutcome(
-                    "answer_equivalence", w * 2.0, 1.0, True, "",
-                ))
-            elif eq is False:
-                out.append(CheckOutcome(
-                    "answer_equivalence", w * 6.0, 0.0, False,
-                    f"answer '{norm_got}' != expected '{norm_exp}'",
-                ))
-            # eq is None: undecidable, skip
+            if norm_exp and norm_got:
+                eq = _numeric_equiv(norm_exp, norm_got)
+                if eq is True:
+                    out.append(CheckOutcome(
+                        "answer_equivalence", w * 2.0, 1.0, True, "",
+                    ))
+                elif eq is False:
+                    out.append(CheckOutcome(
+                        "answer_equivalence", w * 6.0, 0.0, False,
+                        f"answer '{norm_got}' != expected '{norm_exp}'",
+                    ))
 
         prompt_eqs = self._gather_equations(sample.prompt)
         chain_eqs: list[tuple[str, str]] = []
@@ -626,16 +710,10 @@ class Verifier:
             chain_eqs.extend(self._gather_equations(st.content))
         conclusion_eqs = self._gather_equations(sample.response or "")
 
-        # 1. Problem-ground truth: solve the prompt equations.
         gt = _sympy_solve_single_var(prompt_eqs) if prompt_eqs else {}
-
-        # 2. Chain assignments — solutions the model claims.
         chain_assign = _sympy_solve_single_var(chain_eqs) if chain_eqs else {}
-
-        # 3. Conclusion assignments — the final claimed answer(s).
         conc_assign = _sympy_solve_single_var(conclusion_eqs) if conclusion_eqs else {}
 
-        # Check: does the conclusion satisfy the problem?
         if gt and conc_assign:
             agree = 0
             total = 0
@@ -656,7 +734,6 @@ class Verifier:
                     "" if ok else f"conclusion does not solve the problem's equation(s) ({agree}/{total})",
                 ))
 
-        # Check: does the chain's claimed value match the true value?
         if gt and chain_assign:
             agree = 0
             total = 0
@@ -693,11 +770,14 @@ class Verifier:
                 source = code
                 if tests:
                     source = code + "\n\n# --- tests ---\n" + "\n".join(tests)
+                else:
+                    # No explicit tests: try to sanity-execute.
+                    # If code prints output, wrap to capture it; if it defines
+                    # a function, try calling it with example args from prompt.
+                    source = self._build_code_sanity_check(code, sample)
                 ok, detail = _run_code_sandboxed(
                     source, self.code_timeout, self.code_memory_mb
                 )
-                # Weight failures extra heavily — a failing sandbox is near-
-                # proof of invalidity for code samples.
                 fail_weight = w * 3.0
                 outcomes.append(CheckOutcome(
                     "code_sandbox_exec", w if ok else fail_weight,
@@ -710,6 +790,57 @@ class Verifier:
                     0.3, False, "no extractable Python code found in code sample",
                 ))
         return outcomes
+
+    @staticmethod
+    def _build_code_sanity_check(code: str, sample: TrainingSample) -> str:
+        """Build a sanity-check wrapper for code that has no explicit tests.
+
+        Handles two patterns:
+        - Code that prints: just run it (a crash = fail).
+        - Code that defines a function: try to call it. Look in the prompt
+          for example inputs like "f(3) == 9" or "Example: input 5, output 10".
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            return code
+        has_call = any(
+            isinstance(node, ast.Expr) and isinstance(node.value, ast.Call)
+            for node in ast.iter_child_nodes(tree)
+        )
+        has_print = "print(" in code
+        if has_call or has_print:
+            return code
+
+        # Find top-level function definitions
+        func_names = [
+            node.name for node in ast.iter_child_nodes(tree)
+            if isinstance(node, ast.FunctionDef)
+        ]
+        if not func_names:
+            return code
+
+        # Try to extract example calls from the prompt
+        fn = func_names[0]
+        prompt = sample.prompt or ""
+        call_pats = re.findall(
+            rf"{re.escape(fn)}\s*\(([^)]*)\)\s*(?:==|->|→|returns?|outputs?)\s*(\S+)",
+            prompt, re.IGNORECASE,
+        )
+        lines = [code, ""]
+        if call_pats:
+            for args_str, expected in call_pats[:3]:
+                lines.append(f"_result = {fn}({args_str})")
+                lines.append(f"assert str(_result) == str({expected}), "
+                             f"f'expected {expected}, got {{_result}}'")
+        else:
+            for node in ast.iter_child_nodes(tree):
+                if isinstance(node, ast.FunctionDef) and node.name == fn:
+                    required = len(node.args.args) - len(node.args.defaults)
+                    if required == 0:
+                        lines.append(f"{fn}()")
+                    break
+        return "\n".join(lines)
 
     @staticmethod
     def _extract_code(sample: TrainingSample) -> Optional[str]:
@@ -762,7 +893,6 @@ class Verifier:
         valid, reason = self._model_verify_one(sample)
         res.escalated_to_model = True
         w = self.weights.get("logical_validity", 1.0) * 2.0
-        # Re-blend: treat the model verdict as one more weighted signal.
         blended = res.overall_confidence + w * (1.0 if valid else 0.0)
         denom_prev = 1.0  # already normalized
         res.overall_confidence = blended / (denom_prev + w)
@@ -840,23 +970,17 @@ class Verifier:
         txt = (resp or "").strip()
         if not txt:
             return False, "no response"
-        # Strip chat template artifacts and markdown wrapping
         txt = re.sub(r'<\|im_(?:start|end)\|>.*?\n?', '', txt).strip()
         txt = re.sub(r'^```\w*\s*\n?', '', txt).strip()
         txt = re.sub(r'\n?```\s*$', '', txt).strip()
-        # Normalize: strip leading punctuation, markdown emphasis, whitespace
         normalized = re.sub(r'^[\s*`_#>\-]+', '', txt).upper()
         if not normalized:
             return False, "empty response after cleanup"
-        # Check for VALID (but not INVALID)
         if re.match(r'^VALID\b', normalized) and not normalized.startswith("INVALID"):
             return True, ""
-        # Check for INVALID with reason
         m = re.match(r'^INVALID\s*[:\-–—]\s*(.*)', normalized, re.DOTALL)
         if m:
             return False, m.group(1).strip()[:200] or "no reason given"
-        # Fallback: if model refused or went off-topic, treat as inconclusive
-        # (reject to be safe)
         return False, txt[:200]
 
     @staticmethod

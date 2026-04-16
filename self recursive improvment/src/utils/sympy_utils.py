@@ -1,6 +1,6 @@
 """Shared sympy helpers used by verifier and diagnostics.
 
-Tolerant expression parsing (handles "^", "×", "÷", implicit multiplication,
+Tolerant expression parsing (handles "^", "x", "÷", implicit multiplication,
 LaTeX fragments like \\boxed{}, \\frac{}{}, \\sqrt{}), equation decision,
 single-variable solving, numeric equivalence, answer normalization, and
 equation extraction from prose.
@@ -72,6 +72,15 @@ if HAS_SYMPY:
         "Abs": sympy.Abs,
     }
 
+# Patterns that should never appear in expressions passed to parse_expr
+_DANGEROUS_PATTERNS = re.compile(
+    r"__\w+__|__import__|eval\s*\(|exec\s*\(|compile\s*\(|open\s*\("
+    r"|os\.|sys\.|subprocess|import\s+|getattr\s*\(|setattr\s*\("
+    r"|globals\s*\(|locals\s*\(|vars\s*\(|dir\s*\("
+    r"|type\s*\(|delattr\s*\(|hasattr\s*\(",
+    re.IGNORECASE,
+)
+
 
 def normalize_answer(text: str) -> str:
     """Strip LaTeX wrappers, prose prefixes, units, and whitespace from an answer string."""
@@ -101,8 +110,11 @@ def normalize_answer(text: str) -> str:
     return s.strip()
 
 
-def sympify_safe(expr: str) -> Optional["sympy.Expr"]:
-    """Tolerant parse_expr wrapper. Returns None on any failure."""
+def safe_parse_expr(expr: str) -> Optional["sympy.Expr"]:
+    """Tolerant parse_expr wrapper that blocks dangerous inputs.
+
+    Returns None on any failure or if the input contains suspicious patterns.
+    """
     if not HAS_SYMPY or not expr:
         return None
     cleaned = normalize_answer(expr)
@@ -111,6 +123,9 @@ def sympify_safe(expr: str) -> Optional["sympy.Expr"]:
     cleaned = re.sub(r"[^\w\s+\-*/().=^<>,]", " ", cleaned)
     if not cleaned.strip() or "=" in cleaned:
         return None
+    # Block dangerous patterns before passing to parse_expr
+    if _DANGEROUS_PATTERNS.search(cleaned):
+        return None
     try:
         return parse_expr(cleaned, local_dict=_SAFE_LOCALS,
                           transformations=_TRANSFORMS, evaluate=True)
@@ -118,16 +133,46 @@ def sympify_safe(expr: str) -> Optional["sympy.Expr"]:
         return None
 
 
-def numeric_equiv(a: str, b: str, tol: float = 1e-9) -> Optional[bool]:
-    """Check if two answer strings are mathematically equivalent.
+# Backwards-compatible alias
+sympify_safe = safe_parse_expr
 
-    Tries symbolic simplification first, then numeric evaluation as fallback.
+
+def numeric_equiv(a: str, b: str, tol: float = 1e-9) -> Optional[bool]:
+    """Check numeric equivalence of two answer strings.
+
+    Tries to evaluate both expressions to floats and compare within tolerance.
     Returns True/False if decidable, None if undecidable.
     """
     if not HAS_SYMPY:
         return None
-    A = sympify_safe(a)
-    B = sympify_safe(b)
+    A = safe_parse_expr(a)
+    B = safe_parse_expr(b)
+    if A is None or B is None:
+        return None
+    try:
+        diff = A - B
+        if not diff.free_symbols:
+            try:
+                val = complex(diff)
+                return abs(val.real) < tol and abs(val.imag) < tol
+            except (TypeError, ValueError, OverflowError):
+                pass
+        return None
+    except Exception:
+        return None
+
+
+def symbolic_equiv(a: str, b: str, tol: float = 1e-9) -> Optional[bool]:
+    """Check if two answer strings are symbolically equivalent.
+
+    Tries symbolic simplification first, then numeric evaluation, then
+    sympy .equals() (random-point evaluation) as final fallback.
+    Returns True/False if decidable, None if undecidable.
+    """
+    if not HAS_SYMPY:
+        return None
+    A = safe_parse_expr(a)
+    B = safe_parse_expr(b)
     if A is None or B is None:
         return None
     try:
@@ -137,7 +182,8 @@ def numeric_equiv(a: str, b: str, tol: float = 1e-9) -> Optional[bool]:
         # Try numeric evaluation for cases like pi vs 3.14159
         if not diff.free_symbols:
             try:
-                return abs(complex(diff).real) < tol and abs(complex(diff).imag) < tol
+                val = complex(diff)
+                return abs(val.real) < tol and abs(val.imag) < tol
             except (TypeError, ValueError, OverflowError):
                 pass
         # Try .equals() which uses random numeric evaluation
@@ -160,7 +206,7 @@ def numeric_equiv(a: str, b: str, tol: float = 1e-9) -> Optional[bool]:
 
 def equation_valid(lhs: str, rhs: str) -> Optional[bool]:
     """Return True/False if the equation can be decided, None if symbolic."""
-    return numeric_equiv(lhs, rhs)
+    return symbolic_equiv(lhs, rhs)
 
 
 def solve_single_var(equations: list[tuple[str, str]]) -> dict[str, "sympy.Expr"]:
@@ -172,8 +218,8 @@ def solve_single_var(equations: list[tuple[str, str]]) -> dict[str, "sympy.Expr"
         return {}
     out: dict[str, "sympy.Expr"] = {}
     for lhs, rhs in equations:
-        L = sympify_safe(lhs)
-        R = sympify_safe(rhs)
+        L = safe_parse_expr(lhs)
+        R = safe_parse_expr(rhs)
         if L is None or R is None:
             continue
         free = (L - R).free_symbols

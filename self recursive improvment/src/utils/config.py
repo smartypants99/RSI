@@ -14,6 +14,12 @@ class ModelConfig:
     dtype: str = "bfloat16"
     allow_remote_code: bool = True
 
+    def __post_init__(self):
+        if self.max_seq_length < 1:
+            raise ValueError(f"max_seq_length must be >= 1, got {self.max_seq_length}")
+        if self.dtype not in ("bfloat16", "float16", "float32"):
+            raise ValueError(f"dtype must be bfloat16/float16/float32, got {self.dtype}")
+
 
 @dataclass
 class DiagnosticsConfig:
@@ -32,27 +38,48 @@ class DiagnosticsConfig:
 
     use_programmatic_generators: bool = True
     difficulty_curriculum: bool = True
-    difficulty_bands: list[str] = field(default_factory=lambda: ["easy", "medium", "hard", "expert"])
     difficulty_mix: dict = field(default_factory=lambda: {
         "easy": 0.30, "medium": 0.35, "hard": 0.25, "expert": 0.10,
     })
     semantic_grading: bool = True
     significance_alpha: float = 0.05
     min_evidence_for_weakness: int = 8
-    calibrated_confidence: bool = True
     activation_probes_per_domain: int = 2
+
+    def __post_init__(self):
+        if self.batch_size < 1:
+            raise ValueError(f"diagnostics.batch_size must be >= 1, got {self.batch_size}")
+        if self.questions_per_domain < 1:
+            raise ValueError(f"questions_per_domain must be >= 1, got {self.questions_per_domain}")
+        if not (0.0 <= self.confidence_threshold <= 1.0):
+            raise ValueError(f"confidence_threshold must be in [0, 1], got {self.confidence_threshold}")
+        if not (0.0 < self.weak_layer_percentile <= 1.0):
+            raise ValueError(f"weak_layer_percentile must be in (0, 1], got {self.weak_layer_percentile}")
+        if self.min_questions_per_domain > self.max_questions_per_domain:
+            raise ValueError(
+                f"min_questions_per_domain ({self.min_questions_per_domain}) > "
+                f"max_questions_per_domain ({self.max_questions_per_domain})"
+            )
+        if self.code_execution_timeout < 1:
+            raise ValueError(f"code_execution_timeout must be >= 1, got {self.code_execution_timeout}")
 
 
 @dataclass
 class GeneratorConfig:
     min_reasoning_steps: int = 3
-    max_reasoning_steps: int = 50
-    require_explicit_assumptions: bool = True
-    require_step_justification: bool = True
     samples_per_weakness: int = 100
     temperature: float = 0.7
     top_p: float = 0.9
-    max_retries: int = 3  # retries for insufficient reasoning
+
+    def __post_init__(self):
+        if self.min_reasoning_steps < 1:
+            raise ValueError(f"min_reasoning_steps must be >= 1, got {self.min_reasoning_steps}")
+        if self.samples_per_weakness < 1:
+            raise ValueError(f"samples_per_weakness must be >= 1, got {self.samples_per_weakness}")
+        if self.temperature < 0.0:
+            raise ValueError(f"temperature must be >= 0, got {self.temperature}")
+        if not (0.0 < self.top_p <= 1.0):
+            raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
 
 
 @dataclass
@@ -83,6 +110,21 @@ class VerifierConfig:
     max_prior_steps_to_compare: int = 8
     allow_model_override_reject: bool = True
 
+    def __post_init__(self):
+        if not (0.0 <= self.min_confidence_for_accept <= 1.0):
+            raise ValueError(f"min_confidence_for_accept must be in [0, 1], got {self.min_confidence_for_accept}")
+        if self.min_chain_steps < 1:
+            raise ValueError(f"min_chain_steps must be >= 1, got {self.min_chain_steps}")
+        if self.code_exec_timeout < 1:
+            raise ValueError(f"code_exec_timeout must be >= 1, got {self.code_exec_timeout}")
+        if self.code_exec_memory_mb < 1:
+            raise ValueError(f"code_exec_memory_mb must be >= 1, got {self.code_exec_memory_mb}")
+        if self.escalate_to_model_above >= self.escalate_to_model_below:
+            raise ValueError(
+                f"escalate_to_model_above ({self.escalate_to_model_above}) must be < "
+                f"escalate_to_model_below ({self.escalate_to_model_below})"
+            )
+
 
 @dataclass
 class TrainerConfig:
@@ -108,6 +150,24 @@ class TrainerConfig:
     max_rank: int = 256
     weakness_rank_scale: float = 2.0  # how much extra rank for weak layers
 
+    def __post_init__(self):
+        if self.lora_rank < 1:
+            raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}")
+        if self.learning_rate <= 0:
+            raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
+        if self.num_epochs < 1:
+            raise ValueError(f"num_epochs must be >= 1, got {self.num_epochs}")
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError(f"gradient_accumulation_steps must be >= 1, got {self.gradient_accumulation_steps}")
+        if not (0.0 <= self.warmup_ratio <= 1.0):
+            raise ValueError(f"warmup_ratio must be in [0, 1], got {self.warmup_ratio}")
+        if self.min_rank > self.max_rank:
+            raise ValueError(f"min_rank ({self.min_rank}) > max_rank ({self.max_rank})")
+        if self.lora_rank < self.min_rank:
+            raise ValueError(f"lora_rank ({self.lora_rank}) < min_rank ({self.min_rank})")
+
 
 @dataclass
 class EscalationSchedule:
@@ -127,6 +187,14 @@ class OrchestratorConfig:
     checkpoint_every: int = 1  # save every N cycles
     resume_from: Optional[str] = None  # resume from checkpoint path
 
+    def __post_init__(self):
+        if self.max_cycles < 1:
+            raise ValueError(f"max_cycles must be >= 1, got {self.max_cycles}")
+        if self.checkpoint_every < 1:
+            raise ValueError(f"checkpoint_every must be >= 1, got {self.checkpoint_every}")
+        if self.plateau_patience < 1:
+            raise ValueError(f"plateau_patience must be >= 1, got {self.plateau_patience}")
+
 
 @dataclass
 class VLLMConfig:
@@ -135,6 +203,12 @@ class VLLMConfig:
     max_model_len: int = 4096
     gpu_memory_utilization: float = 0.85
     quantization_config: Optional[dict] = None
+
+    def __post_init__(self):
+        if not (0.0 < self.gpu_memory_utilization <= 1.0):
+            raise ValueError(f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}")
+        if self.max_model_len < 1:
+            raise ValueError(f"max_model_len must be >= 1, got {self.max_model_len}")
 
 
 @dataclass

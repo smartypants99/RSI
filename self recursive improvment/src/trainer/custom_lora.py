@@ -658,8 +658,11 @@ class CustomLoRATrainer:
 
         logger.info(f"Loaded LoRA weights from {path} ({len(self._lora_layers)} layers)")
 
-    def merge_lora(self) -> None:
+    def merge_lora(self) -> bool:
         """Merge LoRA weights into base model, then strip LoRA layers.
+
+        Returns True if merge succeeded normally, False if undertrained (>50% of
+        LoRA layers had zero B matrix, indicating no meaningful gradients).
 
         IMPORTANT: Only use lora_scaling (alpha/rank) for the merge, NOT weakness_scale.
         weakness_scale amplifies gradients during training — it already shaped the learned
@@ -709,3 +712,4 @@ class CustomLoRATrainer:
         import gc
         gc.collect()
         torch.cuda.empty_cache()
+        return not self._last_merge_undertrained

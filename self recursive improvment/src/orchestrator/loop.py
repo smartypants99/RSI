@@ -20,7 +20,6 @@ from pathlib import Path
 import torch
 
 from ..utils.config import SystemConfig
-from ..utils.model_loader import ModelLoader
 from ..diagnostics.engine import DiagnosticsEngine, DiagnosticResult, WeaknessReport
 from ..generator.data_generator import DataGenerator
 from ..verifier.verifier import Verifier
@@ -44,14 +43,12 @@ class CycleResult:
         self.escalation_events: list[str] = []
         self.timestamp: float = time.time()
         self.duration: float = 0.0
-        self.post_diag: DiagnosticResult | None = None  # post-training diagnostics
-        # Mirrors (self.diagnostics is not None) for live cycles, and is restored
-        # from saved history for resumed stubs where .diagnostics is dropped.
+        self.post_diag: DiagnosticResult | None = None
         self.had_diagnostics: bool = False
-        self.eval_score: float | None = None  # held-out eval score
-        self.eval_domain_scores: dict[str, float] = {}  # per-domain held-out scores
-        self.diversity_stats: dict = {}  # sample diversity metrics
-        self.phase_times: dict[str, float] = {}  # timing per phase
+        self.eval_score: float | None = None
+        self.eval_domain_scores: dict[str, float] = {}
+        self.diversity_stats: dict = {}
+        self.phase_times: dict[str, float] = {}
 
     @property
     def improved(self) -> bool:
@@ -110,6 +107,7 @@ class ImprovementLoop:
                 quantization_config=vllm_cfg.quantization_config,
             )
         else:
+            from ..utils.model_loader import ModelLoader
             self.model_loader = ModelLoader(config.model)
 
         self.diagnostics = DiagnosticsEngine(config.diagnostics, self.model_loader)
@@ -123,14 +121,18 @@ class ImprovementLoop:
             "diagnosis": False,
             "generation": False,
         }
-        self._domain_score_history: dict[str, list[float]] = {}  # track regression
-        self._pending_regression_weaknesses: list[WeaknessReport] = []  # injected into next cycle
-        self._last_deescalation_cycle: int = -10  # cycle of last de-escalation (init far back)
-        self._consecutive_failures = 0  # cycles that failed before training completed
-        self._vllm_saved_this_cycle: int | None = None  # de-duplicate vLLM mid-cycle save vs. end-of-cycle save
+        self._domain_score_history: dict[str, list[float]] = {}
+        self._pending_regression_weaknesses: list[WeaknessReport] = []
+        self._last_deescalation_cycle: int = -10
+        self._consecutive_failures = 0
+        self._vllm_saved_this_cycle: int | None = None
         self._best_score: float = 0.0
         self._best_checkpoint_cycle: int | None = None
-        self._degradation_count: int = 0  # consecutive cycles where score dropped
+        self._degradation_count: int = 0
+        # EMA for plateau detection — smooths noisy per-cycle improvements so
+        # plateau decisions aren't thrown off by a single outlier cycle.
+        self._improvement_ema: float = 0.0
+        self._ema_alpha: float = 0.3  # weight for newest observation
 
     def run(self) -> None:
         """Run the full improvement loop."""
@@ -143,50 +145,63 @@ class ImprovementLoop:
         if self.config.orchestrator.resume_from:
             start_cycle = self._resume()
 
-        for cycle in range(start_cycle, self.config.orchestrator.max_cycles + 1):
-            logger.info(f"\n{'='*60}")
-            logger.info(f"CYCLE {cycle}")
-            logger.info(f"{'='*60}")
+        try:
+            for cycle in range(start_cycle, self.config.orchestrator.max_cycles + 1):
+                logger.info(f"\n{'='*60}")
+                logger.info(f"CYCLE {cycle}")
+                logger.info(f"{'='*60}")
 
-            cycle_start = time.time()
-            result = self._run_cycle(cycle)
-            result.duration = time.time() - cycle_start
+                cycle_start = time.time()
+                result = self._run_cycle(cycle)
+                result.duration = time.time() - cycle_start
 
-            # Run held-out eval after training (if training happened)
-            if result.training_metrics and result.training_metrics.steps > 0:
-                eval_start = time.time()
-                self._eval_phase(cycle, result)
-                result.phase_times["eval"] = time.time() - eval_start
+                # Run held-out eval after training (if training happened)
+                if result.training_metrics and result.training_metrics.steps > 0:
+                    eval_start = time.time()
+                    self._eval_phase(cycle, result)
+                    result.phase_times["eval"] = time.time() - eval_start
 
-            self.history.append(result)
+                self.history.append(result)
 
-            # Check escalation BEFORE logging/checkpointing so events are captured.
-            # Pass post_diag so diagnosis escalation targets still-weak domains.
-            self._check_and_escalate(cycle, result, post_diag=result.post_diag)
+                # Update EMA of improvement for plateau detection.
+                self._improvement_ema = (
+                    self._ema_alpha * result.improvement
+                    + (1 - self._ema_alpha) * self._improvement_ema
+                )
 
-            self._log_cycle(result)
+                # Check escalation BEFORE logging/checkpointing so events are captured.
+                self._check_and_escalate(cycle, result, post_diag=result.post_diag)
 
-            if cycle % self.config.orchestrator.checkpoint_every == 0:
-                self._save_checkpoint(cycle)
+                self._log_cycle(result)
 
-            # Write progress dashboard for external monitoring
-            self._save_progress_dashboard(cycle, result, result.phase_times)
+                if cycle % self.config.orchestrator.checkpoint_every == 0:
+                    self._save_checkpoint(cycle)
 
-            # Early stopping: revert to best if degrading
-            early_stop, early_reason = self._check_early_stopping(cycle, result)
-            if early_stop:
-                logger.info(f"Early stopping at cycle {cycle}: {early_reason}")
-                break
+                # Write progress dashboard for external monitoring
+                self._save_progress_dashboard(cycle, result, result.phase_times)
 
-            should_stop, stop_reason = self._should_stop(result)
-            if should_stop:
-                logger.info(f"Stopping at cycle {cycle}: {stop_reason}")
-                break
+                # Early stopping: revert to best if degrading
+                early_stop, early_reason = self._check_early_stopping(cycle, result)
+                if early_stop:
+                    logger.info(f"Early stopping at cycle {cycle}: {early_reason}")
+                    break
+
+                should_stop, stop_reason = self._should_stop(result)
+                if should_stop:
+                    logger.info(f"Stopping at cycle {cycle}: {stop_reason}")
+                    break
+
+        except KeyboardInterrupt:
+            logger.warning("KeyboardInterrupt received — saving state before exit")
+            if self.history:
+                last_cycle = self.history[-1].cycle
+                self._save_checkpoint(last_cycle)
+                logger.info(f"Emergency checkpoint saved at cycle {last_cycle}")
+            return
 
         # Always save a final checkpoint so resume works regardless of checkpoint_every
         if self.history:
             last_cycle = self.history[-1].cycle
-            # Avoid double-save if the regular checkpoint_every already covered this cycle
             if last_cycle % self.config.orchestrator.checkpoint_every != 0:
                 self._save_checkpoint(last_cycle)
         self._save_final_report()
@@ -201,8 +216,6 @@ class ImprovementLoop:
         """Initialize the system."""
         if not self.config.model.model_path:
             raise ValueError("model_path must be configured")
-        # Catch config inconsistencies that waste cycles — generator producing
-        # samples that the verifier will always reject.
         if self.config.orchestrator.checkpoint_every < 1:
             raise ValueError(
                 f"orchestrator.checkpoint_every must be >= 1 "
@@ -231,9 +244,6 @@ class ImprovementLoop:
     def _resume(self) -> int:
         """Resume from a checkpoint. Restores full state including escalations."""
         resume_path = Path(self.config.orchestrator.resume_from)
-        # Resolve relative paths against output_dir — users typically pass paths
-        # like "checkpoints/cycle_5" meaning <output_dir>/checkpoints/cycle_5,
-        # not relative to an arbitrary CWD.
         if not resume_path.is_absolute() and not resume_path.exists():
             candidate = self.config.orchestrator.output_dir / resume_path
             if candidate.exists():
@@ -260,19 +270,11 @@ class ImprovementLoop:
                 logger.warning(f"Corrupt history.json at {history_path}: {e}. Starting from scratch.")
                 return 1
 
-            # Restore escalation state — merge with expected keys so new escalation
-            # types added after the checkpoint default to False, and old removed
-            # keys are dropped rather than polluting the state dict.
+            # Restore escalation state
             if "escalation_state" in data:
                 for key in self._escalation_state:
                     if key in data["escalation_state"]:
                         self._escalation_state[key] = data["escalation_state"][key]
-                # Re-apply escalation side-effects that wire up components.
-                # Only verification needs re-wiring (sets model_verifier reference).
-                # Diagnosis/generation are restored from saved state below —
-                # re-calling _escalate_diagnosis() would be a no-op (empty history),
-                # and _escalate_generation() would waste an inference call only to
-                # be overwritten by the saved template.
                 if self._escalation_state.get("verification"):
                     self._escalate_verification()
 
@@ -296,13 +298,15 @@ class ImprovementLoop:
             if "degradation_count" in data:
                 self._degradation_count = data["degradation_count"]
 
-            # Restore generation escalation template (instead of regenerating)
+            # Restore EMA state
+            if "improvement_ema" in data:
+                self._improvement_ema = data["improvement_ema"]
+
+            # Restore generation escalation template
             if data.get("custom_solution_template"):
                 self.generator.set_custom_solution_template(data["custom_solution_template"])
 
-            # Restore model-generated diagnostic questions (from diagnosis escalation).
-            # Validate structure — corrupt checkpoints with missing keys would cause
-            # KeyError in _probe_domain when accessing q["prompt"]/q["expected"].
+            # Restore model-generated diagnostic questions
             if data.get("model_generated_questions"):
                 valid_questions = {}
                 for domain, questions in data["model_generated_questions"].items():
@@ -323,7 +327,7 @@ class ImprovementLoop:
                     evidence=r.get("evidence", []),
                 ))
 
-            # Restore minimal history so final report and escalation have context
+            # Restore minimal history
             for cycle_data in data.get("cycles", []):
                 stub = CycleResult(cycle=cycle_data["cycle"])
                 stub.pre_score = cycle_data.get("pre_score", 0)
@@ -337,10 +341,6 @@ class ImprovementLoop:
                 self.history.append(stub)
 
             num_cycles = len(self.history)
-            # Verify the model checkpoint actually exists — if it doesn't (e.g.,
-            # model save failed), the loaded model is the original base, not the
-            # merged version from prior cycles. LoRA weights assume the merged base,
-            # so applying them to the original would produce incorrect results.
             if not (resume_path / "config.json").exists():
                 resumed_cycle = self.history[-1].cycle if self.history else None
                 lora_pt = None
@@ -369,8 +369,6 @@ class ImprovementLoop:
                         f"Training will continue but results may be inconsistent."
                     )
             elif self._use_vllm:
-                # vLLM was loaded with the BASE model in _setup() before resume ran.
-                # Reload from the checkpoint so prior cycles' merged weights are live.
                 logger.info(f"  Reloading vLLM from checkpoint: {resume_path}")
                 self.model_loader.swap_to_vllm_after_training(str(resume_path))
             logger.info(f"Resumed from checkpoint: {num_cycles} cycles, escalations: {self._escalation_state}")
@@ -381,10 +379,8 @@ class ImprovementLoop:
     def _run_cycle(self, cycle: int) -> CycleResult:
         """Execute one full improvement cycle."""
         result = CycleResult(cycle)
-        # Reset so a failed cycle doesn't carry a prior cycle's saved flag.
         self._vllm_saved_this_cycle = None
 
-        # Log peak GPU memory at phase boundaries for profiling
         def _log_peak_memory(phase_name: str):
             if torch.cuda.is_available():
                 peak = torch.cuda.max_memory_allocated() / (1024 ** 3)
@@ -402,17 +398,12 @@ class ImprovementLoop:
         # 1. Diagnose
         logger.info(f"[Cycle {cycle}] Phase 1: DIAGNOSE")
         phase_start = time.time()
-        # If diagnosis escalation is active, regenerate adaptive questions
-        # each cycle so the model doesn't memorize a fixed question set.
-        # Skip when no prior diagnostics exist (e.g., first cycle or stubs from resume).
-        # Treat resumed stubs with a restored `had_diagnostics` flag as prior diag.
         has_prior_diag = any(
             r.diagnostics is not None or getattr(r, "had_diagnostics", False)
             for r in self.history
         )
         if self._escalation_state["diagnosis"] and has_prior_diag:
             self._escalate_diagnosis(cycle=cycle)
-        # Pass current best score to diagnostics so curriculum can adapt to model performance
         self.diagnostics.set_model_score(self._best_score)
         diag = self.diagnostics.run(cycle)
         result.phase_times["diagnose"] = time.time() - phase_start
@@ -429,7 +420,6 @@ class ImprovementLoop:
             logger.info(f"    - {w.domain}/{w.subdomain}: severity {w.severity:.2f}{layers_info}")
 
         # Inject regression weaknesses from previous cycle.
-        # Keep a copy — if the cycle fails before training, re-queue them.
         injected_regressions = []
         if self._pending_regression_weaknesses:
             logger.info(f"  Injecting {len(self._pending_regression_weaknesses)} regression weaknesses from prior cycle")
@@ -461,7 +451,7 @@ class ImprovementLoop:
 
         if not samples:
             logger.warning(f"  No samples generated — model couldn't produce valid problems")
-            self._pending_regression_weaknesses.extend(injected_regressions)  # re-queue
+            self._pending_regression_weaknesses.extend(injected_regressions)
             result.post_score = result.pre_score
             return result
 
@@ -475,7 +465,7 @@ class ImprovementLoop:
 
         if not verified:
             logger.warning(f"  No samples passed verification — all reasoning chains rejected")
-            self._pending_regression_weaknesses.extend(injected_regressions)  # re-queue
+            self._pending_regression_weaknesses.extend(injected_regressions)
             result.post_score = result.pre_score
             return result
 
@@ -483,7 +473,6 @@ class ImprovementLoop:
         _log_peak_memory("verify")
 
         # 4. Train — swap to HF model if using vLLM
-        # Free fragmented VRAM from inference phases before loading HF model
         gc.collect()
         torch.cuda.empty_cache()
         logger.info(f"[Cycle {cycle}] Phase 4: TRAIN on {len(verified)} verified samples")
@@ -520,14 +509,11 @@ class ImprovementLoop:
 
         # 5. Save LoRA weights BEFORE merge (merge destroys them), then evaluate
         logger.info(f"[Cycle {cycle}] Phase 5: EVALUATE")
-        # Save LoRA weights separately from full model checkpoints so they survive
-        # checkpoint pruning. LoRA weights are tiny (~100MB) so keeping all is fine.
         self.trainer.save_lora_weights(
             self.config.orchestrator.output_dir / "lora_weights", cycle
         )
-        self.trainer.merge_lora()  # merges and strips LoRA for clean eval
+        self.trainer.merge_lora()
 
-        # Save merged model checkpoint so vLLM can reload with updated weights
         if self._use_vllm:
             ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
             self.model_loader.save_checkpoint(ckpt_root, cycle)
@@ -540,22 +526,18 @@ class ImprovementLoop:
                     f"(missing config.json or *.safetensors); refusing vLLM swap"
                 )
             self._vllm_saved_this_cycle = cycle
-            # Swap to vLLM BEFORE eval so post-training diagnostics use vLLM
-            # (5-10x faster than HF inference). The merged weights are in the
-            # checkpoint that vLLM loads.
             self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
             post_diag = self.diagnostics.run(cycle + 10000)
         else:
-            # Use offset cycle number so eval generates different question variants than pre-eval
             post_diag = self.diagnostics.run(cycle + 10000)
-        result.post_diag = post_diag  # used by _check_and_escalate for diagnosis targeting
+        result.post_diag = post_diag
         result.post_score = post_diag.overall_score
         result.improvement = result.post_score - result.pre_score
 
         symbol = "+" if result.improvement > 0 else ""
         logger.info(f"  Score: {result.pre_score:.3f} -> {result.post_score:.3f} ({symbol}{result.improvement:.3f})")
 
-        # Track per-domain scores — keep last 20 per domain to bound memory/checkpoint size
+        # Track per-domain scores
         for domain, score in post_diag.domain_scores.items():
             if domain not in self._domain_score_history:
                 self._domain_score_history[domain] = []
@@ -563,39 +545,26 @@ class ImprovementLoop:
             if len(self._domain_score_history[domain]) > 20:
                 self._domain_score_history[domain] = self._domain_score_history[domain][-20:]
 
-        # Detect regressions: domains that got WORSE compared to pre-training.
-        # Add regressed domains as weaknesses so the NEXT cycle targets them.
+        # Detect regressions
         regressions = []
         for domain, pre_score in diag.domain_scores.items():
             post_score = post_diag.domain_scores.get(domain, 0)
-            if post_score < pre_score - 0.05:  # 5% threshold
+            if post_score < pre_score - 0.05:
                 regressions.append(f"{domain}: {pre_score:.3f}->{post_score:.3f}")
-                # Inject a weakness so next cycle's generator creates remediation data.
-                # Pull evidence from post-training diagnostic. Check both weaknesses
-                # (domains below threshold) AND the raw evidence from _probe_domain
-                # (stored in domain_scores). For small regressions where the domain
-                # is still above threshold, post_diag.weaknesses won't contain it —
-                # fall back to pre-training evidence.
                 regression_evidence = [
-                    e for e in post_diag.weaknesses
-                    if e.domain == domain
+                    e for e in post_diag.weaknesses if e.domain == domain
                 ]
                 evidence_items = []
                 for w in regression_evidence:
                     evidence_items.extend(w.evidence[:5])
-                # If no post-training evidence (domain still above threshold),
-                # use pre-training evidence instead of leaving it empty.
                 if not evidence_items:
-                    pre_evidence = [
-                        e for e in diag.weaknesses
-                        if e.domain == domain
-                    ]
+                    pre_evidence = [e for e in diag.weaknesses if e.domain == domain]
                     for w in pre_evidence:
                         evidence_items.extend(w.evidence[:5])
                 self._pending_regression_weaknesses.append(WeaknessReport(
                     domain=domain,
                     subdomain="regression",
-                    severity=pre_score - post_score,  # uncapped — let generator scale naturally
+                    severity=pre_score - post_score,
                     evidence=evidence_items[:20],
                     description=f"Regression: {domain} dropped from {pre_score:.3f} to {post_score:.3f}",
                 ))
@@ -605,13 +574,7 @@ class ImprovementLoop:
         return result
 
     def _eval_phase(self, cycle: int, result: CycleResult):
-        """Run a held-out evaluation after training to measure actual improvement.
-
-        Uses a different seed offset (cycle + 50000) so eval questions are distinct
-        from both the pre-training diagnostic (cycle) and the post-training diagnostic
-        (cycle + 10000). This prevents the model from being tested on the same questions
-        it was diagnosed with, giving a more honest measure of generalization.
-        """
+        """Run a held-out evaluation after training."""
         logger.info(f"[Cycle {cycle}] Phase 5b: HELD-OUT EVAL")
         eval_diag = self.diagnostics.run(cycle + 50000)
         result.eval_score = eval_diag.overall_score
@@ -634,6 +597,7 @@ class ImprovementLoop:
                 "post_training": result.post_score,
                 "held_out_eval": result.eval_score,
                 "improvement": result.improvement,
+                "improvement_ema": self._improvement_ema,
                 "best_score": self._best_score,
                 "best_checkpoint_cycle": self._best_checkpoint_cycle,
             },
@@ -671,22 +635,17 @@ class ImprovementLoop:
             json.dump(progress, f, indent=2)
 
     def _check_early_stopping(self, cycle: int, result: CycleResult) -> tuple[bool, str]:
-        """Check if model is degrading and revert to best checkpoint if needed.
-
-        If score drops for 2+ consecutive cycles, revert to the best checkpoint.
-        """
+        """Check if model is degrading and revert to best checkpoint if needed."""
         current_score = result.post_score
-        # Track best score
         if current_score > self._best_score:
             self._best_score = current_score
             self._best_checkpoint_cycle = cycle
             self._degradation_count = 0
             return False, ""
 
-        # Check for degradation (score strictly worse than previous cycle)
         if len(self.history) >= 2:
             prev_score = self.history[-2].post_score
-            if current_score < prev_score - 0.005:  # small tolerance for noise
+            if current_score < prev_score - 0.005:
                 self._degradation_count += 1
             else:
                 self._degradation_count = 0
@@ -714,18 +673,9 @@ class ImprovementLoop:
         return False, ""
 
     def _check_and_escalate(self, cycle: int, result: CycleResult, post_diag: 'DiagnosticResult | None' = None):
-        """Check and perform escalations based on cycle and performance.
-
-        post_diag: POST-training diagnostics. Used for diagnosis escalation to
-        target domains that are STILL weak after training, not just pre-training.
-        """
+        """Check and perform escalations based on cycle and performance."""
         schedule = self.config.orchestrator.escalation_schedule
 
-        # Escalation gates on both absolute score AND demonstrated improvement.
-        # Require a minimum absolute delta so a single stale positive blip doesn't
-        # permanently satisfy the gate, and require that training actually ran
-        # this cycle — otherwise post_score is just pre_score and escalation
-        # would fire on the diagnostic starting score alone.
         has_improved = (
             len(self.history) >= 2
             and any(r.improvement > 0.01 for r in self.history[-3:])
@@ -745,8 +695,7 @@ class ImprovementLoop:
             result.escalation_events.append("model_assists_verification")
             self._escalation_state["verification"] = True
 
-        # Diagnosis escalation — use post-training diagnostics so adaptive questions
-        # target what's STILL weak, not what was weak before training fixed it.
+        # Diagnosis escalation
         if (cycle >= schedule.diagnosis
                 and not self._escalation_state["diagnosis"]
                 and result.post_score > 0.6
@@ -766,14 +715,9 @@ class ImprovementLoop:
             self._escalate_generation()
             result.escalation_events.append("model_improves_generation")
             self._escalation_state["generation"] = True
-            # Reset plateau counter — new capability may unlock further improvement
             self._plateau_count = 0
 
-        # De-escalation: if model regresses significantly after escalation, revert
-        # to safer hand-crafted pipelines. Check last 2 cycles for sustained regression.
-        # Skip if an escalation just happened this call — don't immediately undo it.
-        # Require 3+ cycles since last de-escalation to prevent cascading reverts
-        # where one bad escalation causes all capabilities to be stripped in 3 cycles.
+        # De-escalation
         current_cycle = self.history[-1].cycle if self.history else 0
         if (len(self.history) >= 2
                 and not result.escalation_events
@@ -803,14 +747,10 @@ class ImprovementLoop:
         """Hand verification to the improved model."""
         logger.info(">>> ESCALATION: Model now assists in verification")
         self.verifier.set_model_verifier(self.model_loader)
-        # Enable model-assisted verification in config
         self.config.verifier.use_model_verification = True
 
     def _escalate_diagnosis(self, result_or_diag: 'CycleResult | DiagnosticResult | None' = None, cycle: int = 0):
-        """Let the model generate its own diagnostic questions.
-
-        Accepts either a CycleResult (extracts .diagnostics) or a DiagnosticResult directly.
-        """
+        """Let the model generate its own diagnostic questions."""
         logger.info(">>> ESCALATION: Model now generates diagnostic questions")
         diag = None
         if isinstance(result_or_diag, DiagnosticResult):
@@ -838,7 +778,6 @@ class ImprovementLoop:
     def _escalate_generation(self):
         """Let the model improve the data generation prompts."""
         logger.info(">>> ESCALATION: Model now improves data generation process")
-        # Show the CURRENT template (may already be model-improved from prior escalation)
         min_steps = self.config.generator.min_reasoning_steps
         current_template = self.generator._custom_solution_template or (
             "Solve the following {domain}/{subdomain} problem.\n"
@@ -858,10 +797,6 @@ class ImprovementLoop:
         improved_template = self.model_loader.generate(
             improvement_prompt, max_new_tokens=1024, temperature=0.3,
         )
-        # Validate the template has required placeholders — without {problem}
-        # the solution prompt is useless, and format() would raise KeyError
-        # (caught in _build_solution_prompt, silently falling back to default
-        # every cycle, wasting inference for zero benefit).
         required = {"{problem}", "{domain}", "{subdomain}"}
         if (improved_template and len(improved_template) > 50
                 and all(p in improved_template for p in required)):
@@ -872,84 +807,81 @@ class ImprovementLoop:
             logger.warning(f"  Rejected model template — missing placeholders: {missing}")
 
     def _should_stop(self, result: CycleResult) -> tuple[bool, str]:
-        """Check if we should stop. Returns (should_stop, reason)."""
+        """Check if we should stop using EMA-smoothed improvement for plateau detection."""
         if result.diagnostics and not result.diagnostics.weaknesses:
             self._plateau_count = 0
             self._consecutive_failures = 0
             return True, "all domains above threshold — nothing left to improve"
-        # Only count as plateau if training actually completed — failed cycles
-        # (no training metrics) shouldn't count toward the patience limit since
-        # they represent infrastructure issues, not genuine lack of improvement.
+
         undertrained = getattr(self.trainer, "_last_merge_undertrained", False)
         if result.training_metrics and result.training_metrics.steps > 0 and not undertrained:
             self._consecutive_failures = 0
-            if result.improvement < self.config.orchestrator.min_improvement_threshold:
+            # Use EMA-smoothed improvement instead of raw per-cycle delta.
+            if self._improvement_ema < self.config.orchestrator.min_improvement_threshold:
                 self._plateau_count += 1
             else:
                 self._plateau_count = 0
         elif undertrained:
-            # Training ran but >50% of LoRA layers produced no gradient signal —
-            # treat as failure for plateau purposes, not genuine convergence.
             self._consecutive_failures += 1
         else:
-            # Track consecutive failures (generation/verification/training all failed).
-            # Without this, repeated failures run forever without triggering any stop.
             self._consecutive_failures += 1
 
         if self._plateau_count >= self.config.orchestrator.plateau_patience:
-            return True, f"plateau after {self._plateau_count} cycles with no improvement"
+            return True, (
+                f"plateau after {self._plateau_count} cycles "
+                f"(EMA improvement {self._improvement_ema:.4f} < "
+                f"threshold {self.config.orchestrator.min_improvement_threshold})"
+            )
         if self._consecutive_failures >= self.config.orchestrator.plateau_patience * 2:
             return True, f"{self._consecutive_failures} consecutive failed cycles — system is unable to produce training data"
         return False, ""
 
     def _save_checkpoint(self, cycle: int):
         """Save full checkpoint: model (post-merge) and history.
-        LoRA weights are saved BEFORE merge in _run_cycle.
 
-        Keeps only the 2 most recent full model checkpoints to prevent
-        disk exhaustion (70B model ≈ 140GB per checkpoint).
-        LoRA weight directories are kept since they're tiny (~100MB).
+        Keeps only the 2 most recent full model checkpoints plus the best
+        checkpoint (for early stopping revert) to prevent disk exhaustion.
         """
         output_dir = self.config.orchestrator.output_dir
-        # In vLLM mode the model was already saved mid-cycle (before the swap back
-        # to vLLM). HF is no longer loaded, so calling save_checkpoint now would
-        # log a warning and leave an empty dir. Skip the redundant save.
         already_saved = self._use_vllm and getattr(self, "_vllm_saved_this_cycle", None) == cycle
         if not already_saved:
             try:
                 self.model_loader.save_checkpoint(output_dir / "checkpoints", cycle)
             except Exception as e:
-                # Model save can fail (disk full, permissions). Ensure the cycle
-                # directory still exists so history.json (critical for resume) is saved.
                 logger.error(f"  Model checkpoint save failed: {e}")
                 (output_dir / "checkpoints" / f"cycle_{cycle}").mkdir(parents=True, exist_ok=True)
         else:
             (output_dir / "checkpoints" / f"cycle_{cycle}").mkdir(parents=True, exist_ok=True)
 
-        # Prune old model checkpoints — keep last 2 + any LoRA-only dirs
+        # Prune old model checkpoints — keep last 2 + best checkpoint
         ckpt_dir = output_dir / "checkpoints"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         def _cycle_num(d):
             try:
                 return int(d.name.split("_")[1])
             except (ValueError, IndexError):
-                return -1  # sort non-standard dirs first (won't be pruned — no config.json)
+                return -1
         existing = sorted(
             [d for d in ckpt_dir.iterdir() if d.is_dir() and d.name.startswith("cycle_")],
             key=_cycle_num,
         )
-        # Prune full model checkpoints (keep last 2) AND empty dirs from failed
-        # saves. Without cleaning up empty dirs, repeated save failures accumulate
-        # directories that waste inodes and confuse manual inspection.
         model_dirs = [d for d in existing if (d / "config.json").exists()]
-        for old_dir in model_dirs[:-2]:  # keep last 2
+        # Protect the best checkpoint from pruning
+        keep_names = set()
+        if self._best_checkpoint_cycle is not None:
+            keep_names.add(f"cycle_{self._best_checkpoint_cycle}")
+        for old_dir in model_dirs:
+            if old_dir.name in keep_names:
+                continue
+            if old_dir in model_dirs[-2:]:
+                continue
             try:
                 shutil.rmtree(old_dir)
                 logger.info(f"  Pruned old checkpoint: {old_dir.name}")
             except OSError:
                 pass
-        # Save history for resume (BEFORE empty-dir cleanup so the current cycle's
-        # dir isn't deleted — if model save failed, the dir exists but is empty).
+
+        # Save history for resume
         history_path = output_dir / "checkpoints" / f"cycle_{cycle}" / "history.json"
         with open(history_path, "w") as f:
             json.dump({
@@ -969,10 +901,10 @@ class ImprovementLoop:
                 "best_score": self._best_score,
                 "best_checkpoint_cycle": self._best_checkpoint_cycle,
                 "degradation_count": self._degradation_count,
+                "improvement_ema": self._improvement_ema,
             }, f, indent=2)
 
-        # Clean up empty dirs from failed model saves (no config.json, no history.json).
-        # Runs AFTER history.json is written so the current cycle's dir isn't caught.
+        # Clean up empty dirs from failed model saves
         for d in existing:
             if not (d / "config.json").exists() and not (d / "history.json").exists():
                 try:
@@ -1009,9 +941,6 @@ class ImprovementLoop:
                 max(sum(r.samples_generated for r in self.history), 1)
             ),
             "escalations": self._escalation_state,
-            # Only include per-cycle summary (score trajectory), not full to_dict().
-            # Full cycle data is already saved by _log_cycle per cycle — duplicating
-            # all 100+ cycles here makes final_report.json huge and redundant.
             "score_trajectory": [
                 {"cycle": r.cycle, "pre": r.pre_score, "post": r.post_score,
                  "improvement": r.improvement, "samples": r.samples_verified}

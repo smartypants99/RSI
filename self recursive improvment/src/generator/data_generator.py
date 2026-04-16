@@ -185,6 +185,41 @@ _LEADING_CONTAM_RE = re.compile(
 
 _TOKEN_RE = re.compile(r'[A-Za-z0-9]+')
 
+# Refusal patterns — model declined to answer
+_REFUSAL_RE = re.compile(
+    r"(?:i\s+can'?t|i\s+cannot|i\s+(?:am|'m)\s+(?:not\s+able|unable)|"
+    r"i\s+(?:don'?t|do\s+not)\s+(?:have|know)|"
+    r"as\s+an?\s+(?:ai|language\s+model)|"
+    r"i\s+(?:apologize|sorry)|"
+    r"not\s+(?:possible|able)\s+to\s+(?:solve|answer|help)|"
+    r"this\s+(?:is\s+)?(?:beyond|outside)\s+(?:my|the\s+scope))",
+    re.IGNORECASE,
+)
+
+
+def _is_gibberish(text: str) -> bool:
+    """Detect gibberish: low alpha ratio, excessive repetition, or too short."""
+    if not text or len(text.strip()) < 10:
+        return True
+    stripped = text.strip()
+    alpha_chars = sum(1 for c in stripped if c.isalpha())
+    if len(stripped) > 20 and alpha_chars / len(stripped) < 0.3:
+        return True
+    tokens = _TOKEN_RE.findall(stripped.lower())
+    if len(tokens) >= 5:
+        from collections import Counter
+        most_common_count = Counter(tokens).most_common(1)[0][1]
+        if most_common_count / len(tokens) > 0.6:
+            return True
+    return False
+
+
+def _is_refusal(text: str) -> bool:
+    """Check if model output is a refusal to answer."""
+    if not text:
+        return False
+    return bool(_REFUSAL_RE.search(text[:300]))
+
 
 def _strip_markdown_line(s: str) -> str:
     s = s.strip()
@@ -245,6 +280,12 @@ class ResponseParser:
         issues: list[str] = []
         if not text or not text.strip():
             return ParseResult(chain=[], conclusion="", issues=["empty response"], confidence=0.0)
+
+        if _is_refusal(text):
+            return ParseResult(chain=[], conclusion="", issues=["model refusal"], confidence=0.0)
+
+        if _is_gibberish(text):
+            return ParseResult(chain=[], conclusion="", issues=["gibberish response"], confidence=0.0)
 
         classified: list[tuple[LineKind, tuple]] = []
         for raw in text.splitlines():
@@ -425,6 +466,10 @@ def validate_sample(sample: TrainingSample, min_steps: int) -> SchemaValidation:
             issues.append(f"step {i} empty content")
         if step.justification is None:
             issues.append(f"step {i} justification is None")
+    if sample.response and _is_gibberish(sample.response):
+        issues.append("conclusion is gibberish")
+    if sample.prompt and _is_gibberish(sample.prompt):
+        issues.append("prompt is gibberish")
     return SchemaValidation(ok=not issues, issues=issues)
 
 
@@ -437,6 +482,7 @@ class DataGenerator:
     """Generates training data with robust parsing, schema validation, and dedup."""
 
     DEDUP_JACCARD_THRESHOLD = 0.85
+    MAX_DOMAIN_FRACTION = 0.40
 
     def __init__(self, config: GeneratorConfig, model_loader: ModelLoader):
         self.config = config
@@ -544,6 +590,9 @@ class DataGenerator:
             f"{w.domain}/{w.subdomain}": w.severity for w in weaknesses
         }
 
+        # Diversity rebalancing: cap any single domain at MAX_DOMAIN_FRACTION
+        all_samples = self._rebalance_domains(all_samples)
+
         # Compute diversity stats
         self._diversity_stats = self._compute_diversity(all_samples)
         if cache_hits:
@@ -591,6 +640,32 @@ class DataGenerator:
             "avg_chain_length": round(avg_len, 1),
             "samples_per_domain": {d: sum(1 for s in samples if s.domain == d) for d in domains},
         }
+
+    def _rebalance_domains(self, samples: list[TrainingSample]) -> list[TrainingSample]:
+        """Cap over-represented domains so no single domain dominates training."""
+        if not samples:
+            return samples
+        max_per_domain = max(10, int(len(samples) * self.MAX_DOMAIN_FRACTION))
+        domain_buckets: dict[str, list[TrainingSample]] = {}
+        for s in samples:
+            domain_buckets.setdefault(s.domain, []).append(s)
+
+        over_represented = {d for d, ss in domain_buckets.items() if len(ss) > max_per_domain}
+        if not over_represented:
+            return samples
+
+        result: list[TrainingSample] = []
+        for domain, domain_samples in domain_buckets.items():
+            if domain in over_represented:
+                domain_samples.sort(key=lambda s: s.severity_at_generation, reverse=True)
+                kept = domain_samples[:max_per_domain]
+                logger.info(
+                    f"  Rebalance: capped {domain} from {len(domain_samples)} to {len(kept)} samples"
+                )
+                result.extend(kept)
+            else:
+                result.extend(domain_samples)
+        return result
 
     def _accept_unique(self, sample: TrainingSample) -> bool:
         if sample.content_hash in self._seen_hashes:
@@ -662,6 +737,7 @@ class DataGenerator:
                     sample = self._build_sample(problem, weakness, [prev_solution, retry_sol])
                     first_pass_samples[idx] = sample
 
+        valid_for_answer: list[TrainingSample] = []
         for sample in first_pass_samples:
             if sample is None:
                 parse_failures += 1
@@ -671,7 +747,13 @@ class DataGenerator:
                 schema_failures += 1
                 logger.debug(f"schema failure: {validation.issues}")
                 continue
-            samples.append(sample)
+            valid_for_answer.append(sample)
+
+        # Batch-generate expected answers for math/code domains
+        if valid_for_answer and weakness.domain in ("math", "code"):
+            self._fill_expected_answers(valid_for_answer, weakness)
+
+        samples.extend(valid_for_answer)
 
         logger.info(
             f"{weakness.domain}/{weakness.subdomain}: "
@@ -707,6 +789,43 @@ class DataGenerator:
             parse_issues=result.issues,
             severity_at_generation=max(0.0, min(1.0, weakness.severity)),
         )
+
+    def _fill_expected_answers(
+        self, samples: list[TrainingSample], weakness: WeaknessReport,
+    ) -> None:
+        """Batch-generate short expected answers so the verifier can cross-check."""
+        if weakness.domain == "math":
+            prompts = [
+                f"<|im_start|>system\nYou are a math answer extractor. "
+                f"Output ONLY the final numeric or symbolic answer, nothing else.<|im_end|>\n"
+                f"<|im_start|>user\nProblem: {s.prompt}\n\n"
+                f"Solution conclusion: {s.response}\n\n"
+                f"What is the final answer? Output ONLY the value (e.g. '42', 'x=5', 'pi/2')."
+                f"<|im_end|>\n<|im_start|>assistant\n"
+                for s in samples
+            ]
+        elif weakness.domain == "code":
+            prompts = [
+                f"<|im_start|>system\nYou extract expected test outputs from code problems. "
+                f"Output ONLY the expected function behavior summary.<|im_end|>\n"
+                f"<|im_start|>user\nProblem: {s.prompt}\n\n"
+                f"Output ONLY the expected return values from the test cases, one per line."
+                f"<|im_end|>\n<|im_start|>assistant\n"
+                for s in samples
+            ]
+        else:
+            return
+
+        answers = self._generate_batch_with_oom_retry(
+            prompts, max_new_tokens=128, temperature=0.1,
+        )
+        if len(answers) < len(samples):
+            answers = list(answers) + [""] * (len(samples) - len(answers))
+
+        for sample, answer in zip(samples, answers):
+            cleaned = answer.strip()
+            if cleaned and not _is_gibberish(cleaned) and not _is_refusal(cleaned):
+                sample.expected_answer = cleaned
 
     @staticmethod
     def _postprocess_conclusion(conclusion: str, domain: str, chain: list[ReasoningStep]) -> str:
@@ -749,7 +868,10 @@ class DataGenerator:
         p = (raw or "").strip()
         if not p:
             return ""
-        # Drop outright if the response opens with a solution/answer header.
+        if _is_refusal(p):
+            return ""
+        if _is_gibberish(p):
+            return ""
         if _LEADING_CONTAM_RE.match(p):
             return ""
         m = _CONTAM_PATTERNS.search(p)
@@ -915,6 +1037,11 @@ class DataGenerator:
         ):
             diagnostic_lines.append(
                 "Your previous attempt had no 'Justification:' lines. Every step needs one."
+            )
+        if any("refusal" in issue for issue in prev_result.issues):
+            diagnostic_lines.append(
+                "Your previous attempt was a refusal. You MUST attempt to solve the problem. "
+                "If you are uncertain, show your best-effort reasoning with stated uncertainty."
             )
         if not diagnostic_lines:
             diagnostic_lines.append("Your previous attempt could not be parsed; follow the format exactly.")

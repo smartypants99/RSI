@@ -19,24 +19,24 @@ class ActivationStats:
 
     def __init__(self, tensor: torch.Tensor):
         numel = tensor.numel()
+        if numel == 0:
+            self.dead_ratio = 0.0
+            self.std = 0.0
+            self.mean = 0.0
+            self.max_abs = 0.0
+            return
         # Compute dead_ratio and max_abs from abs values, then discard.
         # Avoid keeping abs_tensor alive while also computing float stats —
         # for (1, 512, 8192) that's 3 tensors alive simultaneously (original,
         # abs, float), tripling peak memory per hook invocation.
         abs_tensor = tensor.abs()
-        self.dead_ratio = (abs_tensor < 1e-6).sum().item() / max(numel, 1)
+        self.dead_ratio = (abs_tensor < 1e-6).sum().item() / numel
         self.max_abs = abs_tensor.max().item()
         del abs_tensor
         # Compute std/mean in float32 — bfloat16 squaring in variance computation
         # can underflow (small activations) or overflow (large activations),
         # producing NaN or wildly inaccurate std values.
-        # Use .mean().float() and manual variance to avoid full float32 copy.
-        # For std, torch.std on bfloat16 is unsafe, but we can compute it with
-        # a single float32 alloc by calling .float() then immediately reducing.
         if numel > 1:
-            # Compute mean/std without a full float32 copy. For small tensors
-            # (<1M elements) the overhead of chunking exceeds the memory savings,
-            # so only chunk large tensors.
             if numel < 1_000_000:
                 float_tensor = tensor.float()
                 self.std = float_tensor.std().item()
@@ -44,8 +44,7 @@ class ActivationStats:
                 del float_tensor
             else:
                 # Two-pass chunked: pass 1 for mean, pass 2 for variance.
-                # Accumulate on GPU (torch scalar) to minimize GPU→CPU syncs —
-                # calling .item() per chunk causes 256+ sync points for large tensors.
+                # Accumulate on GPU (torch scalar) to minimize GPU→CPU syncs.
                 flat = tensor.contiguous().view(-1)
                 chunk_size = 1_000_000
                 total_sum = torch.tensor(0.0, device=tensor.device)
@@ -60,7 +59,7 @@ class ActivationStats:
                 self.std = (var_sum.item() / numel) ** 0.5
         else:
             self.std = 0.0
-            self.mean = tensor.float().item() if numel == 1 else 0.0
+            self.mean = tensor.float().item()
 
 
 class ActivationCapture:
@@ -122,6 +121,8 @@ def _chunked_norm(tensor: torch.Tensor, chunk_size: int = 1_000_000) -> float:
     defeating the purpose of chunking. contiguous() is explicit about the copy,
     but for model weights it's almost always already contiguous (no copy needed).
     """
+    if tensor.numel() == 0:
+        return 0.0
     flat = tensor.contiguous().view(-1)
     accum = 0.0
     for start in range(0, flat.numel(), chunk_size):
@@ -202,6 +203,9 @@ class ModelLoader:
             return None
         try:
             from transformers import BitsAndBytesConfig
+            qc = dict(qc)
+            if "bnb_4bit_compute_dtype" in qc and isinstance(qc["bnb_4bit_compute_dtype"], str):
+                qc["bnb_4bit_compute_dtype"] = getattr(torch, qc["bnb_4bit_compute_dtype"])
             return BitsAndBytesConfig(**qc)
         except (ImportError, TypeError):
             # Fallback: user may have custom quantization that takes raw dict
@@ -292,9 +296,7 @@ class ModelLoader:
             # Eagerly delete large tensors so the CUDA allocator can reuse the
             # memory for the next batch. Don't call empty_cache() here — it's a
             # sync point that stalls the pipeline, and the allocator already
-            # reuses freed blocks within the process. Callers that need memory
-            # for a different purpose (e.g., training after diagnosis) should
-            # call empty_cache() themselves.
+            # reuses freed blocks within the process.
             del inputs, outputs
 
             return responses
@@ -329,11 +331,6 @@ class ModelLoader:
                 "shape": list(param.shape),
                 "dtype": str(param.dtype),
                 "requires_grad": param.requires_grad,
-                # Compute norm in float32 — bfloat16 squaring overflows for
-                # values > ~256 (bf16 max ≈ 65504, 256² = 65536 > max → inf).
-                # Flatten and chunk to avoid allocating a full float32 copy
-                # (~500MB per large weight matrix in 70B models). Each chunk
-                # converts only 1M elements (~4MB) to float32 at a time.
                 "norm": _chunked_norm(param.data),
             }
         return layers
@@ -356,11 +353,16 @@ class ModelLoader:
         """Reload model weights from a saved checkpoint (for early stopping revert)."""
         from transformers import AutoModelForCausalLM
         logger.info(f"Reloading model from checkpoint: {checkpoint_path}")
-        dtype_map = {"bfloat16": torch.bfloat16, "float16": torch.float16, "float32": torch.float32}
-        dtype = dtype_map.get(self.config.dtype, torch.bfloat16)
-        kwargs = {"torch_dtype": dtype, "device_map": self.config.device_map}
+        trust = bool(getattr(self.config, "allow_remote_code", False))
+        target_dtype = getattr(torch, self.config.dtype)
+        from transformers import __version__ as _tf_version
+        dtype_key = "dtype" if int(_tf_version.split(".")[0]) >= 5 else "torch_dtype"
+        kwargs = {
+            dtype_key: target_dtype,
+            "device_map": self.config.device_map,
+            "trust_remote_code": trust,
+        }
         if self.config.quantization_config:
-            from transformers import BitsAndBytesConfig
-            kwargs["quantization_config"] = BitsAndBytesConfig(**self.config.quantization_config)
+            kwargs["quantization_config"] = self._build_quant_config()
         self._model = AutoModelForCausalLM.from_pretrained(checkpoint_path, **kwargs)
         self._model.eval()

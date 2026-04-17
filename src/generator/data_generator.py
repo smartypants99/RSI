@@ -53,6 +53,12 @@ class TrainingSample:
     parse_issues: list[str] = field(default_factory=list)
     severity_at_generation: float = 0.0
     expected_answer: str = ""
+    # Fraction of independent generations that reached the same final answer
+    # on this problem (self-consistency, Wang et al. 2022). 1.0 = perfect
+    # agreement; 0.0 = no check was run. Training weight multiplies this in,
+    # so low-agreement samples contribute less.
+    consistency_score: float = 1.0
+    consistency_votes: int = 1  # total generations used for the check
 
     def __post_init__(self):
         if not self.content_hash and self.prompt:
@@ -753,14 +759,146 @@ class DataGenerator:
         if valid_for_answer and weakness.domain in ("math", "code"):
             self._fill_expected_answers(valid_for_answer, weakness)
 
+        # Self-consistency: only runs when consistency_samples > 1.
+        # Generates (N-1) additional independent solutions per sample and
+        # rejects anything below the agreement threshold. The sample's
+        # consistency_score is set to the agreement fraction (used downstream
+        # as a training weight multiplier).
+        consistency_rejected = 0
+        if valid_for_answer and getattr(self.config, "consistency_samples", 1) > 1:
+            valid_for_answer, consistency_rejected = self._apply_self_consistency(
+                valid_for_answer, weakness, valid_problems,
+            )
+
         samples.extend(valid_for_answer)
 
         logger.info(
             f"{weakness.domain}/{weakness.subdomain}: "
             f"{len(samples)}/{len(valid_problems)} samples "
-            f"(parse_fail={parse_failures}, schema_fail={schema_failures})"
+            f"(parse_fail={parse_failures}, schema_fail={schema_failures}"
+            + (f", consistency_fail={consistency_rejected}" if consistency_rejected else "")
+            + ")"
         )
         return samples
+
+    def _apply_self_consistency(
+        self,
+        samples: list[TrainingSample],
+        weakness: WeaknessReport,
+        problems: list[str],
+    ) -> tuple[list[TrainingSample], int]:
+        """Verify each sample by sampling (N-1) more solutions and checking agreement.
+
+        For each sample we generate (N-1) additional independent solutions to
+        the same problem at moderate temperature. We extract each solution's
+        final answer, normalize it, and count agreement with the sample's
+        existing answer. Samples below consistency_threshold are rejected.
+
+        Returns (kept_samples, rejected_count).
+        """
+        n = int(self.config.consistency_samples)
+        threshold = float(self.config.consistency_threshold)
+        extra_per = max(0, n - 1)
+        if extra_per == 0:
+            return samples, 0
+
+        # Build batched retry prompts: for each sample, extra_per independent
+        # solutions. We interleave so order is [s0_try1, s0_try2, s1_try1, ...]
+        prompts: list[str] = []
+        for s in samples:
+            for _ in range(extra_per):
+                prompts.append(self._build_solution_prompt(s.prompt, weakness))
+
+        # Use a temperature above the first-pass 0.3 so the extra samples are
+        # genuinely independent — low-temp resampling produces near-duplicates,
+        # which inflates agreement scores without catching mode collapse.
+        extra_solutions = self._generate_batch_with_oom_retry(
+            prompts,
+            max_new_tokens=2048,
+            temperature=max(0.6, self.config.temperature),
+            top_p=self.config.top_p,
+        )
+        if len(extra_solutions) < len(prompts):
+            extra_solutions = list(extra_solutions) + [""] * (len(prompts) - len(extra_solutions))
+
+        kept: list[TrainingSample] = []
+        rejected = 0
+        for i, sample in enumerate(samples):
+            primary_answer = self._normalize_answer_for_vote(
+                sample.expected_answer or sample.response, weakness.domain,
+            )
+            votes = [primary_answer] if primary_answer else []
+            parseable = 1 if primary_answer else 0
+
+            start = i * extra_per
+            for extra in extra_solutions[start:start + extra_per]:
+                if not extra:
+                    continue
+                parsed = self._parser.parse(extra)
+                candidate = parsed.conclusion if parsed.conclusion else ""
+                if not candidate:
+                    continue
+                normalized = self._normalize_answer_for_vote(candidate, weakness.domain)
+                if not normalized:
+                    continue
+                votes.append(normalized)
+                parseable += 1
+
+            # Agreement = fraction of parseable votes matching the plurality answer.
+            if len(votes) == 0:
+                sample.consistency_score = 0.0
+                sample.consistency_votes = n
+                rejected += 1
+                continue
+
+            counts: dict[str, int] = {}
+            for v in votes:
+                counts[v] = counts.get(v, 0) + 1
+            top_answer, top_count = max(counts.items(), key=lambda kv: kv[1])
+            agreement = top_count / n  # against the INTENDED vote count, not just parseable
+            sample.consistency_score = agreement
+            sample.consistency_votes = n
+
+            if agreement < threshold:
+                rejected += 1
+                continue
+            # If the plurality disagrees with the primary, prefer the plurality
+            # answer — more voters agreed on it.
+            if top_answer != primary_answer and weakness.domain in ("math", "code"):
+                sample.expected_answer = top_answer
+            kept.append(sample)
+
+        return kept, rejected
+
+    @staticmethod
+    def _normalize_answer_for_vote(text: str, domain: str) -> str:
+        """Reduce a conclusion to a canonical form for agreement counting.
+
+        Cheap normalization that catches most equivalent-answer cases without
+        requiring sympy-level symbolic equality. The goal is to flag clear
+        agreement; marginal cases should fail open (get rejected) rather than
+        be falsely counted as agreement.
+        """
+        if not text:
+            return ""
+        t = text.strip().lower()
+        # Strip common preambles ("the answer is ...", "final: ...", etc.)
+        t = re.sub(r"^(the\s+)?(final\s+)?(answer|result|output|value|conclusion)\s*[:=]\s*", "", t)
+        t = re.sub(r"^\\boxed\s*\{\s*", "", t)
+        t = re.sub(r"\s*\}\s*$", "", t)
+        t = t.strip(" .`\"'")
+        # For math: extract the first number if one exists and the rest is short.
+        if domain == "math":
+            m = re.search(r"-?\d+(?:\.\d+)?(?:/\d+)?", t)
+            if m and len(t) <= len(m.group(0)) + 10:
+                return m.group(0)
+        # For code: keep first line (most code answers are a single expression/return).
+        if domain == "code":
+            first_line = t.splitlines()[0] if t else ""
+            # Collapse whitespace inside the line to fold formatting-only diffs.
+            return re.sub(r"\s+", " ", first_line).strip()
+        # Generic: collapse whitespace, trim to first ~80 chars for robust comparison.
+        return re.sub(r"\s+", " ", t)[:80]
 
     def _build_sample(
         self, problem: str, weakness: WeaknessReport, attempts: list[str],

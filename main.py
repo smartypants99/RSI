@@ -50,6 +50,14 @@ def main():
                         help="Generation temperature (default: 0.7)")
     parser.add_argument("--top-p", type=float, default=None,
                         help="Generation top-p (default: 0.9)")
+    parser.add_argument("--consistency-samples", type=int, default=None,
+                        help="Self-consistency: N independent solutions per problem. "
+                             "Samples below --consistency-threshold agreement are rejected; "
+                             "survivors are downweighted by agreement fraction. "
+                             "N=1 disables. Recommended: 3 for real RSI. "
+                             "Cost: N× generation time (default: 1)")
+    parser.add_argument("--consistency-threshold", type=float, default=None,
+                        help="Min agreement fraction to keep a sample (default: 0.5)")
 
     # Trainer
     parser.add_argument("--lora-rank", type=int, default=None, help="LoRA rank (default: 64)")
@@ -130,6 +138,10 @@ def main():
         config.generator.temperature = args.temperature
     if args.top_p is not None:
         config.generator.top_p = args.top_p
+    if args.consistency_samples is not None:
+        config.generator.consistency_samples = args.consistency_samples
+    if args.consistency_threshold is not None:
+        config.generator.consistency_threshold = args.consistency_threshold
 
     # Trainer config
     if args.lora_rank is not None:

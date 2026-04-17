@@ -70,6 +70,12 @@ class GeneratorConfig:
     samples_per_weakness: int = 100
     temperature: float = 0.7
     top_p: float = 0.9
+    # Self-consistency: generate N independent solutions per problem, train
+    # only on samples where ≥(consistency_threshold × N) generations reach the
+    # same final answer. Higher N = stronger mode-collapse resistance but N×
+    # generation cost. N=1 disables the check (legacy behavior).
+    consistency_samples: int = 1
+    consistency_threshold: float = 0.5
 
     def __post_init__(self):
         if self.min_reasoning_steps < 1:
@@ -80,6 +86,10 @@ class GeneratorConfig:
             raise ValueError(f"temperature must be >= 0, got {self.temperature}")
         if not (0.0 < self.top_p <= 1.0):
             raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
+        if self.consistency_samples < 1:
+            raise ValueError(f"consistency_samples must be >= 1, got {self.consistency_samples}")
+        if not (0.0 < self.consistency_threshold <= 1.0):
+            raise ValueError(f"consistency_threshold must be in (0, 1], got {self.consistency_threshold}")
 
 
 @dataclass

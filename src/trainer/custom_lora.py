@@ -211,6 +211,12 @@ class TrainingDataset(Dataset):
             # 0.0 means unset (pre-rebuild samples) so leaves weight unchanged.
             severity = getattr(sample, "severity_at_generation", 0.0) or 0.0
             weight = weight * (1.0 + severity)
+            # Self-consistency: samples where multiple independent generations
+            # agreed on the final answer are more trustworthy. Default 1.0 means
+            # the check wasn't run. Values in (0, 1] downweight uncertain samples.
+            consistency = getattr(sample, "consistency_score", 1.0)
+            if consistency > 0.0:
+                weight = weight * consistency
             entry["sample_weight"] = torch.tensor(weight, dtype=torch.float32)
             self._encoded.append(entry)
 

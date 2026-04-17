@@ -13,7 +13,9 @@ from __future__ import annotations
 import gc
 import json
 import shutil
+import signal
 import time
+import traceback
 import logging
 from pathlib import Path
 
@@ -49,6 +51,9 @@ class CycleResult:
         self.eval_domain_scores: dict[str, float] = {}
         self.diversity_stats: dict = {}
         self.phase_times: dict[str, float] = {}
+        # Records non-fatal errors that occurred during the cycle.
+        # Each: {"phase": str, "type": str, "message": str, "traceback": str}
+        self.errors: list[dict] = []
 
     @property
     def improved(self) -> bool:
@@ -73,6 +78,7 @@ class CycleResult:
             "phase_times": self.phase_times,
             "timestamp": self.timestamp,
             "duration_seconds": self.duration,
+            "errors": self.errors,
             "training": {
                 "avg_loss": self.training_metrics.avg_loss if self.training_metrics else None,
                 "final_loss": self.training_metrics.final_loss if self.training_metrics else None,
@@ -135,7 +141,12 @@ class ImprovementLoop:
         self._ema_alpha: float = 0.3  # weight for newest observation
 
     def run(self) -> None:
-        """Run the full improvement loop."""
+        """Run the full improvement loop with per-cycle fault isolation.
+
+        A crash inside one cycle is captured (with full traceback), the cycle
+        is marked failed, and the loop continues. Only KeyboardInterrupt /
+        SIGTERM interrupt the loop; all other exceptions are recorded.
+        """
         logger.info("=" * 60)
         logger.info("RECURSIVE SELF-IMPROVEMENT SYSTEM")
         logger.info("=" * 60)
@@ -145,6 +156,18 @@ class ImprovementLoop:
         if self.config.orchestrator.resume_from:
             start_cycle = self._resume()
 
+        # SIGTERM handler — treat like Ctrl-C so container shutdowns flush state.
+        def _sigterm_handler(signum, frame):
+            logger.warning(f"Signal {signum} received — raising KeyboardInterrupt for graceful exit")
+            raise KeyboardInterrupt()
+
+        prev_sigterm = None
+        try:
+            prev_sigterm = signal.signal(signal.SIGTERM, _sigterm_handler)
+        except (ValueError, OSError):
+            # Not in main thread or platform doesn't support — skip silently.
+            pass
+
         try:
             for cycle in range(start_cycle, self.config.orchestrator.max_cycles + 1):
                 logger.info(f"\n{'='*60}")
@@ -152,65 +175,148 @@ class ImprovementLoop:
                 logger.info(f"{'='*60}")
 
                 cycle_start = time.time()
-                result = self._run_cycle(cycle)
+                result = CycleResult(cycle)
+                try:
+                    result = self._run_cycle(cycle)
+                except KeyboardInterrupt:
+                    raise
+                except Exception as e:
+                    # Preserve partial result if _run_cycle got far enough to populate it.
+                    tb = traceback.format_exc()
+                    logger.error(f"  Cycle {cycle} crashed ({type(e).__name__}): {e}\n{tb}")
+                    result.errors.append({
+                        "phase": "cycle", "type": type(e).__name__,
+                        "message": str(e), "traceback": tb,
+                    })
+                    # Try to recover the model loader to a known-good state.
+                    self._recover_after_cycle_failure()
+                    self._consecutive_failures += 1
                 result.duration = time.time() - cycle_start
 
-                # Run held-out eval after training (if training happened)
+                # Held-out eval — isolated so eval failure doesn't lose the cycle.
                 if result.training_metrics and result.training_metrics.steps > 0:
                     eval_start = time.time()
-                    self._eval_phase(cycle, result)
+                    try:
+                        self._eval_phase(cycle, result)
+                    except Exception as e:
+                        tb = traceback.format_exc()
+                        logger.warning(f"  Held-out eval failed ({type(e).__name__}): {e}")
+                        result.errors.append({
+                            "phase": "eval", "type": type(e).__name__,
+                            "message": str(e), "traceback": tb,
+                        })
                     result.phase_times["eval"] = time.time() - eval_start
 
                 self.history.append(result)
 
-                # Update EMA of improvement for plateau detection.
                 self._improvement_ema = (
                     self._ema_alpha * result.improvement
                     + (1 - self._ema_alpha) * self._improvement_ema
                 )
 
-                # Check escalation BEFORE logging/checkpointing so events are captured.
-                self._check_and_escalate(cycle, result, post_diag=result.post_diag)
-
-                self._log_cycle(result)
-
+                # Post-cycle bookkeeping — each isolated. One failure ≠ cycle loss.
+                self._safe_call("escalation_check",
+                                lambda: self._check_and_escalate(
+                                    cycle, result, post_diag=result.post_diag),
+                                result)
+                self._safe_call("log_cycle", lambda: self._log_cycle(result), result)
                 if cycle % self.config.orchestrator.checkpoint_every == 0:
-                    self._save_checkpoint(cycle)
+                    self._safe_call("checkpoint",
+                                    lambda: self._save_checkpoint(cycle), result)
+                self._safe_call("progress_dashboard",
+                                lambda: self._save_progress_dashboard(
+                                    cycle, result, result.phase_times),
+                                result)
 
-                # Write progress dashboard for external monitoring
-                self._save_progress_dashboard(cycle, result, result.phase_times)
-
-                # Early stopping: revert to best if degrading
-                early_stop, early_reason = self._check_early_stopping(cycle, result)
+                early_stop, early_reason = False, ""
+                try:
+                    early_stop, early_reason = self._check_early_stopping(cycle, result)
+                except Exception as e:
+                    logger.warning(f"  Early-stop check failed ({type(e).__name__}): {e}")
                 if early_stop:
                     logger.info(f"Early stopping at cycle {cycle}: {early_reason}")
                     break
 
-                should_stop, stop_reason = self._should_stop(result)
+                should_stop, stop_reason = False, ""
+                try:
+                    should_stop, stop_reason = self._should_stop(result)
+                except Exception as e:
+                    logger.warning(f"  Stop check failed ({type(e).__name__}): {e}")
                 if should_stop:
                     logger.info(f"Stopping at cycle {cycle}: {stop_reason}")
                     break
 
         except KeyboardInterrupt:
-            logger.warning("KeyboardInterrupt received — saving state before exit")
+            logger.warning("Interrupted — saving state before exit")
             if self.history:
                 last_cycle = self.history[-1].cycle
-                self._save_checkpoint(last_cycle)
+                self._safe_call("interrupt_checkpoint",
+                                lambda: self._save_checkpoint(last_cycle), None)
                 logger.info(f"Emergency checkpoint saved at cycle {last_cycle}")
             return
+        finally:
+            if prev_sigterm is not None:
+                try:
+                    signal.signal(signal.SIGTERM, prev_sigterm)
+                except (ValueError, OSError):
+                    pass
 
-        # Always save a final checkpoint so resume works regardless of checkpoint_every
         if self.history:
             last_cycle = self.history[-1].cycle
             if last_cycle % self.config.orchestrator.checkpoint_every != 0:
-                self._save_checkpoint(last_cycle)
-        self._save_final_report()
+                self._safe_call("final_checkpoint",
+                                lambda: self._save_checkpoint(last_cycle), None)
+        self._safe_call("final_report", self._save_final_report, None)
         logger.info("\n" + "=" * 60)
         logger.info("IMPROVEMENT LOOP COMPLETE")
         if self.history:
             total = self.history[-1].post_score - self.history[0].pre_score
+            failed = sum(1 for r in self.history if r.errors)
             logger.info(f"Total improvement: {self.history[0].pre_score:.3f} -> {self.history[-1].post_score:.3f} ({total:+.3f})")
+            if failed:
+                logger.info(f"Cycles with errors: {failed}/{len(self.history)} (see cycle logs for details)")
         logger.info("=" * 60)
+
+    def _safe_call(self, phase: str, fn, result: CycleResult | None) -> None:
+        """Run fn; log + record any exception without propagating.
+
+        Used for non-critical post-cycle bookkeeping where a failure should
+        degrade gracefully rather than abort the loop.
+        """
+        try:
+            fn()
+        except Exception as e:
+            tb = traceback.format_exc()
+            logger.warning(f"  {phase} failed ({type(e).__name__}): {e}")
+            if result is not None:
+                result.errors.append({
+                    "phase": phase, "type": type(e).__name__,
+                    "message": str(e), "traceback": tb,
+                })
+
+    def _recover_after_cycle_failure(self) -> None:
+        """Best-effort model-state recovery after a cycle crashes.
+
+        Strip any dangling LoRA layers (so the next cycle doesn't re-inject
+        on top), restore vLLM if we crashed mid-swap, and free VRAM.
+        """
+        try:
+            self.trainer.strip_lora()
+        except Exception as e:
+            logger.debug(f"  recovery: strip_lora failed: {e}")
+        if self._use_vllm:
+            try:
+                if getattr(self.model_loader, "_llm", None) is None:
+                    path = getattr(self.model_loader, "_current_model_path", None)
+                    self.model_loader.swap_to_vllm_after_training(path)
+            except Exception as e:
+                logger.warning(f"  recovery: vLLM reload failed: {e}")
+        try:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
     def _setup(self):
         """Initialize the system."""

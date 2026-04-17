@@ -76,6 +76,14 @@ class GeneratorConfig:
     # generation cost. N=1 disables the check (legacy behavior).
     consistency_samples: int = 1
     consistency_threshold: float = 0.5
+    # STaR (Zelikman et al. 2022): when the diagnostics engine provides real
+    # problems with canonical answers, sample K reasoning chains per failed
+    # problem at moderate temperature and keep only those whose final answer
+    # matches ground truth. Replaces "model makes up problems and grades itself".
+    star_k_samples: int = 4  # K chains per failed problem
+    star_temperature: float = 0.7  # sampling temp for the K chains
+    star_rationalization: bool = True  # rationalize 0/K problems with answer hint
+    star_max_rationalizations_per_weakness: int = 16  # cap to bound cost
 
     def __post_init__(self):
         if self.min_reasoning_steps < 1:
@@ -119,6 +127,10 @@ class VerifierConfig:
     })
     max_prior_steps_to_compare: int = 8
     allow_model_override_reject: bool = True
+    # When True, require atomic-step format (step_id/depends_on/rule). Samples
+    # missing these fields or with malformed DAGs are rejected outright. Enables
+    # external structural verification — any outside checker can audit each step.
+    atomic_mode: bool = False
 
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):
@@ -160,6 +172,16 @@ class TrainerConfig:
     max_rank: int = 256
     weakness_rank_scale: float = 2.0  # how much extra rank for weak layers
 
+    # DPO / preference-pair training.
+    # training_mode:
+    #   "sft"    — supervised fine-tuning on positive samples only (default, preserves behavior)
+    #   "dpo"    — preference-pair DPO only (requires PreferencePair inputs)
+    #   "mixed"  — alternate SFT and DPO batches when both sources are available
+    # dpo_beta: KL regularization strength. 0.1 = standard (Rafailov 2023).
+    # Higher beta = stay closer to reference; lower beta = diverge more aggressively.
+    training_mode: str = "sft"
+    dpo_beta: float = 0.1
+
     def __post_init__(self):
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}")
@@ -177,6 +199,12 @@ class TrainerConfig:
             raise ValueError(f"min_rank ({self.min_rank}) > max_rank ({self.max_rank})")
         if self.lora_rank < self.min_rank:
             raise ValueError(f"lora_rank ({self.lora_rank}) < min_rank ({self.min_rank})")
+        if self.training_mode not in ("sft", "dpo", "mixed"):
+            raise ValueError(
+                f"training_mode must be one of 'sft', 'dpo', 'mixed' — got {self.training_mode!r}"
+            )
+        if self.dpo_beta <= 0:
+            raise ValueError(f"dpo_beta must be > 0, got {self.dpo_beta}")
 
 
 @dataclass

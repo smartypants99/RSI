@@ -69,6 +69,12 @@ def main():
                         help="Gradient accumulation steps (default: 16)")
     parser.add_argument("--warmup-ratio", type=float, default=None,
                         help="Warmup ratio (default: 0.1)")
+    parser.add_argument("--training-mode", default=None,
+                        choices=["sft", "dpo", "mixed"],
+                        help="Trainer objective: sft (positives only, default), "
+                             "dpo (preference pairs), mixed (SFT then DPO per cycle)")
+    parser.add_argument("--dpo-beta", type=float, default=None,
+                        help="DPO KL regularization strength (default: 0.1)")
 
     # vLLM
     parser.add_argument("--use-vllm", action="store_true",
@@ -158,6 +164,11 @@ def main():
         config.trainer.gradient_accumulation_steps = args.gradient_accumulation_steps
     if args.warmup_ratio is not None:
         config.trainer.warmup_ratio = args.warmup_ratio
+    if args.training_mode is not None:
+        config.trainer.training_mode = args.training_mode
+    if args.dpo_beta is not None:
+        config.trainer.dpo_beta = args.dpo_beta
+    config.trainer.__post_init__()
 
     # vLLM mode
     if args.use_vllm:

@@ -35,6 +35,7 @@ from ..utils.sympy_utils import (
     HAS_SYMPY as _HAS_SYMPY,
     sympify_safe as _sympify_safe,
     equation_valid as _sympy_equation_valid,
+    symbolic_equiv as _symbolic_equiv,
     numeric_equiv as _numeric_equiv,
     normalize_answer as _normalize_answer,
     solve_single_var as _sympy_solve_single_var,
@@ -174,6 +175,7 @@ class Verifier:
         self.escalate_above = _cfg(config, "escalate_to_model_above", 0.50)
         self.max_prior = _cfg(config, "max_prior_steps_to_compare", 8)
         self.allow_model_override_reject = _cfg(config, "allow_model_override_reject", True)
+        self.atomic_mode = _cfg(config, "atomic_mode", False)
         self.weights: dict = _cfg(config, "check_weights", {
             "logical_validity": 1.0,
             "step_completeness": 1.0,
@@ -185,6 +187,45 @@ class Verifier:
 
     def set_model_verifier(self, model_loader) -> None:
         self._model_verifier = model_loader
+
+    def set_ground_truth_grader(self, grader) -> None:
+        """Inject a check_type-dispatched grader, e.g. DiagnosticsEngine._check_answer.
+
+        Signature: grader(response: str, expected: str, check_type: str) -> bool.
+        If set, the verifier will use it when a sample carries expected_answer +
+        ground_truth_check_type. Otherwise falls back to grade_against_canonical.
+        """
+        self._gt_grader = grader
+
+    def _ground_truth_gate(self, sample: TrainingSample) -> Optional[bool]:
+        """Check canonical-answer gate. Returns True (pass), False (fail), or None (not applicable)."""
+        expected = getattr(sample, "expected_answer", "") or ""
+        if not expected:
+            return None
+        # If the producer already verified against ground truth, trust it.
+        if getattr(sample, "ground_truth_verified", False):
+            return True
+        response = sample.response or ""
+        if not response and sample.reasoning_chain:
+            response = sample.reasoning_chain[-1].content or ""
+        if not response:
+            return False
+        check_type = getattr(sample, "ground_truth_check_type", "") or ""
+        grader = getattr(self, "_gt_grader", None)
+        if grader is not None and check_type:
+            try:
+                ok = bool(grader(response, expected, check_type))
+            except Exception as e:
+                logger.warning(f"ground-truth grader raised {type(e).__name__}: {e}")
+                return None
+            if ok:
+                sample.ground_truth_verified = True
+            return ok
+        # Fallback: sample-aware grader
+        ok, _ = grade_against_canonical(sample, expected, sample.domain or "")
+        if ok:
+            sample.ground_truth_verified = True
+        return ok
 
     # ───── public API ─────
 
@@ -201,6 +242,23 @@ class Verifier:
             sample.verified = res.accepted
             sample.confidence = res.overall_confidence
             sample.verification_notes = self._format_notes(res)
+            # Rich per-sample trace stamped on BOTH passing and failing samples so
+            # downstream (trainer / diag / auditor) can inspect rejection reasons.
+            sample.verifier_meta = {
+                "passed": res.accepted,
+                "confidence": res.overall_confidence,
+                "rejection_trace": "; ".join(res.rejection_reasons) if res.rejection_reasons else "",
+                "per_step_results": [
+                    {
+                        "step_number": sv.step_number,
+                        "valid": sv.valid,
+                        "confidence": sv.confidence,
+                        "issues": list(sv.issues),
+                    }
+                    for sv in res.step_results
+                ],
+                "escalated_to_model": res.escalated_to_model,
+            }
             if res.accepted:
                 out.append(sample)
         return out
@@ -223,6 +281,32 @@ class Verifier:
                 accepted=False,
                 overall_confidence=0.0,
                 rejection_reasons=["No reasoning chain present"],
+            )
+
+        # Atomic-mode: strict structural gate. Reject BEFORE heuristic scoring.
+        if self.atomic_mode:
+            atomic_issues = self._atomic_structure_check(sample)
+            if atomic_issues:
+                return VerificationResult(
+                    accepted=False,
+                    overall_confidence=0.0,
+                    rejection_reasons=[f"[atomic] {m}" for m in atomic_issues],
+                )
+
+        # Ground-truth gate: if a canonical answer and check_type are set,
+        # enforce them as a hard pass/fail. Reject immediately on fail; accept
+        # outright on pass (subject to remaining structural checks for confidence).
+        gt_ok = self._ground_truth_gate(sample)
+        if gt_ok is False:
+            expected = getattr(sample, "expected_answer", "")
+            ct = getattr(sample, "ground_truth_check_type", "")
+            return VerificationResult(
+                accepted=False,
+                overall_confidence=0.0,
+                rejection_reasons=[
+                    f"[ground_truth/{ct or 'grader'}] "
+                    f"final answer does not match canonical '{str(expected)[:80]}'"
+                ],
             )
 
         weighted_sum = 0.0
@@ -272,6 +356,22 @@ class Verifier:
             weight_total += o.weight
             if not o.passed:
                 rejection_reasons.append(f"[domain/{o.name}] {o.detail}")
+
+        # Atomic-mode: per-step sympy/code validation contributes to score
+        if self.atomic_mode:
+            w_exec = self.weights.get("domain_exec", 2.0)
+            if sample.domain == "math" and self.enable_sympy:
+                for sid, ok, detail in self._per_step_sympy_validate(sample):
+                    weighted_sum += w_exec * (1.0 if ok else 0.0)
+                    weight_total += w_exec
+                    if not ok:
+                        rejection_reasons.append(f"[atomic/step {sid}/sympy] {detail}")
+            if sample.domain == "code" and self.enable_code_exec:
+                for sid, ok, detail in self._per_step_code_validate(sample):
+                    weighted_sum += w_exec * (1.0 if ok else 0.0)
+                    weight_total += w_exec
+                    if not ok:
+                        rejection_reasons.append(f"[atomic/step {sid}/code] {detail}")
 
         overall = weighted_sum / weight_total if weight_total > 0 else 0.0
         # Clamp to [0, 1]
@@ -884,6 +984,235 @@ class Verifier:
                 out.append(stmt)
         return out[:10]
 
+    # ───── atomic-step structural verification ─────
+
+    # Rules we recognize. Samples may declare others; we only reject on schema
+    # violations (missing field, bad DAG), not on unknown rule strings.
+    _ATOMIC_KNOWN_RULES = frozenset({
+        "premise", "given",
+        "substitute", "simplify", "solve", "factor", "expand",
+        "add", "subtract", "multiply", "divide", "rearrange",
+        "sympy_check", "numeric_eval", "definition", "theorem", "lemma",
+        "modus_ponens", "modus_tollens", "contraposition",
+        "and_intro", "and_elim", "or_intro", "or_elim",
+        "universal_elim", "universal_intro",
+        "existential_intro", "existential_elim",
+        "contradiction", "cases",
+        "exec", "assert", "state_after", "invariant",
+    })
+
+    def _atomic_structure_check(self, sample: TrainingSample) -> list[str]:
+        """Strictly validate atomic-step format. Returns list of issues (empty = ok)."""
+        issues: list[str] = []
+        seen_ids: set[int] = set()
+        prev_id = 0
+        for idx, st in enumerate(sample.reasoning_chain):
+            sid = getattr(st, "step_id", 0) or 0
+            rule = (getattr(st, "rule", "") or "").strip()
+            deps = list(getattr(st, "depends_on", []) or [])
+
+            if sid <= 0:
+                issues.append(f"step #{idx + 1}: missing step_id")
+                continue
+            if sid in seen_ids:
+                issues.append(f"step_id {sid}: duplicate")
+            if sid <= prev_id:
+                issues.append(f"step_id {sid}: not strictly increasing (prev={prev_id})")
+            seen_ids.add(sid)
+            prev_id = sid
+
+            if not rule:
+                issues.append(f"step_id {sid}: missing rule")
+            if not (st.content and st.content.strip()):
+                issues.append(f"step_id {sid}: empty claim")
+
+            is_premise = rule in {"premise", "given"} or (deps == [] and idx == 0)
+            for d in deps:
+                if not isinstance(d, int):
+                    issues.append(f"step_id {sid}: non-int dependency {d!r}")
+                    continue
+                if d == sid:
+                    issues.append(f"step_id {sid}: self-dependency")
+                elif d not in seen_ids:
+                    issues.append(
+                        f"step_id {sid}: depends_on {d} which is not a prior step"
+                    )
+            if not is_premise and not deps:
+                issues.append(
+                    f"step_id {sid}: non-premise step has no dependencies"
+                )
+
+        if sample.reasoning_chain and sample.response:
+            final = sample.reasoning_chain[-1]
+            f_claim = _normalize_answer(final.content)
+            f_resp = _normalize_answer(sample.response)
+            if f_claim and f_resp and f_claim != f_resp:
+                eq = _symbolic_equiv(f_claim, f_resp) if _HAS_SYMPY else None
+                if eq is False:
+                    issues.append(
+                        f"final conclusion '{f_resp}' != last step claim '{f_claim}'"
+                    )
+                elif eq is None and f_claim not in f_resp and f_resp not in f_claim:
+                    issues.append(
+                        f"final conclusion '{f_resp}' not textually linked to last step claim '{f_claim}'"
+                    )
+        return issues
+
+    def _per_step_sympy_validate(
+        self, sample: TrainingSample
+    ) -> list[tuple[int, bool, str]]:
+        """Per-step equation validation (atomic math). Returns list of (step_id, ok, detail)."""
+        out: list[tuple[int, bool, str]] = []
+        if not self.enable_sympy:
+            return out
+        for st in sample.reasoning_chain:
+            sid = getattr(st, "step_id", 0) or st.step_number
+            rule = (getattr(st, "rule", "") or "").lower()
+            if rule in {"premise", "given"}:
+                continue
+            eqs = _shared_gather_equations(st.content)
+            if not eqs:
+                # Not every step is an equation — logic rules are fine.
+                out.append((sid, True, "no equation to check"))
+                continue
+            decided = 0
+            correct = 0
+            failing = ""
+            for lhs, rhs in eqs[:3]:
+                r = _sympy_equation_valid(lhs, rhs)
+                if r is None:
+                    continue
+                decided += 1
+                if r:
+                    correct += 1
+                elif not failing:
+                    failing = f"{lhs} = {rhs}"
+            if decided == 0:
+                out.append((sid, True, "equation(s) undecidable symbolically"))
+            elif correct == decided:
+                out.append((sid, True, f"{correct}/{decided} equations pass"))
+            else:
+                out.append((sid, False, f"{decided - correct}/{decided} fail; e.g. {failing}"))
+        return out
+
+    def _per_step_code_validate(
+        self, sample: TrainingSample
+    ) -> list[tuple[int, bool, str]]:
+        """Per-step code assertion/state execution. Returns (step_id, ok, detail) tuples.
+
+        Only validates steps whose rule is one of {exec, assert, state_after}.
+        The step's claim is wrapped into a 'assert <claim>' when shaped like
+        'after line X, result == Y' or 'x == 1'. Non-code rules are skipped.
+        """
+        out: list[tuple[int, bool, str]] = []
+        if not self.enable_code_exec:
+            return out
+        code = self._extract_code(sample)
+        if not code:
+            return out
+        for st in sample.reasoning_chain:
+            sid = getattr(st, "step_id", 0) or st.step_number
+            rule = (getattr(st, "rule", "") or "").lower()
+            if rule not in {"exec", "assert", "state_after"}:
+                continue
+            claim = (st.content or "").strip()
+            # Heuristically extract an assertion from the claim
+            m = re.search(r"([A-Za-z_]\w*(?:\[[^\]]+\]|\([^)]*\))?)\s*==\s*([^,.;]+)", claim)
+            if not m:
+                out.append((sid, True, "no assertable expression"))
+                continue
+            expr = f"{m.group(1).strip()} == {m.group(2).strip()}"
+            src = code + f"\n\nassert ({expr}), 'step {sid} assertion failed: {expr}'\n"
+            ok, detail = _run_code_sandboxed(src, self.code_timeout, self.code_memory_mb)
+            if ok:
+                out.append((sid, True, "assertion holds"))
+            else:
+                out.append((sid, False, (detail or "assertion failed")[:120]))
+        return out
+
+    # ───── externalization ─────
+
+    def explain_rejection(self, sample: TrainingSample) -> str:
+        """Produce a human-readable trace of which step failed and why.
+
+        Designed so an external verifier (human, other LLM, sympy, unit tests)
+        can independently audit the rejection.
+        """
+        res = self.verify(sample)
+        lines: list[str] = []
+        lines.append(
+            f"VERDICT: {'ACCEPTED' if res.accepted else 'REJECTED'}  "
+            f"(confidence={res.overall_confidence:.3f})"
+        )
+        if res.escalated_to_model:
+            lines.append("  [model escalation was applied]")
+        lines.append(f"DOMAIN: {sample.domain or '(unspecified)'}")
+        lines.append(f"PROMPT: {sample.prompt[:200]}")
+        lines.append("")
+        lines.append("STEPS:")
+        for st, sv in zip(sample.reasoning_chain, res.step_results):
+            sid = getattr(st, "step_id", 0) or st.step_number
+            rule = getattr(st, "rule", "") or "(no rule)"
+            deps = getattr(st, "depends_on", []) or []
+            tag = "OK " if sv.valid else "BAD"
+            lines.append(
+                f"  [{tag}] step {sid} rule={rule} depends_on={deps} "
+                f"conf={sv.confidence:.2f}"
+            )
+            lines.append(f"        claim: {st.content[:160]}")
+            for issue in sv.issues:
+                lines.append(f"        ! {issue}")
+        # Per-step sympy trace (math) for auditor convenience
+        if sample.domain == "math" and self.enable_sympy:
+            traces = self._per_step_sympy_validate(sample)
+            if traces:
+                lines.append("")
+                lines.append("SYMPY PER-STEP:")
+                for sid, ok, detail in traces:
+                    lines.append(f"  step {sid}: {'pass' if ok else 'FAIL'} — {detail}")
+        if sample.domain == "code" and self.enable_code_exec:
+            traces = self._per_step_code_validate(sample)
+            if traces:
+                lines.append("")
+                lines.append("CODE PER-STEP:")
+                for sid, ok, detail in traces:
+                    lines.append(f"  step {sid}: {'pass' if ok else 'FAIL'} — {detail}")
+        if res.rejection_reasons:
+            lines.append("")
+            lines.append("REJECTION REASONS:")
+            for r in res.rejection_reasons[:20]:
+                lines.append(f"  - {r}")
+        return "\n".join(lines)
+
+    # ───── ground-truth grading ─────
+
+    def grade_against_canonical(
+        self,
+        sample: TrainingSample,
+        canonical_answer: str,
+        domain: Optional[str] = None,
+    ) -> tuple[bool, str]:
+        """Grade a sample against a canonical answer.
+
+        If the sample carries ground_truth_check_type AND a check_type-dispatched
+        grader has been injected (via set_ground_truth_grader — typically
+        DiagnosticsEngine._check_answer), delegate to it. This keeps diag as the
+        single source of truth for rigorous grading. Otherwise fall back to the
+        module-level sample-aware grader (sympy / code sandbox / exact).
+        """
+        ct = getattr(sample, "ground_truth_check_type", "") or ""
+        grader = getattr(self, "_gt_grader", None)
+        if grader is not None and ct:
+            response = sample.response or ""
+            if not response and sample.reasoning_chain:
+                response = sample.reasoning_chain[-1].content or ""
+            try:
+                ok = bool(grader(response, canonical_answer, ct))
+            except Exception as e:
+                return False, f"grader error ({ct}): {type(e).__name__}: {e}"
+            return (ok, "" if ok else f"check_type={ct} rejected response")
+        return grade_against_canonical(sample, canonical_answer, domain or sample.domain)
+
     # ───── model escalation ─────
 
     def _in_escalation_band(self, conf: float) -> bool:
@@ -991,3 +1320,111 @@ class Verifier:
         if res.rejection_reasons:
             return head + " | " + "; ".join(res.rejection_reasons[:3])
         return head + " | all checks passed"
+
+
+# ──────────────────────── module-level grading API ────────────────────────
+
+def grade_against_canonical(
+    sample: TrainingSample,
+    canonical_answer: str,
+    domain: str,
+) -> tuple[bool, str]:
+    """Grade a sample's final answer against a canonical ground-truth answer.
+
+    - math: sympy symbolic_equiv on normalized answers (fallback: numeric).
+    - code: treat canonical_answer as assert-style test lines; run them against
+            the code extracted from the sample via the sandbox.
+    - other: case/whitespace-insensitive exact-match on the normalized final answer.
+
+    Returns (True, "") on success, (False, reason) on failure.
+    """
+    if sample is None:
+        return False, "no sample"
+    got = (sample.response or "").strip()
+    if not got and sample.reasoning_chain:
+        got = (sample.reasoning_chain[-1].content or "").strip()
+    if not got:
+        return False, "sample has no final answer"
+
+    d = (domain or sample.domain or "").lower()
+
+    if d == "math":
+        got_n = _normalize_answer(got)
+        can_n = _normalize_answer(canonical_answer or "")
+        if not can_n:
+            return False, "canonical answer is empty"
+        if got_n == can_n:
+            return True, ""
+        # If both have form "var = expr", compare RHS expressions symbolically.
+        def _split_assign(s: str) -> Optional[tuple[str, str]]:
+            if s.count("=") == 1 and "==" not in s and "<=" not in s and ">=" not in s:
+                lhs, rhs = s.split("=")
+                if re.fullmatch(r"\s*[A-Za-z_][A-Za-z_0-9]*\s*", lhs):
+                    return lhs.strip(), rhs.strip()
+            return None
+        g_split = _split_assign(got_n)
+        c_split = _split_assign(can_n)
+        if g_split and c_split and g_split[0] == c_split[0]:
+            got_rhs, can_rhs = g_split[1], c_split[1]
+            if _HAS_SYMPY:
+                eq = _symbolic_equiv(got_rhs, can_rhs)
+                if eq is True:
+                    return True, ""
+                if eq is False:
+                    return False, f"math mismatch: got '{got_n}', expected '{can_n}'"
+            if got_rhs == can_rhs:
+                return True, ""
+            return False, f"math mismatch: got '{got_n}', expected '{can_n}'"
+        if _HAS_SYMPY:
+            eq = _symbolic_equiv(got_n, can_n)
+            if eq is True:
+                return True, ""
+            if eq is False:
+                return False, f"math mismatch: got '{got_n}', expected '{can_n}'"
+            eq2 = _numeric_equiv(got_n, can_n)
+            if eq2 is True:
+                return True, ""
+            if eq2 is False:
+                return False, f"numeric mismatch: got '{got_n}', expected '{can_n}'"
+        # Undecidable symbolically — fall back to string equality
+        return (got_n.lower() == can_n.lower(),
+                "" if got_n.lower() == can_n.lower()
+                else f"math undecidable; strings differ: '{got_n}' vs '{can_n}'")
+
+    if d == "code":
+        code = Verifier._extract_code(sample)
+        if not code:
+            return False, "no extractable code in sample"
+        tests = (canonical_answer or "").strip()
+        if not tests:
+            return False, "canonical answer (tests) is empty"
+        # Normalize: each non-empty line that isn't already an assert becomes one
+        lines: list[str] = []
+        for ln in tests.splitlines():
+            s = ln.strip()
+            if not s or s.startswith("#"):
+                lines.append(ln)
+                continue
+            if s.startswith("assert ") or s.startswith("assert("):
+                lines.append(ln)
+            elif "==" in s:
+                lines.append(f"assert ({s})")
+            else:
+                lines.append(ln)
+        src = code + "\n\n# --- canonical tests ---\n" + "\n".join(lines) + "\n"
+        ok, detail = _run_code_sandboxed(src, 5, 256)
+        if ok:
+            return True, ""
+        return False, f"code failed canonical tests: {(detail or '')[:160]}"
+
+    # Generic domain: exact-match on normalized answer
+    g = re.sub(r"\s+", " ", got.strip().lower())
+    c = re.sub(r"\s+", " ", (canonical_answer or "").strip().lower())
+    if not c:
+        return False, "canonical answer is empty"
+    if g == c:
+        return True, ""
+    # Allow substring containment as a softer match
+    if c in g or g in c:
+        return True, ""
+    return False, f"exact-match failed: got '{got[:80]}', expected '{canonical_answer[:80]}'"

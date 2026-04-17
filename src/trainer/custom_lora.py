@@ -23,7 +23,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from ..utils.config import TrainerConfig
 from ..utils.model_loader import ModelLoader
-from ..generator.data_generator import TrainingSample
+from ..generator.data_generator import TrainingSample, PreferencePair
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +227,102 @@ class TrainingDataset(Dataset):
         return self._encoded[idx]
 
 
+class PreferenceDataset(Dataset):
+    """Dataset wrapping preference pairs for DPO training.
+
+    Each item encodes the shared prompt once and both responses, yielding
+    (input_ids, labels, attention_mask) for chosen and rejected separately.
+    Labels mask the prompt so only response tokens contribute to logp.
+    """
+
+    def __init__(self, pairs: list[PreferencePair], tokenizer, max_length: int):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self._encoded: list[dict] = []
+        self._encode_all(pairs)
+
+    def _encode_side(self, prompt_text: str, completion_text: str) -> Optional[dict]:
+        """Encode one side of a preference pair, returning None if it doesn't fit."""
+        prompt_ids = self.tokenizer(
+            prompt_text, add_special_tokens=True, return_tensors="pt"
+        )["input_ids"][0]
+        completion_ids = self.tokenizer(
+            completion_text, add_special_tokens=False, return_tensors="pt"
+        )["input_ids"][0]
+
+        eos_id = self.tokenizer.eos_token_id
+        if eos_id is not None and len(prompt_ids) > 1 and prompt_ids[-1].item() == eos_id:
+            prompt_ids = prompt_ids[:-1]
+        if eos_id is not None:
+            completion_ids = torch.cat(
+                [completion_ids, torch.tensor([eos_id], dtype=completion_ids.dtype)]
+            )
+
+        prompt_len = len(prompt_ids)
+        combined = torch.cat([prompt_ids, completion_ids])
+
+        if len(combined) > self.max_length:
+            if eos_id is not None:
+                combined = torch.cat(
+                    [combined[: self.max_length - 1],
+                     torch.tensor([eos_id], dtype=combined.dtype)]
+                )
+            else:
+                combined = combined[: self.max_length]
+
+        min_completion = 2 if eos_id is not None else 1
+        if prompt_len + min_completion > len(combined):
+            return None
+
+        pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        actual_len = len(combined)
+        if actual_len < self.max_length:
+            padding = torch.full(
+                (self.max_length - actual_len,), pad_id, dtype=combined.dtype
+            )
+            combined = torch.cat([combined, padding])
+
+        labels = combined.clone()
+        labels[:prompt_len] = -100
+        if actual_len < self.max_length:
+            labels[actual_len:] = -100
+
+        attention_mask = torch.zeros(self.max_length, dtype=torch.long)
+        attention_mask[:actual_len] = 1
+        return {
+            "input_ids": combined,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+
+    def _encode_all(self, pairs: list[PreferencePair]):
+        for pair in pairs:
+            prompt_text = pair.prompt + "\n\n"
+            chosen = self._encode_side(prompt_text, pair.chosen_response)
+            rejected = self._encode_side(prompt_text, pair.rejected_response)
+            if chosen is None or rejected is None:
+                continue
+            weight = pair.weight if pair.weight > 0 else 1.0
+            severity = pair.severity_at_generation or 0.0
+            weight = weight * (1.0 + severity)
+            entry = {
+                "chosen_input_ids": chosen["input_ids"],
+                "chosen_attention_mask": chosen["attention_mask"],
+                "chosen_labels": chosen["labels"],
+                "rejected_input_ids": rejected["input_ids"],
+                "rejected_attention_mask": rejected["attention_mask"],
+                "rejected_labels": rejected["labels"],
+                "sample_weight": torch.tensor(weight, dtype=torch.float32),
+            }
+            self._encoded.append(entry)
+
+    def __len__(self):
+        return len(self._encoded)
+
+    def __getitem__(self, idx):
+        return self._encoded[idx]
+
+
 @dataclass
 class TrainingMetrics:
     """Metrics from a training run."""
@@ -240,6 +336,10 @@ class TrainingMetrics:
     lora_layers_injected: int = 0
     avg_rank: float = 0.0
     undertrained: bool = False
+    # DPO-specific (0.0 when SFT-only).
+    training_mode: str = "sft"
+    dpo_pairs_used: int = 0
+    avg_reward_margin: float = 0.0  # mean (logp_chosen - logp_rejected) in final pass
 
 
 class CustomLoRATrainer:
@@ -348,16 +448,43 @@ class CustomLoRATrainer:
         self,
         verified_samples: list[TrainingSample],
         cycle: int,
+        preference_pairs: Optional[list[PreferencePair]] = None,
     ) -> TrainingMetrics:
-        """Train on verified samples only.
+        """Train on verified samples and/or preference pairs.
+
+        Routes based on ``self.config.training_mode``:
+          - "sft"   → SFT on ``verified_samples`` (ignores ``preference_pairs``)
+          - "dpo"   → DPO on ``preference_pairs`` (ignores ``verified_samples``)
+          - "mixed" → alternates SFT and DPO batches when both sources present;
+                      falls back to whichever is available if one is empty.
 
         OOM recovery: if torch.cuda.OutOfMemoryError occurs during training,
         halves the batch size and retries once. If the retry also OOMs, raises.
         """
+        mode = self.config.training_mode
+        pairs = preference_pairs or []
+
+        if mode == "dpo":
+            if not pairs:
+                logger.warning("training_mode=dpo but no preference_pairs provided — skipping training")
+                return TrainingMetrics(
+                    cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                    samples_used=0, samples_rejected=0,
+                    learning_rate=self.config.learning_rate, training_mode=mode,
+                )
+            return self._train_dpo(pairs, cycle)
+
+        if mode == "mixed" and pairs and verified_samples:
+            return self._train_mixed(verified_samples, pairs, cycle)
+
+        if mode == "mixed" and pairs and not verified_samples:
+            return self._train_dpo(pairs, cycle)
+
         if not verified_samples:
             return TrainingMetrics(cycle=cycle, avg_loss=0, final_loss=0,
                                   steps=0, samples_used=0, samples_rejected=0,
-                                  learning_rate=self.config.learning_rate)
+                                  learning_rate=self.config.learning_rate,
+                                  training_mode=mode)
 
         model = self.model_loader.model
         tokenizer = self.model_loader.tokenizer
@@ -552,6 +679,287 @@ class CustomLoRATrainer:
             learning_rate=cycle_lr,
             lora_layers_injected=len(self._lora_layers),
             avg_rank=sum(ranks) / len(ranks) if ranks else 0,
+        )
+
+    # ------------------------------------------------------------------
+    # DPO: preference-pair training with LoRA-zeroed reference pass
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sum_logprobs(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        """Sum of token log-probs for each sequence, masking labels == -100.
+
+        Returns (batch,) tensor. Uses the standard next-token-prediction shift:
+        logits[:, :-1] predict labels[:, 1:].
+        """
+        shift_logits = logits[:, :-1, :]
+        shift_labels = labels[:, 1:]
+        mask = (shift_labels != -100)
+        # Replace ignore-index with 0 so gather doesn't blow up; masked out below.
+        safe_labels = shift_labels.masked_fill(~mask, 0)
+        logp = F.log_softmax(shift_logits.float(), dim=-1)
+        token_logp = logp.gather(-1, safe_labels.unsqueeze(-1)).squeeze(-1)
+        token_logp = token_logp * mask.float()
+        return token_logp.sum(dim=-1)
+
+    def _forward_logprobs(self, model, input_ids, attention_mask, labels,
+                          *, use_reference: bool) -> torch.Tensor:
+        """Forward pass returning per-sequence summed log-probs.
+
+        When ``use_reference`` is True, temporarily zeroes every LoRA A matrix so
+        the LoRA contribution collapses (A=0 → B@A=0), making the model numerically
+        equivalent to the frozen base — our reference policy. This avoids loading a
+        second copy of the base model (huge VRAM win on A6000) at the cost of one
+        extra forward pass per batch.
+
+        The reference pass runs under ``torch.no_grad()`` AND with LoRA params
+        swapped to zero buffers (not in-place mutated) so autograd state of the
+        training pass is untouched.
+        """
+        if use_reference and self._lora_layers:
+            saved_A = {}
+            for name, layer in self._lora_layers.items():
+                saved_A[name] = layer.lora_A.data
+                layer.lora_A.data = torch.zeros_like(layer.lora_A.data)
+            try:
+                with torch.no_grad():
+                    outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                    logp = self._sum_logprobs(outputs.logits, labels)
+            finally:
+                for name, layer in self._lora_layers.items():
+                    layer.lora_A.data = saved_A[name]
+            return logp.detach()
+
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+        return self._sum_logprobs(outputs.logits, labels)
+
+    def _train_dpo(self, pairs: list[PreferencePair], cycle: int) -> TrainingMetrics:
+        """DPO training loop. Doubled forward-pass memory (policy+reference) is
+        mitigated by: (1) reference shares the same weights (LoRA zeroed), (2)
+        gradient checkpointing on policy, (3) no grads on reference.
+
+        A6000 memory budget (48GB): with 7B model in bf16 (~14GB) + grad
+        checkpointing + LoRA params, batch_size=1 pairs (=2 forward seqs) at
+        4096 seq_len fits with ~8GB headroom. batch_size=2 pairs (=4 forward
+        seqs) risks OOM — the OOM-retry path halves and retries.
+        """
+        model = self.model_loader.model
+        tokenizer = self.model_loader.tokenizer
+
+        dataset = PreferenceDataset(
+            pairs, tokenizer, max_length=self.model_loader.config.max_seq_length,
+        )
+        rejected_count = len(pairs) - len(dataset)
+        if rejected_count > 0:
+            logger.info(f"  Skipped {rejected_count} preference pairs (too long to fit)")
+        if len(dataset) == 0:
+            return TrainingMetrics(
+                cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                samples_used=0, samples_rejected=rejected_count,
+                learning_rate=self.config.learning_rate,
+                training_mode="dpo",
+            )
+
+        # DPO doubles activation memory vs SFT — err on smaller batch.
+        batch_size = max(1, self.config.batch_size // 2)
+        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+        return self._train_dpo_inner(
+            dataset, model, cycle, batch_size, rejected_count, cycle_lr,
+            retry_on_oom=True,
+        )
+
+    def _train_dpo_inner(
+        self, dataset, model, cycle, batch_size, rejected_count, cycle_lr,
+        retry_on_oom: bool = True,
+    ) -> TrainingMetrics:
+        dataloader = DataLoader(
+            dataset, batch_size=batch_size,
+            shuffle=self.config.num_epochs > 1, drop_last=False,
+        )
+        lora_params = [p for p in model.parameters() if p.requires_grad]
+        if not lora_params:
+            logger.warning("No trainable parameters for DPO")
+            return TrainingMetrics(
+                cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                samples_used=len(dataset), samples_rejected=0,
+                learning_rate=cycle_lr, training_mode="dpo",
+            )
+
+        optimizer = torch.optim.AdamW(
+            lora_params, lr=cycle_lr, weight_decay=self.config.weight_decay,
+        )
+        total_batches = len(dataloader) * self.config.num_epochs
+        total_steps = max(1, total_batches // self.config.gradient_accumulation_steps
+                         + (1 if total_batches % self.config.gradient_accumulation_steps != 0 else 0))
+        warmup_steps = int(total_steps * self.config.warmup_ratio)
+        scheduler = self._build_scheduler(optimizer, warmup_steps, total_steps)
+
+        model.train()
+        model.config.use_cache = False
+        torch.cuda.empty_cache()
+        if hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
+
+        beta = self.config.dpo_beta
+        total_loss = 0.0
+        last_loss = 0.0
+        batch_count = 0
+        step_count = 0
+        accum_count = 0
+        reward_margin_sum = 0.0
+        reward_margin_count = 0
+        device = self.model_loader.device
+
+        try:
+            for epoch in range(self.config.num_epochs):
+                for batch in dataloader:
+                    weights = batch["sample_weight"].to(device)
+                    chosen_ids = batch["chosen_input_ids"].to(device)
+                    chosen_mask = batch["chosen_attention_mask"].to(device)
+                    chosen_labels = batch["chosen_labels"].to(device)
+                    rejected_ids = batch["rejected_input_ids"].to(device)
+                    rejected_mask = batch["rejected_attention_mask"].to(device)
+                    rejected_labels = batch["rejected_labels"].to(device)
+
+                    # Policy logps (LoRA active, grads on).
+                    pi_chosen = self._forward_logprobs(
+                        model, chosen_ids, chosen_mask, chosen_labels,
+                        use_reference=False,
+                    )
+                    pi_rejected = self._forward_logprobs(
+                        model, rejected_ids, rejected_mask, rejected_labels,
+                        use_reference=False,
+                    )
+                    # Reference logps (LoRA zeroed, no grads).
+                    ref_chosen = self._forward_logprobs(
+                        model, chosen_ids, chosen_mask, chosen_labels,
+                        use_reference=True,
+                    )
+                    ref_rejected = self._forward_logprobs(
+                        model, rejected_ids, rejected_mask, rejected_labels,
+                        use_reference=True,
+                    )
+
+                    logits = beta * ((pi_chosen - ref_chosen) - (pi_rejected - ref_rejected))
+                    # Per-sample DPO loss, weighted, then averaged.
+                    per_sample_loss = -F.logsigmoid(logits)
+                    loss = (per_sample_loss * weights).mean()
+                    unweighted_loss = per_sample_loss.mean().item()
+
+                    margin = (pi_chosen - pi_rejected).detach().mean().item()
+                    reward_margin_sum += margin
+                    reward_margin_count += 1
+
+                    loss = loss / self.config.gradient_accumulation_steps
+                    loss.backward()
+                    accum_count += 1
+                    last_loss = unweighted_loss
+
+                    if accum_count % self.config.gradient_accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
+                        optimizer.step()
+                        scheduler.step()
+                        optimizer.zero_grad()
+                        step_count += 1
+
+                    total_loss += unweighted_loss
+                    batch_count += 1
+
+            if accum_count % self.config.gradient_accumulation_steps != 0:
+                torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                step_count += 1
+        except torch.cuda.OutOfMemoryError:
+            logger.warning(f"OOM during DPO training (batch_size={batch_size})")
+            del optimizer, scheduler
+            if hasattr(model, "gradient_checkpointing_disable"):
+                model.gradient_checkpointing_disable()
+            model.config.use_cache = True
+            model.eval()
+            import gc
+            gc.collect()
+            torch.cuda.empty_cache()
+            if retry_on_oom and batch_size > 1:
+                new_bs = max(1, batch_size // 2)
+                logger.warning(f"  Retrying DPO with batch_size={new_bs}")
+                return self._train_dpo_inner(
+                    dataset, model, cycle, new_bs, rejected_count, cycle_lr,
+                    retry_on_oom=False,
+                )
+            raise
+        finally:
+            try:
+                del optimizer, scheduler
+            except UnboundLocalError:
+                pass
+            if hasattr(model, "gradient_checkpointing_disable"):
+                model.gradient_checkpointing_disable()
+            model.config.use_cache = True
+            model.eval()
+            torch.cuda.empty_cache()
+
+        avg_loss = total_loss / max(batch_count, 1)
+        avg_margin = reward_margin_sum / max(reward_margin_count, 1)
+        ranks = [l.rank for l in self._lora_layers.values()]
+        return TrainingMetrics(
+            cycle=cycle, avg_loss=avg_loss, final_loss=last_loss,
+            steps=step_count, samples_used=len(dataset),
+            samples_rejected=rejected_count, learning_rate=cycle_lr,
+            lora_layers_injected=len(self._lora_layers),
+            avg_rank=sum(ranks) / len(ranks) if ranks else 0,
+            training_mode="dpo", dpo_pairs_used=len(dataset),
+            avg_reward_margin=avg_margin,
+        )
+
+    def _train_mixed(
+        self, verified_samples: list[TrainingSample],
+        pairs: list[PreferencePair], cycle: int,
+    ) -> TrainingMetrics:
+        """Mixed mode: run SFT then DPO sequentially. Simpler and more stable
+        than per-batch alternation, which would require a single fused optimizer
+        and two dataloaders in lockstep — messy with heterogeneous batch shapes.
+        """
+        sft_metrics = self._train_sft_entry(verified_samples, cycle)
+        dpo_metrics = self._train_dpo(pairs, cycle)
+        return TrainingMetrics(
+            cycle=cycle,
+            avg_loss=(sft_metrics.avg_loss + dpo_metrics.avg_loss) / 2.0,
+            final_loss=dpo_metrics.final_loss,
+            steps=sft_metrics.steps + dpo_metrics.steps,
+            samples_used=sft_metrics.samples_used + dpo_metrics.samples_used,
+            samples_rejected=sft_metrics.samples_rejected + dpo_metrics.samples_rejected,
+            learning_rate=dpo_metrics.learning_rate,
+            lora_layers_injected=len(self._lora_layers),
+            avg_rank=dpo_metrics.avg_rank or sft_metrics.avg_rank,
+            training_mode="mixed",
+            dpo_pairs_used=dpo_metrics.dpo_pairs_used,
+            avg_reward_margin=dpo_metrics.avg_reward_margin,
+        )
+
+    def _train_sft_entry(
+        self, verified_samples: list[TrainingSample], cycle: int,
+    ) -> TrainingMetrics:
+        """Direct entry to the SFT path — used by mixed mode to bypass routing."""
+        if not verified_samples:
+            return TrainingMetrics(
+                cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                samples_used=0, samples_rejected=0,
+                learning_rate=self.config.learning_rate, training_mode="sft",
+            )
+        model = self.model_loader.model
+        tokenizer = self.model_loader.tokenizer
+        dataset = TrainingDataset(
+            verified_samples, tokenizer,
+            max_length=self.model_loader.config.max_seq_length,
+        )
+        samples_rejected = len(verified_samples) - len(dataset)
+        batch_size = self.config.batch_size
+        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+        return self._train_inner(
+            dataset, model, tokenizer, cycle, batch_size,
+            samples_rejected, verified_samples, cycle_lr, retry_on_oom=True,
         )
 
     def _build_scheduler(self, optimizer, warmup_steps: int, total_steps: int):

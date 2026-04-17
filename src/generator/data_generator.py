@@ -16,7 +16,9 @@ from enum import Enum
 
 import torch
 
-from ..diagnostics.engine import WeaknessReport
+from typing import Callable, Optional
+
+from ..diagnostics.engine import DiagnosticResult, WeaknessReport
 from ..utils.config import GeneratorConfig
 from ..utils.model_loader import ModelLoader
 
@@ -30,11 +32,30 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ReasoningStep:
-    """A single step in a chain-of-thought."""
+    """A single step in a chain-of-thought.
+
+    Atomic-step fields (step_id, depends_on, rule) enable external structural
+    verification. Legacy samples leave step_id=0, depends_on=[], rule="".
+    """
     step_number: int
     content: str
     justification: str
     assumptions: list[str] = field(default_factory=list)
+    step_id: int = 0
+    depends_on: list[int] = field(default_factory=list)
+    rule: str = ""
+
+    @property
+    def claim(self) -> str:
+        return self.content
+
+    @claim.setter
+    def claim(self, value: str) -> None:
+        self.content = value
+
+    @property
+    def is_atomic(self) -> bool:
+        return self.step_id > 0 and bool(self.rule)
 
 
 @dataclass
@@ -59,6 +80,13 @@ class TrainingSample:
     # so low-agreement samples contribute less.
     consistency_score: float = 1.0
     consistency_votes: int = 1  # total generations used for the check
+    # STaR (Zelikman et al. 2022) ground-truth fields. Populated when this
+    # sample survived because its final answer matched a CANONICAL answer from
+    # a real diagnostic problem — not self-agreement, not heuristic acceptance.
+    ground_truth_check_type: str = ""  # "contains"/"math_equiv"/"code_executes"/...
+    ground_truth_verified: bool = False
+    source: str = "synthesized"  # "star" | "star_rationalized" | "synthesized"
+    sample_index: int = 0  # which of the K sampled chains this is (debug)
 
     def __post_init__(self):
         if not self.content_hash and self.prompt:
@@ -93,13 +121,47 @@ class TrainingSample:
             else:
                 content = " ".join(step.content.split())
             content = re.sub(r'^(?:step\s*\d+\s*[.):–—-]\s*)', '', content, flags=re.IGNORECASE)
-            parts.append(f"Step {i}: {content}")
+            header_id = step.step_id if step.step_id > 0 else i
+            parts.append(f"Step {header_id}: {content}")
+            if step.depends_on:
+                parts.append(f"  Depends: {', '.join(str(d) for d in step.depends_on)}")
+            elif step.is_atomic:
+                parts.append("  Depends: premise")
+            if step.rule:
+                parts.append(f"  Rule: {step.rule}")
             if step.justification and step.justification != "implicit":
                 parts.append(f"  Justification: {step.justification}")
             if step.assumptions:
                 parts.append(f"  Assumptions: {'; '.join(step.assumptions)}")
         parts.append(f"\nConclusion: {self.response}")
         return "\n".join(parts)
+
+
+@dataclass
+class PreferencePair:
+    """A DPO preference pair: same prompt, chosen (correct) vs rejected (incorrect) response.
+
+    Produced naturally by K-sample rollouts: for each problem, chains that verified
+    correctly become `chosen`, chains that verified incorrectly become `rejected`.
+    Pairing is done star_loop-side; the trainer treats each pair as one unit.
+    """
+    prompt: str
+    chosen_response: str
+    rejected_response: str
+    domain: str = ""
+    target_weakness: str = ""
+    weight: float = 1.0
+    chosen_confidence: float = 1.0
+    rejected_confidence: float = 0.0
+    severity_at_generation: float = 0.0
+    content_hash: str = ""
+
+    def __post_init__(self):
+        if not self.content_hash and self.prompt:
+            self.content_hash = hashlib.md5(
+                f"{self.domain}:{self.target_weakness}:{self.prompt}|"
+                f"{self.chosen_response}|{self.rejected_response}".encode()
+            ).hexdigest()
 
 
 # =============================================================================
@@ -503,6 +565,26 @@ class DataGenerator:
         self._last_weakness_keys: dict[str, float] = {}  # weakness key -> severity
         # Diversity stats for the most recent generation run
         self._diversity_stats: dict = {}
+        # STaR ground-truth grader: (response, expected, check_type) -> bool.
+        # Injected by the orchestrator (typically DiagnosticsEngine._check_answer).
+        # Without it, the STaR path is disabled and we fall back to the legacy
+        # self-synthesis path.
+        self._grader: Optional[Callable[[str, str, str], bool]] = None
+        # DPO preference pairs emitted during the most recent STaR run. Each
+        # problem that produced ≥1 correct and ≥1 incorrect chain yields pairs
+        # (chosen × rejected) consumed by the trainer in dpo/mixed mode.
+        self._last_preference_pairs: list[PreferencePair] = []
+        # Cap on DPO pairs per problem to avoid combinatorial explosion
+        # (K correct × K incorrect = K² pairs if unbounded).
+        self.MAX_DPO_PAIRS_PER_PROBLEM = 4
+
+    def set_grader(self, grader: Callable[[str, str, str], bool]) -> None:
+        """Register a ground-truth grading function for the STaR path.
+
+        Expected signature matches DiagnosticsEngine._check_answer:
+            grader(response: str, expected: str, check_type: str) -> bool
+        """
+        self._grader = grader
 
     def _generate_batch_with_oom_retry(
         self, prompts: list[str], max_new_tokens: int = 2048,
@@ -610,6 +692,429 @@ class DataGenerator:
             f"{self._diversity_stats.get('unique_domains', 0)} domains)"
         )
         return all_samples
+
+    # =========================================================================
+    # STaR path: train on rationales that reach KNOWN-CORRECT canonical answers
+    # on REAL diagnostic problems. (Zelikman et al., 2022 — Self-Taught Reasoner.)
+    # =========================================================================
+
+    def generate_from_diagnostic_result(
+        self, result: DiagnosticResult,
+    ) -> list[TrainingSample]:
+        """STaR-style generation: real problems, K chains, ground-truth filter.
+
+        For every diagnostic question the model got WRONG, sample K chains at
+        moderate temperature, parse each, and keep only those whose final
+        answer matches the canonical `expected` under the diagnostics
+        `check_type` grader. If 0/K chains succeed, optionally run the
+        rationalization fallback (generate with the answer as a hint, strip
+        the hint from the training example).
+
+        `expected_answer` is set to the CANONICAL answer from diagnostics —
+        not a model-extracted guess. `consistency_score` is (correct_k / K) —
+        agreement with ground truth, not self-agreement.
+
+        Requires set_grader() to have been called. If no grader is installed,
+        logs a warning and falls back to the legacy self-synthesis path.
+        """
+        if self._grader is None:
+            logger.warning(
+                "STaR path invoked but no grader installed (call set_grader). "
+                "Falling back to legacy generate_for_weaknesses."
+            )
+            return self.generate_for_weaknesses(result.weaknesses)
+
+        failed_items = self._collect_failed_items(result)
+        if not failed_items:
+            logger.warning(
+                "STaR: no failed diagnostic items found in result "
+                f"(weaknesses={len(result.weaknesses)}). Falling back to legacy path."
+            )
+            return self.generate_for_weaknesses(result.weaknesses)
+
+        self._seen_hashes.clear()
+        self._seen_signatures.clear()
+
+        all_samples: list[TrainingSample] = []
+        all_pairs: list[PreferencePair] = []
+        star_kept = 0
+        star_rejected = 0
+        rationalized = 0
+        for_rationalization: list[dict] = []
+
+        by_weakness: dict[tuple[str, str], list[dict]] = {}
+        for item in failed_items:
+            key = (item["domain"], item["subdomain"])
+            by_weakness.setdefault(key, []).append(item)
+
+        for (domain, subdomain), items in by_weakness.items():
+            weakness = self._weakness_for(result, domain, subdomain)
+            kept_here, rej_here, zero_hits, pairs_here = self._star_sample_batch(items, weakness)
+            star_kept += len(kept_here)
+            star_rejected += rej_here
+            for s in kept_here:
+                if self._accept_unique(s):
+                    all_samples.append(s)
+            all_pairs.extend(pairs_here)
+            for_rationalization.extend(zero_hits)
+
+        if self.config.star_rationalization and for_rationalization:
+            cap = max(1, int(self.config.star_max_rationalizations_per_weakness))
+            per_w: dict[tuple[str, str], list[dict]] = {}
+            for item in for_rationalization:
+                k = (item["domain"], item["subdomain"])
+                per_w.setdefault(k, []).append(item)
+            bounded: list[dict] = []
+            for items in per_w.values():
+                bounded.extend(items[:cap])
+            rationalized_samples = self._rationalize_batch(bounded, result)
+            for s in rationalized_samples:
+                if self._accept_unique(s):
+                    all_samples.append(s)
+                    rationalized += 1
+
+        all_samples = self._rebalance_domains(all_samples)
+        self._diversity_stats = self._compute_diversity(all_samples)
+        # Stash pairs so the orchestrator can retrieve them for DPO/mixed training
+        # without changing the return type (list[TrainingSample]).
+        self._last_preference_pairs = all_pairs
+        logger.info(
+            f"STaR: kept={star_kept}, rejected={star_rejected}, "
+            f"rationalized={rationalized}, final={len(all_samples)} samples, "
+            f"{len(all_pairs)} DPO pairs "
+            f"across {len(by_weakness)} weakness buckets "
+            f"({len(failed_items)} failed diagnostic items processed)"
+        )
+        return all_samples
+
+    def get_last_preference_pairs(self) -> list[PreferencePair]:
+        """DPO preference pairs produced by the most recent STaR run.
+
+        Empty when the last run used the legacy path or produced no problems
+        with both correct and incorrect chains.
+        """
+        return list(self._last_preference_pairs)
+
+    @staticmethod
+    def _render_chain_for_training(
+        item: dict,
+        chain: list[ReasoningStep],
+        conclusion: str,
+    ) -> str:
+        """Render a chain the same way TrainingSample._build_full_response does.
+
+        DPO requires chosen/rejected strings that share tokenizer conventions.
+        We construct a throwaway TrainingSample and reuse its rendering so the
+        two sides of every pair are byte-identical in format to SFT samples.
+        """
+        if not chain or not conclusion:
+            return ""
+        tmp = TrainingSample(
+            prompt=item["question"],
+            response=DataGenerator._postprocess_conclusion(
+                conclusion, item["domain"], chain,
+            ),
+            reasoning_chain=chain,
+            domain=item["domain"],
+        )
+        return tmp._build_full_response()
+
+    @staticmethod
+    def _collect_failed_items(result: DiagnosticResult) -> list[dict]:
+        """Pull every `correct=False` evidence entry from every weakness.
+
+        Items are deduplicated on (question, expected, check_type) to avoid
+        double-counting when the same failure shows up in multiple weakness reports.
+        """
+        seen: set[tuple[str, str, str]] = set()
+        failed: list[dict] = []
+        for w in result.weaknesses:
+            for ev in w.evidence or []:
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("correct"):
+                    continue
+                q = ev.get("question") or ""
+                exp = ev.get("expected") or ""
+                ct = ev.get("check_type") or "contains"
+                if not q or not exp:
+                    continue
+                key = (q, exp, ct)
+                if key in seen:
+                    continue
+                seen.add(key)
+                failed.append({
+                    "question": q,
+                    "expected": exp,
+                    "check_type": ct,
+                    "domain": ev.get("domain") or w.domain,
+                    "subdomain": ev.get("subdomain") or w.subdomain,
+                    "difficulty": ev.get("difficulty") or "medium",
+                    "severity": w.severity,
+                })
+        return failed
+
+    @staticmethod
+    def _weakness_for(
+        result: DiagnosticResult, domain: str, subdomain: str,
+    ) -> WeaknessReport:
+        for w in result.weaknesses:
+            if w.domain == domain and w.subdomain == subdomain:
+                return w
+        return WeaknessReport(domain=domain, subdomain=subdomain, severity=0.5)
+
+    def _star_sample_batch(
+        self, items: list[dict], weakness: WeaknessReport,
+    ) -> tuple[list[TrainingSample], int, list[dict], list[PreferencePair]]:
+        """Sample K chains per item, grade each, keep correct ones + emit DPO pairs.
+
+        Returns (kept_samples, rejected_count, items_with_zero_correct, preference_pairs).
+        Preference pairs: for each problem with ≥1 correct AND ≥1 incorrect chain,
+        emit up to MAX_DPO_PAIRS_PER_PROBLEM pairs (correct × incorrect). Chains are
+        rendered via TrainingSample._build_full_response so tokenizer conventions
+        match between chosen/rejected sides.
+        """
+        if not items:
+            return [], 0, [], []
+        k = max(1, int(self.config.star_k_samples))
+        prompts: list[str] = []
+        for item in items:
+            for _ in range(k):
+                prompts.append(self._build_solution_prompt(item["question"], weakness))
+
+        solutions = self._generate_batch_with_oom_retry(
+            prompts,
+            max_new_tokens=2048,
+            temperature=self.config.star_temperature,
+            top_p=self.config.top_p,
+        )
+        if len(solutions) < len(prompts):
+            solutions = list(solutions) + [""] * (len(prompts) - len(solutions))
+
+        kept: list[TrainingSample] = []
+        rejected = 0
+        zero_correct: list[dict] = []
+        pairs: list[PreferencePair] = []
+        for i, item in enumerate(items):
+            start = i * k
+            chain_solutions = solutions[start:start + k]
+            correct_indices: list[int] = []
+            incorrect_indices: list[int] = []
+            parsed_chains: list[tuple[list[ReasoningStep], str]] = []
+            for j, sol in enumerate(chain_solutions):
+                parsed = self._parser.parse(sol)
+                parsed_chains.append((parsed.chain, parsed.conclusion))
+                if not parsed.conclusion or not parsed.chain:
+                    continue
+                if len(parsed.chain) < self.config.min_reasoning_steps:
+                    continue
+                try:
+                    ok = bool(self._grader(parsed.conclusion, item["expected"], item["check_type"]))
+                except Exception as e:
+                    logger.debug(f"grader raised on candidate: {e}")
+                    ok = False
+                if ok:
+                    correct_indices.append(j)
+                else:
+                    incorrect_indices.append(j)
+
+            if not correct_indices:
+                rejected += k
+                zero_correct.append(item)
+                continue
+
+            agreement = len(correct_indices) / k
+
+            # Build DPO pairs from this problem's K rollouts: each correct chain
+            # paired with each incorrect chain (same prompt, chosen=correct,
+            # rejected=incorrect). Capped to avoid combinatorial blowup.
+            if correct_indices and incorrect_indices:
+                pair_budget = self.MAX_DPO_PAIRS_PER_PROBLEM
+                pair_count = 0
+                for ci in correct_indices:
+                    if pair_count >= pair_budget:
+                        break
+                    for ri in incorrect_indices:
+                        if pair_count >= pair_budget:
+                            break
+                        chosen_str = self._render_chain_for_training(
+                            item, parsed_chains[ci][0], parsed_chains[ci][1],
+                        )
+                        rejected_str = self._render_chain_for_training(
+                            item, parsed_chains[ri][0], parsed_chains[ri][1],
+                        )
+                        if not chosen_str or not rejected_str:
+                            continue
+                        if chosen_str == rejected_str:
+                            continue  # Guard against near-duplicate rollouts
+                        pairs.append(PreferencePair(
+                            prompt=item["question"],
+                            chosen_response=chosen_str,
+                            rejected_response=rejected_str,
+                            domain=item["domain"],
+                            target_weakness=f"{item['domain']}/{item['subdomain']}",
+                            weight=agreement,  # more correct chains → higher pair weight
+                            chosen_confidence=1.0,
+                            rejected_confidence=0.0,
+                            severity_at_generation=max(0.0, min(1.0, item["severity"])),
+                        ))
+                        pair_count += 1
+
+            for j in correct_indices:
+                chain, conclusion = parsed_chains[j]
+                conclusion = self._postprocess_conclusion(conclusion, item["domain"], chain)
+                sample = TrainingSample(
+                    prompt=item["question"],
+                    response=conclusion,
+                    reasoning_chain=chain,
+                    target_weakness=f"{item['domain']}/{item['subdomain']}",
+                    domain=item["domain"],
+                    severity_at_generation=max(0.0, min(1.0, item["severity"])),
+                    expected_answer=item["expected"],
+                    consistency_score=agreement,
+                    consistency_votes=k,
+                    ground_truth_check_type=item["check_type"],
+                    ground_truth_verified=True,
+                    source="star",
+                    sample_index=j,
+                )
+                kept.append(sample)
+            rejected += (k - len(correct_indices))
+        return kept, rejected, zero_correct, pairs
+
+    def _rationalize_batch(
+        self, items: list[dict], result: DiagnosticResult,
+    ) -> list[TrainingSample]:
+        """STaR rationalization: generate with the canonical answer as a hint.
+
+        We do NOT include the hint in the training example — the whole point
+        is to teach the model to produce the same reasoning WITHOUT being told
+        the answer. The generated chain is graded defensively.
+        """
+        if not items or self._grader is None:
+            return []
+        prompts: list[str] = []
+        for item in items:
+            weakness = self._weakness_for(result, item["domain"], item["subdomain"])
+            prompts.append(self._build_rationalization_prompt(item, weakness))
+
+        solutions = self._generate_batch_with_oom_retry(
+            prompts,
+            max_new_tokens=2048,
+            temperature=self.config.star_temperature,
+            top_p=self.config.top_p,
+        )
+        if len(solutions) < len(prompts):
+            solutions = list(solutions) + [""] * (len(prompts) - len(solutions))
+
+        kept: list[TrainingSample] = []
+        for item, sol in zip(items, solutions):
+            parsed = self._parser.parse(sol)
+            if not parsed.chain or not parsed.conclusion:
+                continue
+            if len(parsed.chain) < self.config.min_reasoning_steps:
+                continue
+            try:
+                ok = bool(self._grader(parsed.conclusion, item["expected"], item["check_type"]))
+            except Exception:
+                ok = False
+            if not ok:
+                continue
+            stripped_chain = self._strip_hint_from_chain(parsed.chain, item["expected"])
+            if not stripped_chain:
+                continue
+            conclusion = self._postprocess_conclusion(
+                parsed.conclusion, item["domain"], stripped_chain,
+            )
+            sample = TrainingSample(
+                prompt=item["question"],
+                response=conclusion,
+                reasoning_chain=stripped_chain,
+                target_weakness=f"{item['domain']}/{item['subdomain']}",
+                domain=item["domain"],
+                severity_at_generation=max(0.0, min(1.0, item["severity"])),
+                expected_answer=item["expected"],
+                consistency_score=0.5,
+                consistency_votes=1,
+                ground_truth_check_type=item["check_type"],
+                ground_truth_verified=True,
+                source="star_rationalized",
+                sample_index=0,
+            )
+            kept.append(sample)
+        return kept
+
+    def _build_rationalization_prompt(
+        self, item: dict, weakness: WeaknessReport,
+    ) -> str:
+        """Prompt that reveals the canonical answer and asks for reasoning TO it.
+
+        The hint is in the PROMPT, not in the training example. Downstream we
+        only keep the chain + conclusion, so the model is trained to produce
+        these rationales from the problem alone.
+        """
+        conclusion_guidance = {
+            "code": (
+                "Conclusion: <ONLY the complete function source code — no prose, "
+                "no markdown fences, no explanation>"
+            ),
+            "math": (
+                "Conclusion: <ONLY the symbolic or numeric answer, e.g. 'x = 5', "
+                "'pi/2', '42' — NO prose>"
+            ),
+        }.get(item["domain"], "Conclusion: <your final answer>")
+
+        return (
+            f"<|im_start|>system\n"
+            f"You are a precise {item['domain']} solver. You show all work in "
+            f"structured numbered steps. You never skip reasoning.<|im_end|>\n"
+            f"<|im_start|>user\n"
+            f"Solve the following {item['domain']}/{item['subdomain']} problem.\n\n"
+            f"PROBLEM:\n{item['question']}\n\n"
+            f"HINT (for your reasoning only — do NOT mention the hint or that you were given one): "
+            f"the correct final answer is: {item['expected']}\n\n"
+            f"Produce the reasoning chain that NATURALLY arrives at this answer "
+            f"from the problem alone. Do not reference the hint. Do not write "
+            f"'given the answer is X' or 'since we know the answer'. Reason as if "
+            f"you derived the answer yourself.\n\n"
+            f"Use EXACTLY this format — one item per line:\n\n"
+            f"Step 1: <action>\n"
+            f"Justification: <why>\n"
+            f"Assumptions: <assumptions or 'none'>\n\n"
+            f"Step 2: <action>\n"
+            f"Justification: <why>\n"
+            f"Assumptions: <assumptions or 'none'>\n\n"
+            f"... (minimum {self.config.min_reasoning_steps} steps)\n\n"
+            f"{conclusion_guidance}\n"
+            f"<|im_end|>\n"
+            f"<|im_start|>assistant\n"
+            f"Step 1:"
+        )
+
+    @staticmethod
+    def _strip_hint_from_chain(
+        chain: list[ReasoningStep], expected: str,
+    ) -> list[ReasoningStep]:
+        """Remove steps that leak the hint.
+
+        Drop any step whose content or justification contains giveaway phrases
+        ("given the answer", "as hinted", etc.). If more than half the chain
+        would be dropped, return [] so the caller rejects the sample.
+        """
+        giveaways = re.compile(
+            r"(?:given\s+(?:the\s+)?(?:answer|hint)|since\s+we\s+know\s+the\s+answer|"
+            r"we\s+are\s+told(?:\s+the\s+answer)?|as\s+hinted|from\s+the\s+hint|"
+            r"the\s+hint\s+(?:says|tells\s+us)|the\s+problem\s+gives\s+us\s+the\s+answer)",
+            re.IGNORECASE,
+        )
+        cleaned: list[ReasoningStep] = []
+        for step in chain:
+            if giveaways.search(step.content or "") or giveaways.search(step.justification or ""):
+                continue
+            cleaned.append(step)
+        if len(cleaned) < max(1, len(chain) // 2):
+            return []
+        return cleaned
 
     def _compute_diversity(self, samples: list[TrainingSample]) -> dict:
         """Measure and report diversity of generated samples.

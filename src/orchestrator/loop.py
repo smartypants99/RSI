@@ -128,7 +128,13 @@ class ImprovementLoop:
 
         self.diagnostics = DiagnosticsEngine(config.diagnostics, self.model_loader)
         self.generator = DataGenerator(config.generator, self.model_loader)
+        # Wire the diagnostics ground-truth checker into the generator so the
+        # STaR path can filter sampled chains by canonical-answer match.
+        self.generator.set_grader(self.diagnostics._check_answer)
         self.verifier = Verifier(config.verifier)
+        # Same grader into the verifier so its ground-truth gate uses the
+        # canonical dispatcher (contains/math_equiv/code_executes/...).
+        self.verifier.set_ground_truth_grader(self.diagnostics._check_answer)
         self.trainer = CustomLoRATrainer(config.trainer, self.model_loader)
         self.history: list[CycleResult] = []
         self._plateau_count = 0
@@ -552,7 +558,11 @@ class ImprovementLoop:
         logger.info(f"[Cycle {cycle}] Phase 2: GENERATE ({len(diag.weaknesses)} weaknesses)")
         phase_start = time.time()
         try:
-            samples = self.generator.generate_for_weaknesses(diag.weaknesses)
+            # STaR (Zelikman et al. 2022): train on rationales that reach
+            # known-correct canonical answers on REAL diagnostic problems.
+            # Falls back internally to legacy self-synthesis if no failed
+            # diagnostic items are available.
+            samples = self.generator.generate_from_diagnostic_result(diag)
         except Exception as e:
             logger.error(f"  Generation failed ({type(e).__name__}): {e}")
             torch.cuda.empty_cache()
@@ -597,7 +607,11 @@ class ImprovementLoop:
             self.model_loader.swap_to_hf_for_training()
         self.trainer.inject_lora(weak_layers=diag.layer_health)
         try:
-            metrics = self.trainer.train(verified, cycle)
+            # DPO preference pairs from the most recent STaR rollout (empty in
+            # legacy path or when no problem produced both correct and incorrect
+            # chains). Trainer routes SFT/DPO/mixed internally via config.training_mode.
+            preference_pairs = self.generator.get_last_preference_pairs()
+            metrics = self.trainer.train(verified, cycle, preference_pairs=preference_pairs)
         except torch.cuda.OutOfMemoryError as e:
             logger.error(f"  Training OOM (even after batch-size retry): {e} — stripping LoRA and skipping cycle")
             self.trainer.strip_lora()

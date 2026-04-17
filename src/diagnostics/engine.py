@@ -17,6 +17,13 @@ import torch
 
 from ..utils.config import DiagnosticsConfig
 from ..utils.model_loader import ModelLoader
+from .ground_truth import (
+    build_ground_truth_bank,
+    grade_ground_truth,
+    question_to_dict,
+    total_curated_count,
+    GroundTruthQuestion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1059,6 +1066,11 @@ class DiagnosticsEngine:
         self._seen_hashes: set[str] = set()
         self._model_generated_questions: dict[str, list[dict]] = {}  # from escalation
         self._model_score: float = 0.0  # current model performance for adaptive curriculum
+        # Ground-truth banks are the PRIMARY question source — templates are fallback.
+        # holdout_rng is seeded by domain only so the held-out split stays stable
+        # across cycles; probes get a fresh rng each cycle for variety.
+        self._holdout_fraction: float = 0.15
+        self._ground_truth_holdout: dict[str, list[GroundTruthQuestion]] = {}
 
     def set_model_score(self, score: float):
         """Set current model performance score for adaptive curriculum difficulty.
@@ -1259,7 +1271,14 @@ class DiagnosticsEngine:
             responses = list(responses) + [""] * (len(batch_prompts) - len(responses))
 
         for q, response in zip(questions, responses):
-            correct = self._check_answer(response, q["expected"], q["check_type"])
+            # Ground-truth questions carry a check_method — grade with the
+            # rigorous dispatcher (sympy / sandboxed unit tests / exact MC /
+            # numeric exact). Fall back to the legacy check_type grader for
+            # template/model-generated questions only.
+            if q.get("check_method"):
+                correct = self._check_ground_truth(q, response)
+            else:
+                correct = self._check_answer(response, q["expected"], q["check_type"])
             confidence = self._estimate_confidence(response)
             evidence.append({
                 "question": q["prompt"],
@@ -1303,7 +1322,34 @@ class DiagnosticsEngine:
 
         questions: list[dict] = []
 
-        # --- Template-based questions first (keeps behavior for tagged domains) ---
+        # --- Ground-truth bank FIRST (curated benchmark-style + programmatic
+        #     with verifiable canonical answers). This is the primary signal;
+        #     everything below is fallback for domain coverage.
+        gt_rng = random.Random(int.from_bytes(
+            hashlib.md5(f"gt:{domain}:{cycle}".encode()).digest()[:4], "big"))
+        holdout_rng = random.Random(int.from_bytes(
+            hashlib.md5(f"gt-holdout:{domain}".encode()).digest()[:4], "big"))
+        # Reserve ~70% of the target for ground-truth items so they dominate.
+        gt_target = max(1, int(target * 0.7))
+        gt_probe, gt_holdout = build_ground_truth_bank(
+            domain=domain,
+            n_target=gt_target,
+            rng=gt_rng,
+            difficulty_mix=self._curriculum_mix(cycle) if self.config.difficulty_curriculum else None,
+            holdout_fraction=self._holdout_fraction,
+            holdout_rng=holdout_rng,
+        )
+        self._ground_truth_holdout[domain] = gt_holdout
+        for gtq in gt_probe:
+            d = question_to_dict(gtq)
+            h = hashlib.md5((d["prompt"] + "|" + str(d["expected"])).encode()).hexdigest()
+            if h in self._seen_hashes:
+                continue
+            self._seen_hashes.add(h)
+            questions.append(d)
+
+        # --- Template-based questions (kept as fallback for domains without
+        #     full ground-truth coverage) ---
         for subdomain, template_list in templates.items():
             for template in template_list:
                 variants = self._create_variants(template, subdomain, cycle)
@@ -1821,6 +1867,89 @@ class DiagnosticsEngine:
                 # dedupe while preserving order.
                 merged = list(dict.fromkeys(list(w.weak_layers) + extra))
                 w.weak_layers = merged
+
+    def grade_question(self, question, response: str, expected: str = "",
+                       check_type: str = "") -> bool:
+        """Unified grader — dispatches on what's available.
+
+        - If `question` is a dict carrying `check_method`, routes to the
+          rigorous ground-truth grader (sympy / sandbox / MC / numeric).
+        - Otherwise falls back to the legacy `_check_answer` grader so the
+          existing `set_grader(diagnostics._check_answer)` wiring in the
+          orchestrator keeps working for template/model-generated samples.
+        """
+        if isinstance(question, dict) and question.get("check_method"):
+            return self._check_ground_truth(question, response)
+        exp = expected
+        ct = check_type or "contains"
+        if isinstance(question, dict):
+            exp = exp or question.get("expected", "")
+            ct = check_type or question.get("check_type", "contains")
+        elif isinstance(question, str) and not exp:
+            # Legacy callers pass (response, expected, check_type); accept that too.
+            exp, ct = response, expected
+            response = question
+        return self._check_answer(response, exp, ct)
+
+    def _check_ground_truth(self, q: dict, response: str) -> bool:
+        """Grade a ground-truth-bank question using the rigorous dispatcher.
+
+        Reconstructs a GroundTruthQuestion from the question dict and runs
+        sympy / sandboxed unit tests / exact MC / numeric exact — no substring
+        match on the final correctness decision.
+        """
+        gtq = GroundTruthQuestion(
+            prompt=q.get("prompt", ""),
+            canonical_answer=q.get("canonical_answer", q.get("expected", "")),
+            check_method=q.get("check_method", ""),
+            domain=q.get("domain", ""),
+            subdomain=q.get("subdomain", "general"),
+            difficulty=q.get("difficulty", "medium"),
+            source=q.get("source", "curated"),
+            unit_tests=q.get("unit_tests") or None,
+            entry_point=q.get("entry_point", ""),
+        )
+        try:
+            return grade_ground_truth(
+                gtq, response,
+                code_timeout=self.config.code_execution_timeout,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"ground-truth grading raised {type(exc).__name__}: {exc} "
+                f"(domain={gtq.domain}, method={gtq.check_method}) — marking incorrect"
+            )
+            return False
+
+    def evaluate_holdout(self, cycle: int = -1) -> dict[str, float]:
+        """Evaluate on the DOMAIN-DISJOINT held-out ground-truth subset.
+
+        Call AFTER `run()` has populated `_ground_truth_holdout`. Returns a
+        per-domain score dict computed with rigorous grading on questions that
+        were NOT in the training-signal probe, so cross-cycle scores are
+        genuinely comparable.
+        """
+        scores: dict[str, float] = {}
+        for domain, holdout in self._ground_truth_holdout.items():
+            if not holdout:
+                continue
+            prompts = [q.prompt for q in holdout]
+            responses = self._generate_batch_with_oom_retry(
+                prompts, max_new_tokens=512, temperature=0.0)
+            if len(responses) < len(prompts):
+                responses = list(responses) + [""] * (len(prompts) - len(responses))
+            correct = 0
+            for q, resp in zip(holdout, responses):
+                try:
+                    if grade_ground_truth(
+                        q, resp, code_timeout=self.config.code_execution_timeout,
+                    ):
+                        correct += 1
+                except Exception:
+                    pass
+            scores[domain] = correct / len(holdout)
+        torch.cuda.empty_cache()
+        return scores
 
     def _check_answer(self, response: str, expected: str, check_type: str) -> bool:
         response_lower = response.lower().strip()

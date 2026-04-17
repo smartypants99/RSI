@@ -23,9 +23,12 @@ class ModelConfig:
 
 @dataclass
 class DiagnosticsConfig:
-    questions_per_domain: int = 300
-    min_questions_per_domain: int = 150
-    max_questions_per_domain: int = 600
+    # Tuned for single-A6000 + vLLM: 80 × 8 domains ≈ 640 batched probes,
+    # ~3-5 min per diagnostic phase. Bump for deeper probing; clamp range
+    # permits 20-400 so --questions-per-domain 50 isn't silently clamped up.
+    questions_per_domain: int = 80
+    min_questions_per_domain: int = 20
+    max_questions_per_domain: int = 400
     domains: list[str] = field(default_factory=lambda: [
         "reasoning", "math", "code", "science", "logic",
         "common_sense", "language_understanding", "abstraction",
@@ -67,7 +70,9 @@ class DiagnosticsConfig:
 @dataclass
 class GeneratorConfig:
     min_reasoning_steps: int = 3
-    samples_per_weakness: int = 100
+    # 30 samples × ~5 weaknesses = ~150 generation calls per cycle, roughly
+    # 3-5 min on vLLM. Bump to 100 for richer training sets on beefier setups.
+    samples_per_weakness: int = 30
     temperature: float = 0.7
     top_p: float = 0.9
     # Self-consistency: generate N independent solutions per problem, train

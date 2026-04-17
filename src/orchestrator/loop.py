@@ -30,6 +30,16 @@ from ..trainer.custom_lora import CustomLoRATrainer, TrainingMetrics
 logger = logging.getLogger(__name__)
 
 
+def _summarize_errors(history: list) -> dict:
+    """Count errors by (phase, exception type) across all cycles."""
+    counts: dict[str, int] = {}
+    for r in history:
+        for e in getattr(r, "errors", []):
+            key = f"{e.get('phase', '?')}:{e.get('type', '?')}"
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
 class CycleResult:
     """Result of one improvement cycle."""
 
@@ -745,9 +755,16 @@ class ImprovementLoop:
             "escalations": dict(self._escalation_state),
             "degradation_count": self._degradation_count,
             "plateau_count": self._plateau_count,
+            # Surface per-cycle errors (type + message only; full tracebacks live
+            # in the per-cycle log to keep the dashboard small).
+            "errors": [
+                {"phase": e["phase"], "type": e["type"], "message": e["message"]}
+                for e in result.errors
+            ],
             "history_summary": [
                 {"cycle": r.cycle, "pre": r.pre_score, "post": r.post_score,
-                 "improvement": r.improvement, "eval": r.eval_score}
+                 "improvement": r.improvement, "eval": r.eval_score,
+                 "had_errors": bool(r.errors)}
                 for r in self.history
             ],
         }
@@ -1062,9 +1079,12 @@ class ImprovementLoop:
                 max(sum(r.samples_generated for r in self.history), 1)
             ),
             "escalations": self._escalation_state,
+            "cycles_with_errors": sum(1 for r in self.history if r.errors),
+            "error_breakdown": _summarize_errors(self.history),
             "score_trajectory": [
                 {"cycle": r.cycle, "pre": r.pre_score, "post": r.post_score,
-                 "improvement": r.improvement, "samples": r.samples_verified}
+                 "improvement": r.improvement, "samples": r.samples_verified,
+                 "had_errors": bool(r.errors)}
                 for r in self.history
             ],
         }

@@ -1317,11 +1317,7 @@ class DiagnosticsEngine:
             gens = _PROGRAMMATIC_GENERATORS.get(domain, [])
             if gens:
                 # Difficulty curriculum: ramp harder as cycle grows.
-                # Mask the +10000 post-eval offset so pre/post use the SAME
-                # difficulty mix — otherwise pre=cycle N is easier than
-                # post=cycle N+10000 (saturated at target mix), making
-                # pre→post improvement comparisons apples-to-oranges.
-                diff_mix = self._curriculum_mix(cycle % 10000)
+                diff_mix = self._curriculum_mix(cycle)
                 # Budget ~2/3 of target from programmatic generators
                 prog_budget = max(0, target - len(questions))
                 if prog_budget < target // 2:

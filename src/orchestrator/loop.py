@@ -527,9 +527,10 @@ class ImprovementLoop:
                 )
             self._vllm_saved_this_cycle = cycle
             self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
-            post_diag = self.diagnostics.run(cycle + 10000)
-        else:
-            post_diag = self.diagnostics.run(cycle + 10000)
+        # Run post-training diagnostics on the SAME questions as pre-training.
+        # Different cycle arg = different RNG seed = different questions, which
+        # made `improvement = post - pre` compare apples to oranges.
+        post_diag = self.diagnostics.run(cycle)
         result.post_diag = post_diag
         result.post_score = post_diag.overall_score
         result.improvement = result.post_score - result.pre_score
@@ -573,18 +574,32 @@ class ImprovementLoop:
 
         return result
 
+    # Stable seed for held-out eval questions. Using a fixed value (not cycle)
+    # means the held-out set is the SAME across all cycles, so scores track
+    # true generalization over time instead of random per-cycle variance.
+    HELDOUT_CYCLE_SEED = 0xE7A1
+
     def _eval_phase(self, cycle: int, result: CycleResult):
-        """Run a held-out evaluation after training."""
+        """Run a held-out evaluation on a stable question set."""
         logger.info(f"[Cycle {cycle}] Phase 5b: HELD-OUT EVAL")
-        eval_diag = self.diagnostics.run(cycle + 50000)
+        eval_diag = self.diagnostics.run(self.HELDOUT_CYCLE_SEED)
         result.eval_score = eval_diag.overall_score
         result.eval_domain_scores = dict(eval_diag.domain_scores)
-        delta = result.eval_score - result.pre_score
-        symbol = "+" if delta > 0 else ""
-        logger.info(
-            f"  Held-out eval: {result.eval_score:.3f} "
-            f"(vs pre-training {result.pre_score:.3f}, {symbol}{delta:.3f})"
+        # Compare to previous cycle's held-out score (if any) — apples-to-apples
+        # on identical questions.
+        prev_eval = next(
+            (r.eval_score for r in reversed(self.history) if r.eval_score is not None),
+            None,
         )
+        if prev_eval is not None:
+            delta = result.eval_score - prev_eval
+            symbol = "+" if delta > 0 else ""
+            logger.info(
+                f"  Held-out eval: {result.eval_score:.3f} "
+                f"(prev {prev_eval:.3f}, {symbol}{delta:.3f})"
+            )
+        else:
+            logger.info(f"  Held-out eval: {result.eval_score:.3f} (baseline)")
 
     def _save_progress_dashboard(self, cycle: int, result: CycleResult, phase_times: dict):
         """Write progress.json with structured metrics for external monitoring."""

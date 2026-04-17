@@ -44,6 +44,10 @@ class ReasoningStep:
     step_id: int = 0
     depends_on: list[int] = field(default_factory=list)
     rule: str = ""
+    # Metacognitive confidence — value in [0,1] parsed from a trailing
+    # [C:0.xx] token emitted by the model after a step. -1.0 means unset
+    # (no marker was emitted); downstream code should skip unset values.
+    confidence: float = -1.0
 
     @property
     def claim(self) -> str:
@@ -74,6 +78,9 @@ class TrainingSample:
     parse_issues: list[str] = field(default_factory=list)
     severity_at_generation: float = 0.0
     expected_answer: str = ""
+    # Metacognitive per-step confidence in [0,1]. Parallel to reasoning_chain —
+    # unset steps use -1.0. Populated by the parser from [C:0.xx] markers.
+    per_step_confidence: list[float] = field(default_factory=list)
     # Fraction of independent generations that reached the same final answer
     # on this problem (self-consistency, Wang et al. 2022). 1.0 = perfect
     # agreement; 0.0 = no check was run. Training weight multiplies this in,
@@ -89,6 +96,13 @@ class TrainingSample:
     sample_index: int = 0  # which of the K sampled chains this is (debug)
 
     def __post_init__(self):
+        # Sync per-step confidences from the chain if not explicitly provided.
+        # A step's confidence == -1.0 means "no marker emitted by the model" —
+        # preserved here so downstream calibration code can filter them out.
+        if not self.per_step_confidence and self.reasoning_chain:
+            self.per_step_confidence = [
+                float(getattr(s, "confidence", -1.0)) for s in self.reasoning_chain
+            ]
         if not self.content_hash and self.prompt:
             chain_text = "|".join(
                 f"{s.content}::{getattr(s, 'justification', '')}::"
@@ -253,6 +267,11 @@ _LEADING_CONTAM_RE = re.compile(
 
 _TOKEN_RE = re.compile(r'[A-Za-z0-9]+')
 
+# Metacognitive confidence marker: [C:0.85] anywhere in a line.
+# Accepts optional whitespace and 0-1 float. Captured value is stripped from
+# content; last match in a step wins (rarely more than one).
+_CONFIDENCE_RE = re.compile(r'\[\s*[Cc]\s*:\s*([01](?:\.\d+)?|0?\.\d+)\s*\]')
+
 # Refusal patterns — model declined to answer
 _REFUSAL_RE = re.compile(
     r"(?:i\s+can'?t|i\s+cannot|i\s+(?:am|'m)\s+(?:not\s+able|unable)|"
@@ -375,13 +394,30 @@ class ResponseParser:
             if cur_num is not None:
                 content = "\n".join(x for x in cur_content if x).strip()
                 content = re.sub(r'^(?:step\s*\d+\s*[.):\-–—]\s*)', '', content, flags=re.IGNORECASE)
+                # Extract metacognitive confidence marker [C:0.xx] from content
+                # and/or justification. Use the last match (rightmost), strip
+                # all occurrences from the rendered fields.
+                just_raw = " ".join(p for p in cur_just_parts if p).strip()
+                conf_val = -1.0
+                for field_text in (content, just_raw):
+                    m_iter = list(_CONFIDENCE_RE.finditer(field_text))
+                    if m_iter:
+                        try:
+                            v = float(m_iter[-1].group(1))
+                            if 0.0 <= v <= 1.0:
+                                conf_val = v
+                        except ValueError:
+                            pass
+                content = _CONFIDENCE_RE.sub('', content).strip()
+                just_raw = _CONFIDENCE_RE.sub('', just_raw).strip()
                 if content or cur_just_parts or cur_assumptions:
-                    just = " ".join(p for p in cur_just_parts if p).strip() or "implicit"
+                    just = just_raw or "implicit"
                     chain.append(ReasoningStep(
                         step_number=cur_num,
                         content=content,
                         justification=just,
                         assumptions=cur_assumptions[:],
+                        confidence=conf_val,
                     ))
             cur_num = None
             cur_content = []

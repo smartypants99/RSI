@@ -182,6 +182,40 @@ class TrainerConfig:
     training_mode: str = "sft"
     dpo_beta: float = 0.1
 
+    # GRPO (Group Relative Policy Optimization, DeepSeek 2024).
+    # Only used when training_mode == "grpo".
+    #   grpo_group_size: G completions sampled per prompt; rewards normalized within group.
+    #   grpo_clip_eps: PPO-style importance-ratio clip; 0.2 = standard.
+    #   grpo_rollout_refresh_steps: regenerate cached rollouts every N optimizer steps.
+    #   grpo_max_new_tokens: rollout length cap per completion.
+    #   grpo_rollout_temperature / top_p: sampling params for rollouts.
+    grpo_group_size: int = 8
+    grpo_clip_eps: float = 0.2
+    grpo_rollout_refresh_steps: int = 64
+    grpo_max_new_tokens: int = 512
+    grpo_rollout_temperature: float = 1.0
+    grpo_rollout_top_p: float = 0.95
+
+    # Process Reward Model (PRM, Lightman et al. 2023). Dense per-step rewards
+    # for GRPO. When use_prm=True, rl_engine's reward_fn should score every step
+    # via PRM.score_chain() instead of returning an outcome-only scalar.
+    # Trained once per RSI cycle on accumulated samples (<4GB extra VRAM on A6000).
+    use_prm: bool = False
+    prm_lr: float = 1e-4
+    prm_epochs: int = 1
+    # Aggregation passed to make_prm_reward_fn: "min" (Lightman default — punishes
+    # any bad step), "mean", or "last" (~outcome reward).
+    prm_aggregate: str = "min"
+
+    # Metacognitive calibration (metacog_calib).
+    #   enable_calibration_loss — when True, mix per-sample Brier score into
+    #     the SFT objective as an auxiliary penalty (scalar, bounded in [0,1]).
+    #   calibration_loss_weight — lambda on the auxiliary term. 0.1 = ~10%
+    #     weight vs the base CE loss at worst-case Brier.
+    # calibration_ece is always reported for monitoring (no training effect).
+    enable_calibration_loss: bool = False
+    calibration_loss_weight: float = 0.1
+
     def __post_init__(self):
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}")
@@ -199,12 +233,30 @@ class TrainerConfig:
             raise ValueError(f"min_rank ({self.min_rank}) > max_rank ({self.max_rank})")
         if self.lora_rank < self.min_rank:
             raise ValueError(f"lora_rank ({self.lora_rank}) < min_rank ({self.min_rank})")
-        if self.training_mode not in ("sft", "dpo", "mixed"):
+        if self.training_mode not in ("sft", "dpo", "mixed", "grpo"):
             raise ValueError(
-                f"training_mode must be one of 'sft', 'dpo', 'mixed' — got {self.training_mode!r}"
+                f"training_mode must be one of 'sft', 'dpo', 'mixed', 'grpo' — got {self.training_mode!r}"
             )
         if self.dpo_beta <= 0:
             raise ValueError(f"dpo_beta must be > 0, got {self.dpo_beta}")
+        if self.grpo_group_size < 2:
+            raise ValueError(f"grpo_group_size must be >= 2, got {self.grpo_group_size}")
+        if not (0.0 < self.grpo_clip_eps < 1.0):
+            raise ValueError(f"grpo_clip_eps must be in (0, 1), got {self.grpo_clip_eps}")
+        if self.grpo_rollout_refresh_steps < 1:
+            raise ValueError(
+                f"grpo_rollout_refresh_steps must be >= 1, got {self.grpo_rollout_refresh_steps}"
+            )
+        if self.grpo_max_new_tokens < 1:
+            raise ValueError(f"grpo_max_new_tokens must be >= 1, got {self.grpo_max_new_tokens}")
+        if self.prm_aggregate not in ("min", "mean", "last"):
+            raise ValueError(
+                f"prm_aggregate must be one of 'min', 'mean', 'last' — got {self.prm_aggregate!r}"
+            )
+        if self.calibration_loss_weight < 0:
+            raise ValueError(
+                f"calibration_loss_weight must be >= 0, got {self.calibration_loss_weight}"
+            )
 
 
 @dataclass

@@ -13,7 +13,7 @@ import math
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 import logging
 
 import torch
@@ -218,6 +218,18 @@ class TrainingDataset(Dataset):
             if consistency > 0.0:
                 weight = weight * consistency
             entry["sample_weight"] = torch.tensor(weight, dtype=torch.float32)
+            # Per-sample Brier score over its own [C:...] markers, compared
+            # against the sample's ground-truth correctness. NaN -> -1 marker
+            # for "no confidences to penalize"; the trainer reads this tensor
+            # and skips the aux loss when the flag is set but no data exists.
+            confs = [c for c in (sample.per_step_confidence or [])
+                     if isinstance(c, (int, float)) and 0.0 <= c <= 1.0]
+            if confs:
+                gt = 1.0 if getattr(sample, "ground_truth_verified", False) else 0.0
+                brier = sum((c - gt) ** 2 for c in confs) / len(confs)
+            else:
+                brier = -1.0  # sentinel: no calibration data for this sample
+            entry["calibration_brier"] = torch.tensor(brier, dtype=torch.float32)
             self._encoded.append(entry)
 
     def __len__(self):
@@ -340,6 +352,63 @@ class TrainingMetrics:
     training_mode: str = "sft"
     dpo_pairs_used: int = 0
     avg_reward_margin: float = 0.0  # mean (logp_chosen - logp_rejected) in final pass
+    # GRPO-specific (0.0 when not GRPO).
+    grpo_prompts_used: int = 0
+    grpo_group_size: int = 0
+    avg_reward: float = 0.0        # mean reward across all rollouts
+    avg_reward_std: float = 0.0    # mean within-group reward std (advantage denom)
+    rollout_refreshes: int = 0
+    # Metacognitive calibration (metacog_calib).
+    # calibration_ece: Expected Calibration Error over per-step [C:x] markers
+    #   found in training data this cycle. NaN when no markers were present.
+    # calibration_brier: mean Brier score over the same population.
+    # calibration_samples: number of (step, correctness) pairs contributing.
+    calibration_ece: float = float("nan")
+    calibration_brier: float = float("nan")
+    calibration_samples: int = 0
+
+
+def _compute_calibration(
+    samples: list["TrainingSample"], num_bins: int = 10
+) -> tuple[float, float, int]:
+    """Compute (ECE, mean Brier, #pairs) from per-step confidences vs. correctness.
+
+    Each reasoning step's confidence is compared against a per-step correctness
+    proxy: the sample's ``ground_truth_verified`` flag (broadcast to all steps).
+    Steps with unset confidence (-1.0) are skipped. Returns (nan, nan, 0) when
+    no markers are available — the system simply didn't emit any, and we don't
+    want to fabricate a calibration score.
+    """
+    confs: list[float] = []
+    correct: list[float] = []
+    for s in samples:
+        gt = 1.0 if getattr(s, "ground_truth_verified", False) else 0.0
+        for c in getattr(s, "per_step_confidence", []) or []:
+            if c is None or c < 0.0 or c > 1.0:
+                continue
+            confs.append(float(c))
+            correct.append(gt)
+    n = len(confs)
+    if n == 0:
+        return float("nan"), float("nan"), 0
+    brier = sum((c - y) ** 2 for c, y in zip(confs, correct)) / n
+    # Bucket into num_bins equal-width bins over [0, 1]; ECE = sum_k (|B_k|/n) * |acc_k - conf_k|
+    bins_conf: list[float] = [0.0] * num_bins
+    bins_acc: list[float] = [0.0] * num_bins
+    bins_cnt: list[int] = [0] * num_bins
+    for c, y in zip(confs, correct):
+        idx = min(int(c * num_bins), num_bins - 1)
+        bins_conf[idx] += c
+        bins_acc[idx] += y
+        bins_cnt[idx] += 1
+    ece = 0.0
+    for k in range(num_bins):
+        if bins_cnt[k] == 0:
+            continue
+        mean_conf = bins_conf[k] / bins_cnt[k]
+        mean_acc = bins_acc[k] / bins_cnt[k]
+        ece += (bins_cnt[k] / n) * abs(mean_acc - mean_conf)
+    return ece, brier, n
 
 
 class CustomLoRATrainer:
@@ -349,11 +418,29 @@ class CustomLoRATrainer:
     This prevents the LoRA-on-LoRA wrapping bug.
     """
 
-    def __init__(self, config: TrainerConfig, model_loader: ModelLoader):
+    def __init__(
+        self,
+        config: TrainerConfig,
+        model_loader: ModelLoader,
+        reward_fn: Optional[Callable[[str, str, "TrainingSample"], float]] = None,
+    ):
         self.config = config
         self.model_loader = model_loader
         self._lora_layers: dict[str, LoRALayer] = {}
         self._original_layers: dict[str, nn.Module] = {}  # Linear or Conv1D
+        # Pluggable reward function for GRPO. Signature:
+        #   reward_fn(prompt: str, completion: str, sample: TrainingSample) -> float
+        # `sample` is the originating TrainingSample (gives access to canonical
+        # answer, domain, check_type, etc.). A later PRM (prm_train) can supply
+        # a process-level reward via this same hook.
+        # Default: canonical-answer grade if available, else 0.0.
+        self._reward_fn = reward_fn
+
+    def set_reward_fn(
+        self, reward_fn: Callable[[str, str, "TrainingSample"], float],
+    ) -> None:
+        """Swap in a new reward function (e.g. a trained PRM from prm_train)."""
+        self._reward_fn = reward_fn
 
     def inject_lora(self, weak_layers: Optional[dict[str, float]] = None) -> None:
         """Inject LoRA layers, removing any existing ones first."""
@@ -463,6 +550,16 @@ class CustomLoRATrainer:
         """
         mode = self.config.training_mode
         pairs = preference_pairs or []
+
+        if mode == "grpo":
+            if not verified_samples:
+                logger.warning("training_mode=grpo but no samples provided — skipping training")
+                return TrainingMetrics(
+                    cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                    samples_used=0, samples_rejected=0,
+                    learning_rate=self.config.learning_rate, training_mode=mode,
+                )
+            return self._train_grpo(verified_samples, cycle)
 
         if mode == "dpo":
             if not pairs:
@@ -575,7 +672,14 @@ class CustomLoRATrainer:
                     sample_weights = batch.get("sample_weight")
                     if sample_weights is not None:
                         sample_weights = sample_weights.to(device)
-                    model_batch = {k: v.to(device) for k, v in batch.items() if k != "sample_weight"}
+                    cal_brier = batch.get("calibration_brier")
+                    if cal_brier is not None:
+                        cal_brier = cal_brier.to(device)
+                    # Strip non-model tensors so HF forward doesn't see them.
+                    model_batch = {
+                        k: v.to(device) for k, v in batch.items()
+                        if k not in ("sample_weight", "calibration_brier")
+                    }
 
                     # Compute per-sample weighted loss instead of scaling batch mean.
                     # HF's outputs.loss averages over all tokens in the batch, making it
@@ -599,7 +703,21 @@ class CustomLoRATrainer:
                         # positions, so we only need valid_tokens for the denominator.
                         valid_tokens = (labels != -100).sum(dim=1).clamp(min=1).float()
                         per_sample_loss = per_token.sum(dim=1) / valid_tokens
-                        loss = (per_sample_loss * sample_weights).mean()
+                        effective_weights = sample_weights
+                        if (self.config.enable_calibration_loss
+                                and cal_brier is not None
+                                and self.config.calibration_loss_weight > 0):
+                            # Upweight samples the model's confidences missed —
+                            # Brier in [0,1] (sentinel -1 means "no markers"; mask to 0).
+                            # Factor = 1 + lambda * brier, so λ=0.1 gives at most +10%.
+                            brier_clean = torch.where(
+                                cal_brier >= 0,
+                                cal_brier,
+                                torch.zeros_like(cal_brier),
+                            )
+                            cal_factor = 1.0 + self.config.calibration_loss_weight * brier_clean
+                            effective_weights = sample_weights * cal_factor
+                        loss = (per_sample_loss * effective_weights).mean()
                         # Track unweighted loss for metrics — weighted loss varies with
                         # confidence distribution, making cross-cycle comparison unreliable.
                         unweighted_loss = per_sample_loss.mean().item()
@@ -669,6 +787,7 @@ class CustomLoRATrainer:
 
         avg_loss = total_loss / max(batch_count, 1)
         ranks = [l.rank for l in self._lora_layers.values()]
+        ece, brier, cal_n = _compute_calibration(verified_samples)
         return TrainingMetrics(
             cycle=cycle,
             avg_loss=avg_loss,
@@ -679,6 +798,9 @@ class CustomLoRATrainer:
             learning_rate=cycle_lr,
             lora_layers_injected=len(self._lora_layers),
             avg_rank=sum(ranks) / len(ranks) if ranks else 0,
+            calibration_ece=ece,
+            calibration_brier=brier,
+            calibration_samples=cal_n,
         )
 
     # ------------------------------------------------------------------
@@ -960,6 +1082,437 @@ class CustomLoRATrainer:
         return self._train_inner(
             dataset, model, tokenizer, cycle, batch_size,
             samples_rejected, verified_samples, cycle_lr, retry_on_oom=True,
+        )
+
+    # ------------------------------------------------------------------
+    # GRPO: Group Relative Policy Optimization (DeepSeek 2024)
+    # ------------------------------------------------------------------
+    #
+    # For each prompt, sample G completions from the current policy π, score
+    # each with a reward function, normalize rewards within the group to get
+    # advantages, and take a PPO-clipped policy-gradient step using π_old
+    # (the policy at rollout time) as the importance-sampling base.
+    #
+    # Memory footprint on a 48GB A6000 with an 8B bf16 model:
+    #   base weights       ~16 GB
+    #   grad checkpointing ~ 2 GB activations per fwd
+    #   LoRA params/grads  ~ 0.5 GB
+    #   rollout cache      ~ G * max_new_tokens * 8B  (CPU-side, negligible VRAM)
+    #   per-step forward   1 policy pass + 1 reference pass (no-grad, LoRA zeroed)
+    # Recommended: grpo_group_size=8, batch_size=1 prompt per step, grad-accum=16,
+    # max_new_tokens<=512. OOM-retry halves per-step prompt count (down to 1) then
+    # halves G (down to 2) before giving up.
+
+    def _default_reward(self, prompt: str, completion: str, sample: "TrainingSample") -> float:
+        """Default GRPO reward: canonical-answer grade if available, else 0.
+
+        Grade maps to {0.0, 1.0}. If the sample carries no canonical answer (no
+        expected_answer / no ground_truth_check_type), we return 0 — GRPO then
+        relies entirely on within-group normalization, which with all-zero rewards
+        collapses to a zero advantage (no update). Callers who want dense reward
+        without canonical answers must inject a reward_fn via set_reward_fn.
+        """
+        expected = getattr(sample, "expected_answer", "") or ""
+        if not expected:
+            return 0.0
+        # Build an ephemeral "sample" that mirrors the rollout, so the verifier's
+        # grader dispatches on the real completion rather than the cached response.
+        try:
+            from ..verifier.verifier import grade_against_canonical as _grade
+            from ..generator.data_generator import TrainingSample as _TS
+            probe = _TS(
+                prompt=sample.prompt,
+                response=completion,
+                domain=sample.domain,
+                ground_truth_check_type=getattr(sample, "ground_truth_check_type", "") or "",
+            )
+            ok, _ = _grade(probe, expected, sample.domain or "")
+            return 1.0 if ok else 0.0
+        except Exception as e:
+            logger.debug(f"default reward grading failed: {e}")
+            return 0.0
+
+    def _score_rollout(self, prompt: str, completion: str, sample: "TrainingSample") -> float:
+        fn = self._reward_fn if self._reward_fn is not None else self._default_reward
+        try:
+            r = float(fn(prompt, completion, sample))
+        except Exception as e:
+            logger.warning(f"reward_fn raised ({type(e).__name__}: {e}); returning 0")
+            return 0.0
+        if not math.isfinite(r):
+            return 0.0
+        return r
+
+    @torch.no_grad()
+    def _sample_rollouts(
+        self, prompts: list[str], samples: list["TrainingSample"], G: int,
+    ) -> list[list[dict]]:
+        """Generate G completions per prompt using model.generate.
+
+        Returns a list of length len(prompts), each a list of G dicts with:
+          {"completion_text", "input_ids", "completion_ids", "reward"}
+
+        Runs in eval mode with gradient checkpointing disabled (both incompatible
+        with generate()); the caller is responsible for restoring train state.
+        """
+        model = self.model_loader.model
+        tokenizer = self.model_loader.tokenizer
+        device = self.model_loader.device
+
+        was_training = model.training
+        had_cache = model.config.use_cache
+        gc_was_on = getattr(model, "is_gradient_checkpointing", False) or False
+        if gc_was_on and hasattr(model, "gradient_checkpointing_disable"):
+            model.gradient_checkpointing_disable()
+        model.eval()
+        model.config.use_cache = True
+
+        max_new = self.config.grpo_max_new_tokens
+        temperature = self.config.grpo_rollout_temperature
+        top_p = self.config.grpo_rollout_top_p
+        eos_id = tokenizer.eos_token_id
+        pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else eos_id
+
+        out: list[list[dict]] = []
+        try:
+            for prompt, sample in zip(prompts, samples):
+                enc = tokenizer(
+                    prompt + "\n\n", add_special_tokens=True, return_tensors="pt",
+                ).to(device)
+                input_ids = enc["input_ids"]
+                attn = enc["attention_mask"]
+                prompt_len = input_ids.shape[1]
+                # Replicate G times in the batch dim for one generate() call.
+                batch_input = input_ids.expand(G, -1).contiguous()
+                batch_attn = attn.expand(G, -1).contiguous()
+                gen = model.generate(
+                    input_ids=batch_input,
+                    attention_mask=batch_attn,
+                    max_new_tokens=max_new,
+                    do_sample=True,
+                    temperature=temperature,
+                    top_p=top_p,
+                    pad_token_id=pad_id,
+                    eos_token_id=eos_id,
+                )
+                group: list[dict] = []
+                for g in range(G):
+                    full = gen[g]
+                    completion_ids = full[prompt_len:]
+                    # Trim trailing pads
+                    if pad_id is not None:
+                        nonpad = (completion_ids != pad_id).nonzero(as_tuple=False)
+                        if nonpad.numel() > 0:
+                            completion_ids = completion_ids[: int(nonpad[-1].item()) + 1]
+                        else:
+                            completion_ids = completion_ids[:0]
+                    completion_text = tokenizer.decode(
+                        completion_ids, skip_special_tokens=True,
+                    )
+                    reward = self._score_rollout(prompt, completion_text, sample)
+                    group.append({
+                        "completion_text": completion_text,
+                        "input_ids": input_ids[0].detach().cpu(),
+                        "completion_ids": completion_ids.detach().cpu(),
+                        "reward": reward,
+                    })
+                out.append(group)
+        finally:
+            if gc_was_on and hasattr(model, "gradient_checkpointing_enable"):
+                model.gradient_checkpointing_enable()
+            model.config.use_cache = had_cache
+            if was_training:
+                model.train()
+        return out
+
+    def _grpo_build_batch(self, rollouts_for_prompt: list[dict]) -> Optional[dict]:
+        """Pack G rollouts for one prompt into a padded batch tensor.
+
+        Returns dict with input_ids/attention_mask/labels/advantages, all on device,
+        or None if the group has degenerate rewards (std ≈ 0 → zero advantages).
+        """
+        device = self.model_loader.device
+        tokenizer = self.model_loader.tokenizer
+        pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+        max_len_cap = self.model_loader.config.max_seq_length
+
+        rewards = torch.tensor([r["reward"] for r in rollouts_for_prompt], dtype=torch.float32)
+        std = float(rewards.std(unbiased=False).item())
+        mean = float(rewards.mean().item())
+        # If all rewards equal, advantage is zero and this group produces no signal.
+        if std < 1e-6:
+            return None
+        advantages = (rewards - mean) / (std + 1e-6)
+
+        seqs = []
+        labels_list = []
+        attns = []
+        for r in rollouts_for_prompt:
+            prompt_ids = r["input_ids"]
+            comp_ids = r["completion_ids"]
+            prompt_len = prompt_ids.shape[0]
+            combined = torch.cat([prompt_ids, comp_ids])
+            if combined.shape[0] > max_len_cap:
+                combined = combined[:max_len_cap]
+            labels = combined.clone()
+            labels[:prompt_len] = -100
+            seqs.append(combined)
+            labels_list.append(labels)
+            attns.append(torch.ones_like(combined))
+
+        max_len = max(s.shape[0] for s in seqs)
+        def _pad(t, val):
+            if t.shape[0] == max_len:
+                return t
+            pad = torch.full((max_len - t.shape[0],), val, dtype=t.dtype)
+            return torch.cat([t, pad])
+
+        input_ids = torch.stack([_pad(s, pad_id) for s in seqs]).to(device)
+        labels = torch.stack([_pad(l, -100) for l in labels_list]).to(device)
+        attention_mask = torch.stack([_pad(a, 0) for a in attns]).to(device)
+        return {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "advantages": advantages.to(device),
+            "reward_mean": mean,
+            "reward_std": std,
+        }
+
+    @staticmethod
+    def _per_token_logprobs(logits: torch.Tensor, labels: torch.Tensor):
+        """Returns (per_token_logp, mask): both (batch, seq-1).
+
+        per_token_logp has zeros at masked positions; mask is bool.
+        """
+        shift_logits = logits[:, :-1, :]
+        shift_labels = labels[:, 1:]
+        mask = (shift_labels != -100)
+        safe = shift_labels.masked_fill(~mask, 0)
+        logp = F.log_softmax(shift_logits.float(), dim=-1)
+        tok_lp = logp.gather(-1, safe.unsqueeze(-1)).squeeze(-1)
+        tok_lp = tok_lp * mask.float()
+        return tok_lp, mask
+
+    def _train_grpo(
+        self, verified_samples: list["TrainingSample"], cycle: int,
+    ) -> TrainingMetrics:
+        model = self.model_loader.model
+        lora_params = [p for p in model.parameters() if p.requires_grad]
+        if not lora_params:
+            logger.warning("No trainable parameters for GRPO (inject_lora first)")
+            return TrainingMetrics(
+                cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                samples_used=0, samples_rejected=0,
+                learning_rate=self.config.learning_rate, training_mode="grpo",
+            )
+
+        G = self.config.grpo_group_size
+        clip_eps = self.config.grpo_clip_eps
+        refresh = self.config.grpo_rollout_refresh_steps
+        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+
+        # Build prompt list from verified samples. We reuse samples as the prompt
+        # source and preserve them for canonical-grading during reward scoring.
+        prompts = [s.prompt for s in verified_samples]
+
+        optimizer = torch.optim.AdamW(
+            lora_params, lr=cycle_lr, weight_decay=self.config.weight_decay,
+        )
+        # Heuristic step count: one optimizer step per (grad_accum) prompts, per epoch.
+        accum = self.config.gradient_accumulation_steps
+        prompts_per_epoch = len(prompts)
+        total_steps = max(
+            1, (prompts_per_epoch * self.config.num_epochs) // max(accum, 1),
+        )
+        warmup_steps = int(total_steps * self.config.warmup_ratio)
+        scheduler = self._build_scheduler(optimizer, warmup_steps, total_steps)
+
+        total_loss = 0.0
+        last_loss = 0.0
+        step_count = 0
+        accum_count = 0
+        batch_count = 0
+        reward_sum = 0.0
+        reward_count = 0
+        group_std_sum = 0.0
+        group_std_count = 0
+        rollout_refreshes = 0
+
+        # Rollout cache: prompt_idx -> {"rollouts": list[dict], "pi_old_logp": list[Tensor]}
+        # pi_old_logp is the *detached* sum-log-prob of each completion under the
+        # policy at rollout time — used as the PPO importance-sampling base.
+        cache: dict[int, dict] = {}
+
+        def _refresh_rollouts(prompt_idx: int):
+            nonlocal rollout_refreshes
+            grp = self._sample_rollouts(
+                [prompts[prompt_idx]], [verified_samples[prompt_idx]], G,
+            )[0]
+            # Compute π_old log-probs right now, under current (but about-to-be-detached) policy.
+            batch = self._grpo_build_batch(grp)
+            pi_old = None
+            if batch is not None:
+                model.eval()
+                with torch.no_grad():
+                    out = model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                    )
+                    tok_lp, mask = self._per_token_logprobs(out.logits, batch["labels"])
+                    # Sum per sequence. Keep per-token for ratio later.
+                    pi_old = tok_lp.detach()
+                    pi_old_mask = mask.detach()
+                model.train()
+            cache[prompt_idx] = {
+                "rollouts": grp,
+                "batch": batch,
+                "pi_old_tok_lp": pi_old,
+                "pi_old_mask": pi_old_mask if batch is not None else None,
+            }
+            rollout_refreshes += 1
+
+        model.train()
+        model.config.use_cache = False
+        torch.cuda.empty_cache()
+        if hasattr(model, "gradient_checkpointing_enable"):
+            model.gradient_checkpointing_enable()
+
+        try:
+            global_step = 0
+            for epoch in range(self.config.num_epochs):
+                order = list(range(len(prompts)))
+                if self.config.num_epochs > 1:
+                    import random as _r
+                    _r.shuffle(order)
+                for pidx in order:
+                    # (Re)sample rollouts if cache stale. "Stale" = never sampled,
+                    # or the last refresh was more than `refresh` optimizer steps ago.
+                    entry = cache.get(pidx)
+                    if entry is None or (global_step > 0 and global_step % refresh == 0 and entry.get("step_at_rollout", -1) != global_step):
+                        # Refresh must happen outside the train() forward path — done above
+                        # under torch.no_grad() in _refresh_rollouts.
+                        _refresh_rollouts(pidx)
+                        cache[pidx]["step_at_rollout"] = global_step
+                        entry = cache[pidx]
+
+                    batch = entry["batch"]
+                    if batch is None:
+                        # Degenerate group (all same reward) — skip; advantages zero.
+                        continue
+
+                    # Track reward stats for metrics.
+                    reward_sum += batch["reward_mean"] * G
+                    reward_count += G
+                    group_std_sum += batch["reward_std"]
+                    group_std_count += 1
+
+                    # Policy forward WITH grads (LoRA active).
+                    outputs = model(
+                        input_ids=batch["input_ids"],
+                        attention_mask=batch["attention_mask"],
+                    )
+                    tok_lp, mask = self._per_token_logprobs(outputs.logits, batch["labels"])
+                    pi_old_tok = entry["pi_old_tok_lp"]
+                    pi_old_mask = entry["pi_old_mask"]
+                    # Shapes may differ if refresh happened with different max_len
+                    # for this group vs current forward — align to min length.
+                    min_len = min(tok_lp.shape[1], pi_old_tok.shape[1])
+                    tok_lp_c = tok_lp[:, :min_len]
+                    pi_old_c = pi_old_tok[:, :min_len]
+                    mask_c = mask[:, :min_len].float()
+
+                    # PPO ratio per token; clipped surrogate per token, then
+                    # masked-average per sequence, then advantage-weighted mean.
+                    ratio = torch.exp(tok_lp_c - pi_old_c)
+                    adv = batch["advantages"].unsqueeze(-1)  # (G, 1)
+                    unclipped = ratio * adv
+                    clipped = torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * adv
+                    per_tok_loss = -torch.min(unclipped, clipped)
+                    # Masked mean per sequence, then mean over group.
+                    seq_tok_count = mask_c.sum(dim=1).clamp(min=1.0)
+                    per_seq_loss = (per_tok_loss * mask_c).sum(dim=1) / seq_tok_count
+                    loss = per_seq_loss.mean()
+
+                    unweighted_loss = float(loss.detach().item())
+                    loss = loss / accum
+                    loss.backward()
+                    accum_count += 1
+                    last_loss = unweighted_loss
+                    total_loss += unweighted_loss
+                    batch_count += 1
+
+                    del outputs, tok_lp, ratio, unclipped, clipped, per_tok_loss
+
+                    if accum_count % accum == 0:
+                        torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
+                        optimizer.step()
+                        scheduler.step()
+                        optimizer.zero_grad()
+                        step_count += 1
+                        global_step += 1
+
+            if accum_count % accum != 0:
+                torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                step_count += 1
+        except torch.cuda.OutOfMemoryError:
+            logger.warning(f"OOM during GRPO (G={G})")
+            import gc
+            try:
+                del optimizer, scheduler
+            except UnboundLocalError:
+                pass
+            if hasattr(model, "gradient_checkpointing_disable"):
+                model.gradient_checkpointing_disable()
+            model.config.use_cache = True
+            model.eval()
+            gc.collect()
+            torch.cuda.empty_cache()
+            # Retry with halved G (min 2). We don't recurse more than once.
+            if G > 2:
+                new_G = max(2, G // 2)
+                logger.warning(f"  Retrying GRPO with grpo_group_size={new_G}")
+                old_G = self.config.grpo_group_size
+                self.config.grpo_group_size = new_G
+                try:
+                    return self._train_grpo(verified_samples, cycle)
+                finally:
+                    self.config.grpo_group_size = old_G
+            raise
+        finally:
+            try:
+                del optimizer, scheduler
+            except UnboundLocalError:
+                pass
+            if hasattr(model, "gradient_checkpointing_disable"):
+                model.gradient_checkpointing_disable()
+            model.config.use_cache = True
+            model.eval()
+            torch.cuda.empty_cache()
+
+        avg_loss = total_loss / max(batch_count, 1)
+        avg_reward = reward_sum / max(reward_count, 1)
+        avg_std = group_std_sum / max(group_std_count, 1)
+        ranks = [l.rank for l in self._lora_layers.values()]
+        return TrainingMetrics(
+            cycle=cycle,
+            avg_loss=avg_loss,
+            final_loss=last_loss,
+            steps=step_count,
+            samples_used=len(verified_samples),
+            samples_rejected=0,
+            learning_rate=cycle_lr,
+            lora_layers_injected=len(self._lora_layers),
+            avg_rank=sum(ranks) / len(ranks) if ranks else 0,
+            training_mode="grpo",
+            grpo_prompts_used=len(prompts),
+            grpo_group_size=G,
+            avg_reward=avg_reward,
+            avg_reward_std=avg_std,
+            rollout_refreshes=rollout_refreshes,
         )
 
     def _build_scheduler(self, optimizer, warmup_steps: int, total_steps: int):

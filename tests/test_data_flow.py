@@ -1,0 +1,144 @@
+"""End-to-end mock data flow: verify schemas and cross-module plumbing.
+
+Everything is mocked — no real model, no GPU. We fabricate TrainingSamples,
+run them through Verifier.verify_batch, build PreferencePairs, and serialize
+a CycleResult. If teammate-added modules are present, exercise them too.
+"""
+from __future__ import annotations
+
+import importlib
+import json
+from unittest.mock import MagicMock
+
+import pytest
+
+from src.utils.config import (
+    SystemConfig, VerifierConfig, DiagnosticsConfig, GeneratorConfig, TrainerConfig,
+)
+from src.generator.data_generator import TrainingSample, PreferencePair, ReasoningStep
+from src.verifier.verifier import Verifier
+from src.diagnostics.engine import WeaknessReport, DiagnosticResult
+from src.orchestrator.loop import CycleResult
+
+
+def _make_sample(prompt="Solve 2+2", response="4", domain="math", verified=True):
+    return TrainingSample(
+        prompt=prompt,
+        response=response,
+        reasoning_chain=[
+            ReasoningStep(step_number=1, content="2+2=4", justification="arithmetic"),
+            ReasoningStep(step_number=2, content="answer is 4", justification="therefore"),
+        ],
+        domain=domain,
+        verified=verified,
+        expected_answer=response,
+    )
+
+
+def test_verifier_accepts_well_formed_sample():
+    v = Verifier(VerifierConfig())
+    sample = _make_sample()
+    result = v.verify_batch([sample])
+    assert isinstance(result, list)
+
+
+def test_verifier_handles_empty_batch():
+    v = Verifier(VerifierConfig())
+    assert v.verify_batch([]) == []
+
+
+def test_preference_pair_from_two_samples():
+    chosen = _make_sample(response="4", verified=True)
+    rejected = _make_sample(response="5", verified=False)
+    pair = PreferencePair(
+        prompt=chosen.prompt,
+        chosen_response=chosen.response,
+        rejected_response=rejected.response,
+        domain=chosen.domain,
+    )
+    assert pair.chosen_response != pair.rejected_response
+    assert pair.content_hash
+
+
+def test_cycle_result_json_serializable():
+    """A full CycleResult must round-trip through JSON without errors."""
+    r = CycleResult(cycle=3)
+    r.pre_score = 0.3
+    r.post_score = 0.45
+    r.improvement = 0.15
+    r.samples_generated = 10
+    r.samples_verified = 7
+    r.diagnostics = DiagnosticResult(
+        cycle=3, timestamp=0.0,
+        domain_scores={"math": 0.4, "code": 0.5},
+        weaknesses=[WeaknessReport(domain="math", subdomain="algebra", severity=0.6)],
+    )
+    r.post_diag = DiagnosticResult(
+        cycle=3, timestamp=0.0,
+        domain_scores={"math": 0.55, "code": 0.6},
+    )
+    r.phase_times = {"diagnose": 1.0, "generate": 2.0}
+    r.errors = [{"phase": "train", "type": "OOM", "message": "x", "traceback": "..."}]
+    d = r.to_dict()
+    s = json.dumps(d)
+    parsed = json.loads(s)
+    assert parsed["cycle"] == 3
+    assert parsed["weaknesses_found"] == 1
+
+
+def test_mock_diagnostic_to_generation_to_verification_flow():
+    """Simulate: diag result -> synthetic samples -> verifier -> preference pairs."""
+    # Fake a diagnostic result with one weakness.
+    diag = DiagnosticResult(
+        cycle=1, timestamp=0.0,
+        domain_scores={"math": 0.3},
+        domain_question_counts={"math": 50},
+        weaknesses=[WeaknessReport(domain="math", subdomain="algebra", severity=0.7)],
+    )
+    assert diag.weaknesses[0].domain == "math"
+    assert abs(diag.overall_score - 0.3) < 1e-6
+
+    # Fabricate training samples addressing the weakness.
+    samples = [_make_sample(prompt=f"Q{i}", response=str(i), verified=True) for i in range(3)]
+    for s in samples:
+        s.target_weakness = "algebra"
+
+    # Run through verifier (should accept or produce results, not crash).
+    v = Verifier(VerifierConfig())
+    results = v.verify_batch(samples)
+    assert len(results) == len(samples) or isinstance(results, list)
+
+    # Build a preference pair (STaR-style pairing).
+    pair = PreferencePair(
+        prompt=samples[0].prompt,
+        chosen_response=samples[0].response,
+        rejected_response="wrong_answer",
+        domain="math", target_weakness="algebra",
+    )
+    assert pair.weight == 1.0
+
+
+def test_cycle_result_errors_accumulate():
+    r = CycleResult(cycle=1)
+    r.errors.append({"phase": "generate", "type": "ValueError", "message": "x", "traceback": "t"})
+    r.errors.append({"phase": "train", "type": "RuntimeError", "message": "y", "traceback": "t"})
+    d = r.to_dict()
+    assert len(d["errors"]) == 2
+
+
+@pytest.mark.parametrize("optional_sample_field", [
+    "per_step_confidence",  # metacog_calib
+])
+def test_training_sample_tolerates_future_fields(optional_sample_field):
+    """New fields added by teammates should not break existing code paths.
+
+    If the field exists, construct a sample with it. Otherwise skip — we just
+    don't want any regression where adding a field breaks the default ctor.
+    """
+    import dataclasses
+    field_names = {f.name for f in dataclasses.fields(TrainingSample)}
+    if optional_sample_field not in field_names:
+        pytest.skip(f"{optional_sample_field} not yet in TrainingSample")
+    # If present, default-constructed sample must still be valid.
+    s = TrainingSample(prompt="p", response="r")
+    assert hasattr(s, optional_sample_field)

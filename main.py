@@ -70,11 +70,38 @@ def main():
     parser.add_argument("--warmup-ratio", type=float, default=None,
                         help="Warmup ratio (default: 0.1)")
     parser.add_argument("--training-mode", default=None,
-                        choices=["sft", "dpo", "mixed"],
+                        choices=["sft", "dpo", "mixed", "grpo"],
                         help="Trainer objective: sft (positives only, default), "
-                             "dpo (preference pairs), mixed (SFT then DPO per cycle)")
+                             "dpo (preference pairs), mixed (SFT then DPO per cycle), "
+                             "grpo (group-relative policy optimization, DeepSeek-R1)")
     parser.add_argument("--dpo-beta", type=float, default=None,
                         help="DPO KL regularization strength (default: 0.1)")
+    parser.add_argument("--grpo-group-size", type=int, default=None,
+                        help="GRPO: completions sampled per prompt (default: 8)")
+    parser.add_argument("--grpo-clip-eps", type=float, default=None,
+                        help="GRPO: importance-ratio clip epsilon (default: 0.2)")
+    parser.add_argument("--grpo-rollout-refresh-steps", type=int, default=None,
+                        help="GRPO: refresh cached rollouts every N optimizer steps (default: 64)")
+    parser.add_argument("--grpo-max-new-tokens", type=int, default=None,
+                        help="GRPO: max tokens per sampled completion (default: 512)")
+    parser.add_argument("--grpo-rollout-temperature", type=float, default=None,
+                        help="GRPO: sampling temperature for rollouts (default: 1.0)")
+    parser.add_argument("--grpo-rollout-top-p", type=float, default=None,
+                        help="GRPO: sampling top-p for rollouts (default: 0.95)")
+
+    # PRM (Process Reward Model) — dense per-step rewards for GRPO
+    parser.add_argument("--use-prm", action="store_true",
+                        help="Train a PRM each cycle and use it as GRPO reward_fn (requires --training-mode grpo)")
+    parser.add_argument("--prm-lr", type=float, default=None,
+                        help="PRM head learning rate (default: 1e-4)")
+    parser.add_argument("--prm-epochs", type=int, default=None,
+                        help="PRM training epochs per cycle (default: 1)")
+
+    # Metacognitive calibration
+    parser.add_argument("--enable-calibration-loss", action="store_true",
+                        help="Weight training loss by per-step Brier score (rewards calibrated confidences)")
+    parser.add_argument("--calibration-loss-weight", type=float, default=None,
+                        help="Lambda on the calibration auxiliary term (default: 0.1)")
 
     # vLLM
     parser.add_argument("--use-vllm", action="store_true",
@@ -168,6 +195,28 @@ def main():
         config.trainer.training_mode = args.training_mode
     if args.dpo_beta is not None:
         config.trainer.dpo_beta = args.dpo_beta
+    if args.grpo_group_size is not None:
+        config.trainer.grpo_group_size = args.grpo_group_size
+    if args.grpo_clip_eps is not None:
+        config.trainer.grpo_clip_eps = args.grpo_clip_eps
+    if args.grpo_rollout_refresh_steps is not None:
+        config.trainer.grpo_rollout_refresh_steps = args.grpo_rollout_refresh_steps
+    if args.grpo_max_new_tokens is not None:
+        config.trainer.grpo_max_new_tokens = args.grpo_max_new_tokens
+    if args.grpo_rollout_temperature is not None:
+        config.trainer.grpo_rollout_temperature = args.grpo_rollout_temperature
+    if args.grpo_rollout_top_p is not None:
+        config.trainer.grpo_rollout_top_p = args.grpo_rollout_top_p
+    if args.use_prm:
+        config.trainer.use_prm = True
+    if args.prm_lr is not None:
+        config.trainer.prm_lr = args.prm_lr
+    if args.prm_epochs is not None:
+        config.trainer.prm_epochs = args.prm_epochs
+    if args.enable_calibration_loss:
+        config.trainer.enable_calibration_loss = True
+    if args.calibration_loss_weight is not None:
+        config.trainer.calibration_loss_weight = args.calibration_loss_weight
     config.trainer.__post_init__()
 
     # vLLM mode

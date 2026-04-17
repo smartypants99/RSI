@@ -24,6 +24,7 @@ from .ground_truth import (
     total_curated_count,
     GroundTruthQuestion,
 )
+from .curriculum import CurriculumState, DEFAULT_CLASSES
 
 logger = logging.getLogger(__name__)
 
@@ -1071,6 +1072,14 @@ class DiagnosticsEngine:
         # across cycles; probes get a fresh rng each cycle for variety.
         self._holdout_fraction: float = 0.15
         self._ground_truth_holdout: dict[str, list[GroundTruthQuestion]] = {}
+        # Open-ended curriculum — problem classes at the Zone of Proximal
+        # Development, with per-class solve-rate history across cycles. Lives
+        # here so the engine can query it first and feed per-question results
+        # back for retirement / expansion decisions.
+        self.curriculum = CurriculumState.fresh(DEFAULT_CLASSES)
+        # Fraction of per-domain questions drawn from curriculum (rest fall
+        # back to ground-truth bank + legacy templates).
+        self._curriculum_share: float = 0.6
 
     def set_model_score(self, score: float):
         """Set current model performance score for adaptive curriculum difficulty.
@@ -1270,6 +1279,7 @@ class DiagnosticsEngine:
         if len(responses) < len(batch_prompts):
             responses = list(responses) + [""] * (len(batch_prompts) - len(responses))
 
+        curriculum_results: list[tuple[str, int, bool]] = []
         for q, response in zip(questions, responses):
             # Ground-truth questions carry a check_method — grade with the
             # rigorous dispatcher (sympy / sandboxed unit tests / exact MC /
@@ -1279,6 +1289,10 @@ class DiagnosticsEngine:
                 correct = self._check_ground_truth(q, response)
             else:
                 correct = self._check_answer(response, q["expected"], q["check_type"])
+            if q.get("_class_id") is not None and q.get("_difficulty_int") is not None:
+                curriculum_results.append(
+                    (q["_class_id"], int(q["_difficulty_int"]), bool(correct))
+                )
             confidence = self._estimate_confidence(response)
             evidence.append({
                 "question": q["prompt"],
@@ -1294,6 +1308,11 @@ class DiagnosticsEngine:
 
         correct_count = sum(1 for e in evidence if e["correct"])
         score = correct_count / len(evidence) if evidence else 0.0
+        if curriculum_results:
+            try:
+                self.curriculum.record_results(curriculum_results)
+            except Exception as e:
+                logger.warning(f"  curriculum.record_results failed: {e}")
         return score, evidence
 
     def _generate_questions(self, domain: str, cycle: int) -> list[dict]:
@@ -1321,6 +1340,28 @@ class DiagnosticsEngine:
         target = clamped
 
         questions: list[dict] = []
+
+        # --- Open-ended curriculum FIRST. Picks classes at the ZPD (frontier
+        #     solve-rate 30-70%) so the diagnostic keeps tracking capability
+        #     instead of repeatedly probing solved problems. Falls through to
+        #     the ground-truth bank + templates below for coverage.
+        curr_target = max(0, int(round(target * self._curriculum_share)))
+        if curr_target > 0:
+            curr_rng = random.Random(int.from_bytes(
+                hashlib.md5(f"curr:{domain}:{cycle}".encode()).digest()[:4], "big"))
+            try:
+                curr_qs = self.curriculum.pick_frontier(
+                    n=curr_target, rng=curr_rng, domain=domain,
+                )
+            except Exception as e:
+                logger.warning(f"  curriculum.pick_frontier failed: {e}")
+                curr_qs = []
+            for q in curr_qs:
+                h = hashlib.md5((q["prompt"] + "|" + str(q["expected"])).encode()).hexdigest()
+                if h in self._seen_hashes:
+                    continue
+                self._seen_hashes.add(h)
+                questions.append(q)
 
         # --- Ground-truth bank FIRST (curated benchmark-style + programmatic
         #     with verifiable canonical answers). This is the primary signal;

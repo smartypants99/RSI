@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import gc
 import json
+import math
 import shutil
 import signal
 import time
@@ -26,8 +27,24 @@ from ..diagnostics.engine import DiagnosticsEngine, DiagnosticResult, WeaknessRe
 from ..generator.data_generator import DataGenerator
 from ..verifier.verifier import Verifier
 from ..trainer.custom_lora import CustomLoRATrainer, TrainingMetrics
+from .meta import MetaController
 
 logger = logging.getLogger(__name__)
+
+
+def _nan_to_none(x):
+    """Convert NaN floats to None for JSON serialization.
+
+    Distinguishes "metric was not computed" (None) from "metric is 0.0".
+    """
+    if x is None:
+        return None
+    try:
+        if isinstance(x, float) and math.isnan(x):
+            return None
+    except (TypeError, ValueError):
+        return x
+    return x
 
 
 def _summarize_errors(history: list) -> dict:
@@ -156,6 +173,11 @@ class ImprovementLoop:
         self._improvement_ema: float = 0.0
         self._ema_alpha: float = 0.3  # weight for newest observation
 
+        # Meta-improvement layer — learns which config decisions pay off.
+        meta_log = config.orchestrator.output_dir / "meta_decisions.jsonl"
+        initial_lr = getattr(config.trainer, "learning_rate", None)
+        self.meta = MetaController(log_path=meta_log, initial_lr=initial_lr)
+
     def run(self) -> None:
         """Run the full improvement loop with per-cycle fault isolation.
 
@@ -242,6 +264,9 @@ class ImprovementLoop:
                 self._safe_call("progress_dashboard",
                                 lambda: self._save_progress_dashboard(
                                     cycle, result, result.phase_times),
+                                result)
+                self._safe_call("meta_step",
+                                lambda: self._meta_step(cycle, result),
                                 result)
 
                 early_stop, early_reason = False, ""
@@ -423,6 +448,29 @@ class ImprovementLoop:
             # Restore EMA state
             if "improvement_ema" in data:
                 self._improvement_ema = data["improvement_ema"]
+
+            # Restore open-ended curriculum state (solve rates / active /
+            # retired / expanded ceilings). Missing key ⇒ fresh state.
+            if "curriculum" in data:
+                try:
+                    from ..diagnostics.curriculum import CurriculumState, DEFAULT_CLASSES
+                    self.diagnostics.curriculum = CurriculumState.from_dict(
+                        data["curriculum"], DEFAULT_CLASSES,
+                    )
+                except Exception as e:
+                    logger.warning(f"  curriculum restore failed: {e}")
+
+            # Restore meta-controller state
+            if "meta_state" in data and isinstance(data["meta_state"], dict):
+                try:
+                    self.meta.load_state(data["meta_state"])
+                except Exception as e:
+                    logger.warning(f"  meta: failed to restore state: {e}")
+            # Replay the tracker's decision log so paired tests see prior cycles.
+            try:
+                self.meta.tracker.load(self.meta.tracker.log_path)
+            except Exception as e:
+                logger.warning(f"  meta: tracker log replay failed: {e}")
 
             # Restore generation escalation template
             if data.get("custom_solution_template"):
@@ -606,6 +654,27 @@ class ImprovementLoop:
         if self._use_vllm:
             self.model_loader.swap_to_hf_for_training()
         self.trainer.inject_lora(weak_layers=diag.layer_health)
+
+        # 4a. PRM (optional) — train once per cycle on verified samples, then
+        # install as reward_fn for downstream GRPO. Gated by config.trainer.use_prm
+        # and training_mode == "grpo". Failures are isolated: a broken PRM
+        # falls back to outcome-only reward.
+        if (getattr(self.config.trainer, "use_prm", False)
+                and self.config.trainer.training_mode == "grpo"):
+            try:
+                from ..trainer.prm import PRM, make_prm_reward_fn
+                prm = PRM(self.model_loader, self.config.trainer)
+                prm.train_from_samples(verified, cycle=cycle)
+                self.trainer.set_reward_fn(make_prm_reward_fn(prm))
+                logger.info(f"  PRM trained and installed as GRPO reward_fn")
+            except Exception as e:
+                tb = traceback.format_exc()
+                logger.warning(f"  PRM phase failed ({type(e).__name__}): {e} — continuing with default reward")
+                result.errors.append({
+                    "phase": "prm", "type": type(e).__name__,
+                    "message": str(e), "traceback": tb,
+                })
+
         try:
             # DPO preference pairs from the most recent STaR rollout (empty in
             # legacy path or when no problem produced both correct and incorrect
@@ -731,6 +800,83 @@ class ImprovementLoop:
         else:
             logger.info(f"  Held-out eval: {result.eval_score:.3f} (baseline)")
 
+    def _meta_step(self, cycle: int, result: CycleResult) -> None:
+        """End-of-cycle: record outcome into MetaController and apply bounded proposals.
+
+        Proposals are applied only when the current cycle showed non-negative
+        held-out delta; a negative delta triggers revert of the previously
+        applied proposal (ImprovementLoop's next cycle starts from the reverted
+        config).
+        """
+        prev_eval = next(
+            (r.eval_score for r in reversed(self.history[:-1]) if r.eval_score is not None),
+            None,
+        )
+        cfg_snapshot = {
+            "learning_rate": getattr(self.config.trainer, "learning_rate", None),
+            "lora_rank": getattr(self.config.trainer, "lora_rank", None),
+            "consistency_threshold": getattr(
+                self.config.verifier, "consistency_threshold", None
+            ),
+            "verifier_check_weights": dict(
+                getattr(self.config.verifier, "check_weights", {}) or {}
+            ),
+            "generator_template": self.generator._custom_solution_template,
+        }
+        check_scores = None
+        try:
+            # Use training-metrics surrogate: if per-check acceptance stats were
+            # recorded this cycle, feed them in. Absent → no weight update.
+            check_scores = getattr(self.verifier, "_last_check_mean_scores", None)
+        except Exception:
+            check_scores = None
+
+        self.meta.record_cycle(
+            cycle=cycle,
+            config_snapshot=cfg_snapshot,
+            held_out_score=result.eval_score,
+            prev_held_out=prev_eval,
+            verifier_check_scores=check_scores,
+            training_succeeded=bool(
+                result.training_metrics and result.training_metrics.steps > 0
+            ),
+            pre_score=result.pre_score,
+            post_score=result.post_score,
+            full_config=self.config,
+            samples_generated=result.samples_generated,
+            samples_verified=result.samples_verified,
+            training_steps=(
+                result.training_metrics.steps if result.training_metrics else 0
+            ),
+            had_errors=bool(result.errors),
+        )
+
+        # If previous-cycle proposal caused regression, revert first.
+        revert = self.meta.get_revert_target()
+        if revert is not None:
+            logger.warning(f"  meta: reverting previous proposal due to regression")
+            if revert.get("learning_rate") is not None:
+                self.config.trainer.learning_rate = revert["learning_rate"]
+            if revert.get("verifier_check_weights") is not None:
+                self.config.verifier.check_weights = dict(revert["verifier_check_weights"])
+            if revert.get("generator_template") is not None:
+                self.generator.set_custom_solution_template(revert["generator_template"])
+            return
+
+        # Propose updates for next cycle.
+        proposal = self.meta.propose_updates(cfg_snapshot)
+        if not proposal["applied"]:
+            return
+        for line in proposal["reasoning"]:
+            logger.info(f"  meta: {line}")
+        if proposal["learning_rate"] is not None:
+            self.config.trainer.learning_rate = proposal["learning_rate"]
+        if proposal["verifier_check_weights"] is not None:
+            self.config.verifier.check_weights = proposal["verifier_check_weights"]
+        if proposal["generator_template"] is not None:
+            tmpl, _vid = proposal["generator_template"]
+            self.generator.set_custom_solution_template(tmpl)
+
     def _save_progress_dashboard(self, cycle: int, result: CycleResult, phase_times: dict):
         """Write progress.json with structured metrics for external monitoring."""
         output_dir = self.config.orchestrator.output_dir
@@ -764,6 +910,23 @@ class ImprovementLoop:
                 "steps": result.training_metrics.steps if result.training_metrics else 0,
                 "learning_rate": result.training_metrics.learning_rate if result.training_metrics else 0,
                 "lora_layers": result.training_metrics.lora_layers_injected if result.training_metrics else 0,
+            },
+            "calibration": {
+                # ECE/Brier over per-step [C:x] confidences parsed from training
+                # data this cycle. NaN (no markers emitted) is serialized as null
+                # so dashboards can distinguish "no data" from "perfect (0.0)".
+                "ece": _nan_to_none(
+                    result.training_metrics.calibration_ece
+                    if result.training_metrics else None
+                ),
+                "brier": _nan_to_none(
+                    result.training_metrics.calibration_brier
+                    if result.training_metrics else None
+                ),
+                "samples": (
+                    result.training_metrics.calibration_samples
+                    if result.training_metrics else 0
+                ),
             },
             "timing": phase_times,
             "escalations": dict(self._escalation_state),
@@ -1054,6 +1217,12 @@ class ImprovementLoop:
                 "best_checkpoint_cycle": self._best_checkpoint_cycle,
                 "degradation_count": self._degradation_count,
                 "improvement_ema": self._improvement_ema,
+                "meta_state": self.meta.to_dict(),
+                "curriculum": (
+                    self.diagnostics.curriculum.to_dict()
+                    if getattr(self.diagnostics, "curriculum", None) is not None
+                    else {}
+                ),
             }, f, indent=2)
 
         # Clean up empty dirs from failed model saves

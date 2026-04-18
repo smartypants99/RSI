@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 import logging
@@ -500,6 +500,10 @@ class TrainingMetrics:
     calibration_ece: float = float("nan")
     calibration_brier: float = float("nan")
     calibration_samples: int = 0
+    # Optional per-step training loss trajectory. Empty list unless the trainer
+    # was constructed with collect_loss_trajectory=True. Keeps memory small when
+    # the observability path is off.
+    loss_trajectory: list[float] = field(default_factory=list)
 
 
 def _compute_calibration(
@@ -569,6 +573,15 @@ class CustomLoRATrainer:
         # a process-level reward via this same hook.
         # Default: canonical-answer grade if available, else 0.0.
         self._reward_fn = reward_fn
+        # Observability hook: when True, per-batch unweighted losses are
+        # accumulated into `_loss_trajectory` and surfaced via TrainingMetrics.
+        # Off by default to avoid growing lists in long runs.
+        self._collect_loss_trajectory: bool = False
+        self._loss_trajectory: list[float] = []
+
+    def set_collect_loss_trajectory(self, enabled: bool) -> None:
+        """Toggle per-step loss collection. Must be set before `train()`."""
+        self._collect_loss_trajectory = bool(enabled)
 
     def set_reward_fn(
         self, reward_fn: Callable[[str, str, "TrainingSample"], float],
@@ -687,6 +700,9 @@ class CustomLoRATrainer:
         """
         mode = self.config.training_mode
         pairs = preference_pairs or []
+        # Reset loss trajectory accumulator at the start of every train() call
+        # so metrics reflect just this cycle.
+        self._loss_trajectory = []
 
         if mode == "grpo":
             if not verified_samples:
@@ -867,6 +883,8 @@ class CustomLoRATrainer:
                     accum_count += 1
 
                     last_loss = unweighted_loss
+                    if self._collect_loss_trajectory:
+                        self._loss_trajectory.append(float(unweighted_loss))
                     if accum_count % self.config.gradient_accumulation_steps == 0:
                         torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
                         optimizer.step()
@@ -936,6 +954,7 @@ class CustomLoRATrainer:
             calibration_ece=ece,
             calibration_brier=brier,
             calibration_samples=cal_n,
+            loss_trajectory=list(self._loss_trajectory),
         )
 
     # ------------------------------------------------------------------

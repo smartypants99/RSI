@@ -312,6 +312,20 @@ class OrchestratorConfig:
     log_dir: Path = Path("./logs")
     checkpoint_every: int = 1  # save every N cycles
     resume_from: Optional[str] = None  # resume from checkpoint path
+    # --- Observability knobs (cycle2-autopsy). All default-off for BC. ---
+    # Number of times to run held-out eval per cycle. >1 reveals measurement
+    # noise: the spread across repetitions is a lower bound on what a "real"
+    # improvement must exceed.
+    heldout_repetitions: int = 1
+    # Write outputs/cycle_metrics/cycle_N.json with per-sample/per-question
+    # records, training loss trajectory, and STaR internals.
+    write_cycle_metrics: bool = False
+    # Write outputs/cycle_samples/cycle_N.jsonl — all training samples with
+    # prompt/chain/response/expected_answer/verified/notes.
+    write_cycle_samples: bool = False
+    # When True, the trainer populates TrainingMetrics.loss_trajectory with
+    # per-step losses. Small overhead; only collect when we plan to dump it.
+    collect_training_loss_trajectory: bool = False
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -320,6 +334,8 @@ class OrchestratorConfig:
             raise ValueError(f"checkpoint_every must be >= 1, got {self.checkpoint_every}")
         if self.plateau_patience < 1:
             raise ValueError(f"plateau_patience must be >= 1, got {self.plateau_patience}")
+        if self.heldout_repetitions < 1:
+            raise ValueError(f"heldout_repetitions must be >= 1, got {self.heldout_repetitions}")
 
 
 @dataclass

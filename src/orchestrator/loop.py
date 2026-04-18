@@ -76,11 +76,21 @@ class CycleResult:
         self.had_diagnostics: bool = False
         self.eval_score: float | None = None
         self.eval_domain_scores: dict[str, float] = {}
+        # All per-repetition held-out eval scores (length == heldout_repetitions).
+        # When repetitions==1, this is [eval_score]. The spread across
+        # repetitions is a direct measurement-noise estimate.
+        self.eval_scores_all: list[float] = []
         self.diversity_stats: dict = {}
         self.phase_times: dict[str, float] = {}
         # Records non-fatal errors that occurred during the cycle.
         # Each: {"phase": str, "type": str, "message": str, "traceback": str}
         self.errors: list[dict] = []
+        # Observability carry-overs — populated only when orchestrator flags
+        # are set. Kept off CycleResult.to_dict() so they don't bloat progress.
+        self._training_samples: list = []  # list[TrainingSample]
+        self._star_stats: dict = {}
+        self._eval_per_rep_domain_scores: list[dict] = []
+        self._eval_per_rep_per_question: list[list[dict]] = []
 
     @property
     def improved(self) -> bool:
@@ -153,6 +163,10 @@ class ImprovementLoop:
         # canonical dispatcher (contains/math_equiv/code_executes/...).
         self.verifier.set_ground_truth_grader(self.diagnostics._check_answer)
         self.trainer = CustomLoRATrainer(config.trainer, self.model_loader)
+        # Wire observability: collect training loss trajectory when the
+        # orchestrator is asked to (e.g. for cycle_metrics dumps).
+        if getattr(config.orchestrator, "collect_training_loss_trajectory", False):
+            self.trainer.set_collect_loss_trajectory(True)
         self.history: list[CycleResult] = []
         self._plateau_count = 0
         self._escalation_state = {
@@ -258,6 +272,18 @@ class ImprovementLoop:
                                     cycle, result, post_diag=result.post_diag),
                                 result)
                 self._safe_call("log_cycle", lambda: self._log_cycle(result), result)
+                if getattr(self.config.orchestrator, "write_cycle_metrics", False):
+                    self._safe_call(
+                        "cycle_metrics",
+                        lambda: self._write_cycle_metrics(cycle, result),
+                        result,
+                    )
+                if getattr(self.config.orchestrator, "write_cycle_samples", False):
+                    self._safe_call(
+                        "cycle_samples",
+                        lambda: self._write_cycle_samples(cycle, result),
+                        result,
+                    )
                 if cycle % self.config.orchestrator.checkpoint_every == 0:
                     self._safe_call("checkpoint",
                                     lambda: self._save_checkpoint(cycle), result)
@@ -634,6 +660,15 @@ class ImprovementLoop:
         phase_start = time.time()
         verified = self.verifier.verify_batch(samples)
         result.samples_verified = len(verified)
+        # Observability: stash the verified samples + STaR internals for the
+        # optional cycle_metrics / cycle_samples dumps.
+        if getattr(self.config.orchestrator, "write_cycle_samples", False) or \
+                getattr(self.config.orchestrator, "write_cycle_metrics", False):
+            result._training_samples = list(verified)
+        if getattr(self.config.orchestrator, "write_cycle_metrics", False):
+            result._star_stats = dict(
+                getattr(self.generator, "_last_star_stats", {}) or {}
+            )
         pass_rate = len(verified) / len(samples) * 100 if samples else 0
         logger.info(f"  {len(verified)}/{len(samples)} passed verification ({pass_rate:.0f}%)")
 
@@ -786,26 +821,65 @@ class ImprovementLoop:
     HELDOUT_CYCLE_SEED = 0xE7A1
 
     def _eval_phase(self, cycle: int, result: CycleResult):
-        """Run a held-out evaluation on a stable question set."""
-        logger.info(f"[Cycle {cycle}] Phase 5b: HELD-OUT EVAL")
-        eval_diag = self.diagnostics.run(self.HELDOUT_CYCLE_SEED)
-        result.eval_score = eval_diag.overall_score
-        result.eval_domain_scores = dict(eval_diag.domain_scores)
-        # Compare to previous cycle's held-out score (if any) — apples-to-apples
-        # on identical questions.
+        """Run a held-out evaluation on a stable question set.
+
+        When ``orchestrator.heldout_repetitions`` > 1, runs the eval multiple
+        times with the same seed and records every score. The spread across
+        repetitions is a direct lower-bound estimate of measurement noise.
+        """
+        reps = max(1, int(getattr(self.config.orchestrator, "heldout_repetitions", 1)))
+        logger.info(f"[Cycle {cycle}] Phase 5b: HELD-OUT EVAL (x{reps})")
+        eval_diag = None
+        scores: list[float] = []
+        per_rep_domain_scores: list[dict] = []
+        per_rep_per_question: list[list[dict]] = []
+        # Freeze the diagnostics engine so eval samples ONLY from the
+        # deterministic ground-truth bank — curriculum state and templates
+        # would otherwise drift question composition between runs and
+        # inject ~25% of the noise that masked cycle 2's real signal.
+        prev_mode = getattr(self.diagnostics, "_frozen_eval_mode", False)
+        self.diagnostics._frozen_eval_mode = True
+        try:
+            for i in range(reps):
+                try:
+                    d = self.diagnostics.run(self.HELDOUT_CYCLE_SEED)
+                except Exception as e:
+                    logger.warning(f"  held-out rep {i+1}/{reps} failed: {type(e).__name__}: {e}")
+                    continue
+                eval_diag = d  # keep last successful
+                scores.append(d.overall_score)
+                per_rep_domain_scores.append(dict(d.domain_scores))
+                per_rep_per_question.append(list(d.per_question))
+        finally:
+            self.diagnostics._frozen_eval_mode = prev_mode
+        if not scores:
+            return
+        # Use the mean across repetitions as the authoritative eval_score —
+        # this is what downstream comparisons (meta, early-stop) see, and it
+        # is strictly more informative than a single draw.
+        mean_score = sum(scores) / len(scores)
+        result.eval_score = mean_score
+        result.eval_scores_all = scores
+        result.eval_domain_scores = dict(eval_diag.domain_scores) if eval_diag else {}
+        # Cache per-rep observability data for cycle_metrics dump.
+        result._eval_per_rep_domain_scores = per_rep_domain_scores
+        result._eval_per_rep_per_question = per_rep_per_question
         prev_eval = next(
             (r.eval_score for r in reversed(self.history) if r.eval_score is not None),
             None,
         )
-        if prev_eval is not None:
-            delta = result.eval_score - prev_eval
-            symbol = "+" if delta > 0 else ""
+        if len(scores) > 1:
+            spread = max(scores) - min(scores)
             logger.info(
-                f"  Held-out eval: {result.eval_score:.3f} "
-                f"(prev {prev_eval:.3f}, {symbol}{delta:.3f})"
+                f"  Held-out eval: mean={mean_score:.3f} "
+                f"scores={['%.3f' % s for s in scores]} spread={spread:.3f}"
             )
         else:
-            logger.info(f"  Held-out eval: {result.eval_score:.3f} (baseline)")
+            logger.info(f"  Held-out eval: {mean_score:.3f}")
+        if prev_eval is not None:
+            delta = mean_score - prev_eval
+            symbol = "+" if delta > 0 else ""
+            logger.info(f"    (prev {prev_eval:.3f}, {symbol}{delta:.3f})")
 
     def _meta_step(self, cycle: int, result: CycleResult) -> None:
         """End-of-cycle: record outcome into MetaController and apply bounded proposals.
@@ -1246,6 +1320,137 @@ class ImprovementLoop:
         log_path = self.config.orchestrator.log_dir / f"cycle_{result.cycle}.json"
         with open(log_path, "w") as f:
             json.dump(result.to_dict(), f, indent=2)
+
+    def _write_cycle_metrics(self, cycle: int, result: CycleResult) -> None:
+        """Dump a detailed per-cycle metrics record for autopsy.
+
+        Written to ``outputs/cycle_metrics/cycle_N.json``. Independent of
+        progress.json — that file stays dashboard-sized, this one is
+        forensic-sized. Safe no-op if observability was off during the cycle.
+        """
+        out_dir = self.config.orchestrator.output_dir / "cycle_metrics"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        samples_dump = []
+        for s in result._training_samples or []:
+            samples_dump.append({
+                "prompt_hash": getattr(s, "content_hash", ""),
+                "weakness": getattr(s, "target_weakness", ""),
+                "domain": getattr(s, "domain", ""),
+                "n_reasoning_steps": len(getattr(s, "reasoning_chain", []) or []),
+                "consistency_score": getattr(s, "consistency_score", None),
+                "parse_confidence": getattr(s, "parse_confidence", None),
+                "severity_at_generation": getattr(s, "severity_at_generation", None),
+                "expected_answer": getattr(s, "expected_answer", ""),
+                "verified": bool(getattr(s, "verified", False)),
+                "ground_truth_verified": bool(
+                    getattr(s, "ground_truth_verified", False)
+                ),
+                "verification_notes": getattr(s, "verification_notes", ""),
+                "source": getattr(s, "source", ""),
+            })
+
+        pre = result.diagnostics.per_question if result.diagnostics else []
+        post = result.post_diag.per_question if result.post_diag else []
+        pre_map = {q["question_id"]: q for q in pre}
+        post_map = {q["question_id"]: q for q in post}
+        shared_ids = set(pre_map) & set(post_map)
+        questions_moved_right = []  # wrong pre, right post
+        questions_moved_wrong = []  # right pre, wrong post
+        for qid in shared_ids:
+            before = pre_map[qid]["correct"]
+            after = post_map[qid]["correct"]
+            if not before and after:
+                questions_moved_right.append(qid)
+            elif before and not after:
+                questions_moved_wrong.append(qid)
+
+        loss_traj = (
+            list(result.training_metrics.loss_trajectory)
+            if result.training_metrics else []
+        )
+
+        payload = {
+            "cycle": cycle,
+            "timestamp": result.timestamp,
+            "duration_seconds": result.duration,
+            "scores": {
+                "pre": result.pre_score,
+                "post": result.post_score,
+                "improvement": result.improvement,
+                "eval_mean": result.eval_score,
+                "eval_scores_all": result.eval_scores_all,
+                "eval_spread": (
+                    (max(result.eval_scores_all) - min(result.eval_scores_all))
+                    if len(result.eval_scores_all) > 1 else 0.0
+                ),
+            },
+            "eval_per_rep_domain_scores": result._eval_per_rep_domain_scores,
+            "training_samples": samples_dump,
+            "training_loss_trajectory": loss_traj,
+            "star": result._star_stats,
+            "questions": {
+                "pre_right_ids": [q["question_id"] for q in pre if q["correct"]],
+                "pre_wrong_ids": [q["question_id"] for q in pre if not q["correct"]],
+                "post_right_ids": [q["question_id"] for q in post if q["correct"]],
+                "post_wrong_ids": [q["question_id"] for q in post if not q["correct"]],
+                "moved_wrong_to_right": questions_moved_right,
+                "moved_right_to_wrong": questions_moved_wrong,
+            },
+            "diversity_stats": result.diversity_stats,
+            "phase_times": result.phase_times,
+            "errors": [
+                {"phase": e["phase"], "type": e["type"], "message": e["message"]}
+                for e in result.errors
+            ],
+        }
+        path = out_dir / f"cycle_{cycle}.json"
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2, default=str)
+
+    def _write_cycle_samples(self, cycle: int, result: CycleResult) -> None:
+        """Append one JSONL record per training sample to cycle_samples/.
+
+        Written to ``outputs/cycle_samples/cycle_N.jsonl``. Lets reviewers diff
+        sample populations across cycles manually.
+        """
+        out_dir = self.config.orchestrator.output_dir / "cycle_samples"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path = out_dir / f"cycle_{cycle}.jsonl"
+        with open(path, "w") as f:
+            for s in result._training_samples or []:
+                rec = {
+                    "prompt": getattr(s, "prompt", ""),
+                    "response": getattr(s, "response", ""),
+                    "reasoning_chain": [
+                        {
+                            "step_id": getattr(st, "step_id", 0),
+                            "content": getattr(st, "content", ""),
+                            "justification": getattr(st, "justification", ""),
+                            "assumptions": list(getattr(st, "assumptions", []) or []),
+                            "rule": getattr(st, "rule", ""),
+                            "confidence": getattr(st, "confidence", -1.0),
+                        }
+                        for st in getattr(s, "reasoning_chain", []) or []
+                    ],
+                    "expected_answer": getattr(s, "expected_answer", ""),
+                    "verified": bool(getattr(s, "verified", False)),
+                    "ground_truth_verified": bool(
+                        getattr(s, "ground_truth_verified", False)
+                    ),
+                    "verification_notes": getattr(s, "verification_notes", ""),
+                    "rejection_reason": (
+                        "" if getattr(s, "verified", False)
+                        else getattr(s, "verification_notes", "")
+                    ),
+                    "domain": getattr(s, "domain", ""),
+                    "target_weakness": getattr(s, "target_weakness", ""),
+                    "source": getattr(s, "source", ""),
+                    "content_hash": getattr(s, "content_hash", ""),
+                    "consistency_score": getattr(s, "consistency_score", None),
+                    "parse_confidence": getattr(s, "parse_confidence", None),
+                }
+                f.write(json.dumps(rec, default=str))
+                f.write("\n")
 
     def _save_final_report(self):
         """Save a summary of the entire improvement run."""

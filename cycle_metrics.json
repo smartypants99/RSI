@@ -1,0 +1,202 @@
+{
+  "metadata": {
+    "source_log": "update-log.txt",
+    "extracted_at": "2026-04-17",
+    "extraction_notes": [
+      "update-log.txt contains ONLY the resumed cycle 3 run (resume from cycle_2 checkpoint).",
+      "Cycles 1, 2, and the original cycle 3 are NOT present in this log.",
+      "Authoritative metrics for cycles 1-3 (original run) must come from outputs/logs/cycle_*.json, outputs/checkpoints/cycle_*/history.json, or outputs/progress.json — none of which are present in the current working tree (outputs/ is empty locally).",
+      "Values stated in the team-lead briefing (cycle 2 +0.188 held-out, cycle 3 -0.188, resumed held-out 0.338) are carried into the rows below as briefing-derived, clearly flagged.",
+      "NaN/missing fields are represented as null."
+    ]
+  },
+  "cycles": [
+    {
+      "cycle": 1,
+      "run": "original",
+      "source": "briefing_only_log_absent",
+      "pre_score": null,
+      "post_score": null,
+      "improvement": null,
+      "held_out": null,
+      "held_out_prev": null,
+      "weaknesses": {
+        "count": null,
+        "per_weakness": []
+      },
+      "samples": {
+        "star_kept": null,
+        "star_rejected": null,
+        "star_rationalized": null,
+        "final": null,
+        "dpo_pairs": null,
+        "failed_diagnostic_items_processed": null
+      },
+      "verification": {
+        "passed": null,
+        "total": null,
+        "pass_rate_pct": null
+      },
+      "training": {
+        "num_steps": null,
+        "final_loss": null,
+        "avg_loss": null,
+        "samples_used": null,
+        "samples_rejected": null,
+        "lora_layers": null,
+        "avg_rank": null,
+        "learning_rate": null
+      },
+      "phase_times_sec": {
+        "diagnose": null,
+        "generate": null,
+        "verify": null,
+        "train": null,
+        "evaluate": null,
+        "held_out_eval": null
+      },
+      "meta_controller": {
+        "lr_bandit_pick": null,
+        "lr_bandit_prev": null,
+        "tracker_state": null
+      }
+    },
+    {
+      "cycle": 2,
+      "run": "original",
+      "source": "briefing_only_log_absent",
+      "pre_score": null,
+      "post_score": null,
+      "improvement": null,
+      "held_out": null,
+      "held_out_prev": null,
+      "held_out_delta_briefing": 0.188,
+      "weaknesses": {"count": null, "per_weakness": []},
+      "samples": {
+        "star_kept": null, "star_rejected": null, "star_rationalized": null,
+        "final": null, "dpo_pairs": null, "failed_diagnostic_items_processed": null
+      },
+      "verification": {"passed": null, "total": null, "pass_rate_pct": null},
+      "training": {
+        "num_steps": null, "final_loss": null, "avg_loss": null,
+        "samples_used": null, "samples_rejected": null,
+        "lora_layers": null, "avg_rank": null, "learning_rate": null
+      },
+      "phase_times_sec": {
+        "diagnose": null, "generate": null, "verify": null,
+        "train": null, "evaluate": null, "held_out_eval": null
+      },
+      "meta_controller": {"lr_bandit_pick": null, "lr_bandit_prev": null, "tracker_state": null},
+      "artifacts": {
+        "checkpoint_present_in_log": "outputs/checkpoints/cycle_2 (referenced at log line 1-2)"
+      }
+    },
+    {
+      "cycle": 3,
+      "run": "original",
+      "source": "briefing_only_log_absent",
+      "pre_score": null,
+      "post_score": null,
+      "improvement": null,
+      "held_out": null,
+      "held_out_prev": null,
+      "held_out_delta_briefing": -0.188,
+      "weaknesses": {"count": null, "per_weakness": []},
+      "samples": {
+        "star_kept": null, "star_rejected": null, "star_rationalized": null,
+        "final": null, "dpo_pairs": null, "failed_diagnostic_items_processed": null
+      },
+      "verification": {"passed": null, "total": null, "pass_rate_pct": null},
+      "training": {
+        "num_steps": null, "final_loss": null, "avg_loss": null,
+        "samples_used": null, "samples_rejected": null,
+        "lora_layers": null, "avg_rank": null, "learning_rate": null
+      },
+      "phase_times_sec": {
+        "diagnose": null, "generate": null, "verify": null,
+        "train": null, "evaluate": null, "held_out_eval": null
+      },
+      "meta_controller": {"lr_bandit_pick": null, "lr_bandit_prev": null, "tracker_state": null},
+      "artifacts": {"checkpoint_present_in_log": "outputs/checkpoints/cycle_3 (referenced at log line 1-2)"}
+    },
+    {
+      "cycle": 3,
+      "run": "resume_from_cycle_2",
+      "source": "update-log.txt lines 122-262",
+      "cli_args": "--model Qwen/Qwen3-8B --use-vllm --domains code --use-dora --consistency-samples 3 --samples-per-weakness 60 --consistency-threshold 0.34 --gradient-accumulation-steps 1 --num-epochs 5 --lora-rank 16 --plateau-patience 8 --resume outputs/checkpoints/cycle_2",
+      "pre_score": 0.338,
+      "post_score": 0.212,
+      "improvement": -0.125,
+      "held_out": 0.338,
+      "held_out_prev": null,
+      "held_out_note": "logged as 'baseline' — first held-out eval after resume, no prior value in this run's history",
+      "regression_detected": {"domain": "code", "from": 0.338, "to": 0.212},
+      "weaknesses": {
+        "count": 5,
+        "per_weakness": [
+          {"name": "code/implementation", "severity": 1.00},
+          {"name": "code/prediction",     "severity": 0.88},
+          {"name": "code/computing",      "severity": 0.79},
+          {"name": "code/complexity",     "severity": 0.55},
+          {"name": "code/debugging",      "severity": 0.52}
+        ]
+      },
+      "samples": {
+        "star_kept": 14,
+        "star_rejected": 122,
+        "star_rationalized": 4,
+        "final": 10,
+        "dpo_pairs": 9,
+        "failed_diagnostic_items_processed": 34,
+        "weakness_buckets": 5,
+        "rebalance_note": "capped code from 14 to 10 samples"
+      },
+      "verification": {
+        "passed": 9,
+        "total": 10,
+        "pass_rate_pct": 90
+      },
+      "training": {
+        "num_steps": 25,
+        "final_loss": 0.0445,
+        "avg_loss": null,
+        "samples_used": 9,
+        "samples_rejected": null,
+        "lora_layers": 252,
+        "avg_rank": 16,
+        "learning_rate": 2e-05
+      },
+      "phase_times_sec": {
+        "diagnose": 18.2,
+        "generate": 220.5,
+        "verify": 0.3,
+        "train": 294.4,
+        "evaluate": 75.2,
+        "held_out_eval": 73.9
+      },
+      "phase_times_note": "Derived from log timestamps: diagnose 07:19:58→07:20:17; generate 07:20:17→07:23:57; verify 07:23:57→07:23:58 (incl. model swap); train 07:23:58→07:28:52; evaluate (post-train diag) 07:28:52→07:30:25; held-out eval 07:30:25→07:31:39.",
+      "gpu_memory_train_peak_gb": 41.53,
+      "gpu_memory_train_current_gb": 15.44,
+      "gpu_memory_train_reserved_gb": 24.82,
+      "meta_controller": {
+        "lr_bandit_pick": 1.40e-05,
+        "lr_bandit_prev": 2e-05,
+        "lr_bandit_bound": "±30%",
+        "tracker_state": "insufficient_data (n=2)"
+      },
+      "errors": [
+        {
+          "phase": "evaluate_vllm_reload",
+          "type": "ValueError",
+          "message": "Free memory on device cuda:0 (31.39/47.53 GiB) on startup is less than desired GPU memory utilization (0.85, 40.4 GiB). Fell back to HF for evaluation.",
+          "log_lines": "181-252"
+        }
+      ],
+      "escalation_state_on_resume": {
+        "verification": false,
+        "diagnosis": false,
+        "generation": false
+      }
+    }
+  ]
+}

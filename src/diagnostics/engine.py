@@ -62,6 +62,12 @@ class DiagnosticResult:
     layer_health: dict[str, float] = field(default_factory=dict)
     total_questions: int = 0
     total_correct: int = 0
+    # Flat list of per-question records across all probed domains. Each entry:
+    #   {domain, subdomain, question, expected, correct, difficulty,
+    #    confidence, check_type, question_id}
+    # Populated by `_probe_domain` on every run; used by observability dumps
+    # to answer "which questions moved between pre and post?"
+    per_question: list[dict] = field(default_factory=list)
 
     @property
     def overall_score(self) -> float:
@@ -1080,6 +1086,13 @@ class DiagnosticsEngine:
         # Fraction of per-domain questions drawn from curriculum (rest fall
         # back to ground-truth bank + legacy templates).
         self._curriculum_share: float = 0.6
+        # When True, subsequent run() calls bypass the mutable curriculum and
+        # template sources — only the hash-seeded ground-truth bank is used,
+        # which is a deterministic function of (domain, cycle). This makes the
+        # held-out evaluation reproducible across runs; without it the
+        # curriculum's solve-rate state drifts question selection and injects
+        # noise that swamps real capability deltas.
+        self._frozen_eval_mode: bool = False
 
     def set_model_score(self, score: float):
         """Set current model performance score for adaptive curriculum difficulty.
@@ -1142,6 +1155,24 @@ class DiagnosticsEngine:
             result.domain_question_counts[domain] = len(evidence)
             result.total_questions += len(evidence)
             result.total_correct += sum(1 for e in evidence if e["correct"])
+            # Record per-question outcomes with stable IDs so observability
+            # dumps can diff "which questions moved" pre vs post. Keep records
+            # small — drop the raw response to keep cycle_metrics JSON bounded.
+            for e in evidence:
+                qid = hashlib.md5(
+                    f"{e.get('domain','')}|{e.get('subdomain','')}|{e.get('question','')}|{e.get('expected','')}".encode()
+                ).hexdigest()[:16]
+                result.per_question.append({
+                    "question_id": qid,
+                    "domain": e.get("domain", domain),
+                    "subdomain": e.get("subdomain", "general"),
+                    "question": e.get("question", ""),
+                    "expected": e.get("expected", ""),
+                    "correct": bool(e.get("correct", False)),
+                    "difficulty": e.get("difficulty", "medium"),
+                    "confidence": e.get("confidence", 0.0),
+                    "check_type": e.get("check_type", "contains"),
+                })
 
             if score < self.config.confidence_threshold:
                 subweaknesses = self._drill_down(domain, evidence)
@@ -1345,7 +1376,13 @@ class DiagnosticsEngine:
         #     solve-rate 30-70%) so the diagnostic keeps tracking capability
         #     instead of repeatedly probing solved problems. Falls through to
         #     the ground-truth bank + templates below for coverage.
-        curr_target = max(0, int(round(target * self._curriculum_share)))
+        # Held-out evaluation freezes the question source so measured deltas
+        # reflect actual model change, not curriculum drift. The ground-truth
+        # bank below is deterministic at the same (domain, cycle) seed.
+        if self._frozen_eval_mode:
+            curr_target = 0
+        else:
+            curr_target = max(0, int(round(target * self._curriculum_share)))
         if curr_target > 0:
             curr_rng = random.Random(int.from_bytes(
                 hashlib.md5(f"curr:{domain}:{cycle}".encode()).digest()[:4], "big"))
@@ -1388,6 +1425,13 @@ class DiagnosticsEngine:
                 continue
             self._seen_hashes.add(h)
             questions.append(d)
+
+        # In frozen-eval mode, stop after the deterministic ground-truth bank.
+        # Templates and programmatic generators both carry RNG state that would
+        # reintroduce drift across runs, which is exactly what this mode exists
+        # to prevent.
+        if self._frozen_eval_mode:
+            return questions[:target]
 
         # --- Template-based questions (kept as fallback for domains without
         #     full ground-truth coverage) ---

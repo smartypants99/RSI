@@ -610,6 +610,7 @@ class DataGenerator:
         # problem that produced ≥1 correct and ≥1 incorrect chain yields pairs
         # (chosen × rejected) consumed by the trainer in dpo/mixed mode.
         self._last_preference_pairs: list[PreferencePair] = []
+        self._last_star_stats: dict = {}
         # Cap on DPO pairs per problem to avoid combinatorial explosion
         # (K correct × K incorrect = K² pairs if unbounded).
         self.MAX_DPO_PAIRS_PER_PROBLEM = 4
@@ -777,6 +778,7 @@ class DataGenerator:
         star_rejected = 0
         rationalized = 0
         for_rationalization: list[dict] = []
+        per_weakness_stats: dict[str, dict] = {}
 
         by_weakness: dict[tuple[str, str], list[dict]] = {}
         for item in failed_items:
@@ -788,6 +790,12 @@ class DataGenerator:
             kept_here, rej_here, zero_hits, pairs_here = self._star_sample_batch(items, weakness)
             star_kept += len(kept_here)
             star_rejected += rej_here
+            per_weakness_stats[f"{domain}/{subdomain}"] = {
+                "kept": len(kept_here),
+                "rejected": rej_here,
+                "zero_correct_items": len(zero_hits),
+                "pairs": len(pairs_here),
+            }
             for s in kept_here:
                 if self._accept_unique(s):
                     all_samples.append(s)
@@ -814,6 +822,16 @@ class DataGenerator:
         # Stash pairs so the orchestrator can retrieve them for DPO/mixed training
         # without changing the return type (list[TrainingSample]).
         self._last_preference_pairs = all_pairs
+        self._last_star_stats = {
+            "kept_count": star_kept,
+            "rejected_count": star_rejected,
+            "rationalized_count": rationalized,
+            "final_samples": len(all_samples),
+            "dpo_pairs": len(all_pairs),
+            "weakness_buckets": len(by_weakness),
+            "failed_items_processed": len(failed_items),
+            "per_weakness": per_weakness_stats,
+        }
         logger.info(
             f"STaR: kept={star_kept}, rejected={star_rejected}, "
             f"rationalized={rationalized}, final={len(all_samples)} samples, "

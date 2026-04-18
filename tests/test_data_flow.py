@@ -142,3 +142,34 @@ def test_training_sample_tolerates_future_fields(optional_sample_field):
     # If present, default-constructed sample must still be valid.
     s = TrainingSample(prompt="p", response="r")
     assert hasattr(s, optional_sample_field)
+
+
+def test_quality_top_k_ranks_by_consistency_and_source():
+    """Top-k filter prefers high-consistency, star-sourced samples; respects floor."""
+    from src.orchestrator.loop import ImprovementLoop
+
+    low = TrainingSample(prompt="p1", response="a", consistency_score=0.25,
+                         parse_confidence=1.0, source="synthesized")
+    mid = TrainingSample(prompt="p2", response="b", consistency_score=0.5,
+                         parse_confidence=1.0, source="star_rationalized")
+    hi  = TrainingSample(prompt="p3", response="c", consistency_score=1.0,
+                         parse_confidence=1.0, source="star")
+    hi2 = TrainingSample(prompt="p4", response="d", consistency_score=0.75,
+                         parse_confidence=1.0, source="star")
+
+    stub = ImprovementLoop.__new__(ImprovementLoop)
+    stub.config = MagicMock()
+    stub.config.generator.sample_quality_top_k = 2
+    stub.config.generator.sample_quality_floor = 2
+    kept = stub._apply_quality_top_k([low, mid, hi, hi2])
+    assert kept[0] is hi and kept[1] is hi2
+
+    # Disabled (k=0) returns input unchanged.
+    stub.config.generator.sample_quality_top_k = 0
+    assert stub._apply_quality_top_k([low, mid]) == [low, mid]
+
+    # Floor prevents ranking below the floor.
+    stub.config.generator.sample_quality_top_k = 1
+    stub.config.generator.sample_quality_floor = 3
+    kept = stub._apply_quality_top_k([low, mid, hi, hi2])
+    assert len(kept) == 3

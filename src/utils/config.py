@@ -89,6 +89,17 @@ class GeneratorConfig:
     star_temperature: float = 0.7  # sampling temp for the K chains
     star_rationalization: bool = True  # rationalize 0/K problems with answer hint
     star_max_rationalizations_per_weakness: int = 16  # cap to bound cost
+    # Quality-ranked top-k sample filter (applied post-verify, pre-train).
+    # Cycle-6 succeeded on 1 sample; cycle-1 regressed on 1 sample — the
+    # difference was sample quality. Rank verified samples by
+    #   score = consistency_score * parse_confidence * (1 + 0.5 * star_bonus)
+    # (star_bonus=1 for source=='star', 0 for 'star_rationalized'/'synthesized')
+    # and keep only the top-k. Set to 0 to disable (use all verified samples).
+    sample_quality_top_k: int = 0
+    # Floor: when top-k is active, never train on fewer than this many samples
+    # (unless verified<floor, in which case we use all). Protects against
+    # ranking down to a single marginal sample.
+    sample_quality_floor: int = 3
 
     def __post_init__(self):
         if self.min_reasoning_steps < 1:
@@ -103,6 +114,10 @@ class GeneratorConfig:
             raise ValueError(f"consistency_samples must be >= 1, got {self.consistency_samples}")
         if not (0.0 < self.consistency_threshold <= 1.0):
             raise ValueError(f"consistency_threshold must be in (0, 1], got {self.consistency_threshold}")
+        if self.sample_quality_top_k < 0:
+            raise ValueError(f"sample_quality_top_k must be >= 0, got {self.sample_quality_top_k}")
+        if self.sample_quality_floor < 1:
+            raise ValueError(f"sample_quality_floor must be >= 1, got {self.sample_quality_floor}")
 
 
 @dataclass

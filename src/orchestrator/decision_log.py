@@ -80,7 +80,11 @@ class CausalTracker:
     # Minimum (cycles_with, cycles_without) needed before we'll conclude
     # anything. Below this, permutation p-values are uninformative no matter
     # how lopsided the wins look.
-    MIN_PAIRS_FOR_DECISION = 4
+    # Lowered 4→3: at n=8 real cycles with ~3 null eval_delta, the former
+    # threshold (needs 8 usable) stays "insufficient_data" forever. 3 per side
+    # activates the tracker at n=6 usable while the permutation test still
+    # guards against spurious signals via SIGNIFICANCE_ALPHA.
+    MIN_PAIRS_FOR_DECISION = 3
 
     # p < 0.10 is lenient — appropriate because the alternative is doing
     # nothing. A false positive costs one cycle of regressed performance,

@@ -668,6 +668,7 @@ class ImprovementLoop:
         logger.info(f"[Cycle {cycle}] Phase 3: VERIFY")
         phase_start = time.time()
         verified = self.verifier.verify_batch(samples)
+        verified = self._apply_quality_top_k(verified)
         result.samples_verified = len(verified)
         # Observability: stash the verified samples + STaR internals for the
         # optional cycle_metrics / cycle_samples dumps.
@@ -967,6 +968,39 @@ class ImprovementLoop:
             tmpl, _vid = proposal["generator_template"]
             self.generator.set_custom_solution_template(tmpl)
 
+    def _apply_quality_top_k(self, verified: list) -> list:
+        """Rank verified samples by quality, keep the top-k.
+
+        Gated by generator.sample_quality_top_k (0 = disabled). Motivation:
+        cycle-6 trained on 1 high-leverage sample and jumped held-out +19pp,
+        while cycle-1 regressed training on a similar-count but lower-quality
+        batch. Feeding the trainer fewer, better samples beats feeding it
+        many marginal ones — especially under early_stop_loss=0.15 where a
+        single bad example can drag the mean below threshold.
+        """
+        k = int(getattr(self.config.generator, "sample_quality_top_k", 0) or 0)
+        if k <= 0 or not verified:
+            return verified
+        floor = int(getattr(self.config.generator, "sample_quality_floor", 3) or 3)
+        if len(verified) <= max(k, floor):
+            return verified
+
+        def _score(s) -> float:
+            cs = float(getattr(s, "consistency_score", 0.0) or 0.0)
+            pc = float(getattr(s, "parse_confidence", 0.0) or 0.0)
+            src = getattr(s, "source", "synthesized")
+            star_bonus = 1.0 if src == "star" else 0.0
+            return cs * pc * (1.0 + 0.5 * star_bonus)
+
+        ranked = sorted(verified, key=_score, reverse=True)
+        keep = max(k, floor)
+        kept = ranked[:keep]
+        logger.info(
+            f"  Quality top-k filter: kept {len(kept)}/{len(verified)} "
+            f"(top score={_score(ranked[0]):.3f}, cutoff={_score(kept[-1]):.3f})"
+        )
+        return kept
+
     def _save_progress_dashboard(self, cycle: int, result: CycleResult, phase_times: dict):
         """Write progress.json with structured metrics for external monitoring."""
         output_dir = self.config.orchestrator.output_dir
@@ -1031,6 +1065,8 @@ class ImprovementLoop:
             "history_summary": [
                 {"cycle": r.cycle, "pre": r.pre_score, "post": r.post_score,
                  "improvement": r.improvement, "eval": r.eval_score,
+                 "pass_rate": (r.samples_verified / r.samples_generated
+                               if r.samples_generated else None),
                  "had_errors": bool(r.errors)}
                 for r in self.history
             ],

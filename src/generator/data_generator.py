@@ -354,6 +354,25 @@ def _classify_line(line: str) -> tuple[LineKind, tuple]:
     return LineKind.CONTENT, (_strip_inline_md(line),)
 
 
+_THINK_BLOCK_RE = re.compile(r'<think\b[^>]*>.*?</think\s*>', re.IGNORECASE | re.DOTALL)
+_THINK_STRAY_RE = re.compile(r'</?\s*think\b[^>]*>', re.IGNORECASE)
+
+
+def _strip_think_tokens(text: str) -> str:
+    """Remove <think>…</think> blocks and stray think tags from model text.
+
+    R1-/Qwen-style thinking is emitted as literal tokens (not tokenizer
+    special tokens), so it survives detokenization and ends up in training
+    targets unless we strip it here. Keeps post-</think> content intact —
+    that's the actual answer.
+    """
+    if not text:
+        return text
+    text = _THINK_BLOCK_RE.sub('', text)
+    text = _THINK_STRAY_RE.sub('', text)
+    return text
+
+
 def _split_assumptions(text: str) -> list[str]:
     if not text or text.lower() in ("none", "n/a", "-", "implicit"):
         return []
@@ -367,6 +386,12 @@ class ResponseParser:
         issues: list[str] = []
         if not text or not text.strip():
             return ParseResult(chain=[], conclusion="", issues=["empty response"], confidence=0.0)
+
+        # Strip R1/Qwen-style thinking-token artifacts that the model emits as
+        # literal text (NOT as tokenizer special tokens, so skip_special_tokens
+        # doesn't catch them). Previously these leaked into training targets
+        # (e.g. completions ending in "</think>") and into assumptions lists.
+        text = _strip_think_tokens(text)
 
         if _is_refusal(text):
             return ParseResult(chain=[], conclusion="", issues=["model refusal"], confidence=0.0)

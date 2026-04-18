@@ -173,3 +173,40 @@ def test_quality_top_k_ranks_by_consistency_and_source():
     stub.config.generator.sample_quality_floor = 3
     kept = stub._apply_quality_top_k([low, mid, hi, hi2])
     assert len(kept) == 3
+
+
+def test_parser_strips_think_tokens():
+    """R1/Qwen style <think>...</think> must not leak into parsed output."""
+    from src.generator.data_generator import ResponseParser
+
+    raw = (
+        "<think>let me reason about this</think>\n"
+        "Step 1: compute\n  Justification: arithmetic\n"
+        "Conclusion: 4\n"
+        "</think>"
+    )
+    result = ResponseParser().parse(raw)
+    assert "</think>" not in result.conclusion
+    assert "<think>" not in result.conclusion
+    for step in result.chain:
+        assert "think>" not in step.content
+        assert "think>" not in step.justification
+
+
+def test_code_executes_rejects_wrong_function_name():
+    """Function-name mismatch must fail the grader (merge_sorted vs mergesorted)."""
+    from src.utils.config import DiagnosticsConfig
+    from src.diagnostics.engine import DiagnosticsEngine
+
+    eng = DiagnosticsEngine.__new__(DiagnosticsEngine)
+    eng.config = DiagnosticsConfig()
+
+    wrong = "```python\ndef mergesorted(a, b):\n    return sorted(a + b)\n```"
+    right = "```python\ndef merge_sorted(a, b):\n    return sorted(a + b)\n```"
+
+    # Missing exact name → reject (even if heuristic smoke test would pass).
+    assert eng._check_answer(wrong, "merge_sorted", "code_executes") is False
+    # Correct name → accept.
+    assert eng._check_answer(right, "merge_sorted", "code_executes") is True
+    # Non-identifier expected (e.g. "any") → falls back to execution-only check.
+    assert eng._check_answer(right, "any valid sort", "code_executes") is True

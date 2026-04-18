@@ -2093,7 +2093,7 @@ class DiagnosticsEngine:
         if check_type == "math_equiv":
             return self._check_math_equivalence(response, expected)
         if check_type == "code_executes":
-            return self._check_code_executes(response)
+            return self._check_code_executes(response, expected=expected)
         if check_type == "numeric":
             return _numeric_match(response, expected)
         if check_type == "numeric_set":
@@ -2228,11 +2228,18 @@ class DiagnosticsEngine:
             pass
         return False
 
-    def _check_code_executes(self, response: str) -> bool:
+    def _check_code_executes(self, response: str, expected: str = "") -> bool:
         """Check if code compiles, runs, and the function actually works.
 
         Just defining a function always succeeds — we need to CALL it with
         basic test inputs to detect runtime errors.
+
+        When `expected` is a bare Python identifier (e.g. "merge_sorted"), the
+        extracted code MUST define that exact function name. This catches the
+        "mergesorted instead of merge_sorted" class of bugs where the model
+        wrote a differently-named function that happened to pass the heuristic
+        smoke test (the prompt asked for merge_sorted but mergesorted still
+        matched the `("merge","sort")` keyword branch).
         """
         from ..utils.sandbox import run_python_sandboxed
 
@@ -2243,6 +2250,10 @@ class DiagnosticsEngine:
             compile(code, "<string>", "exec")
         except SyntaxError:
             return False
+
+        if expected and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expected.strip()):
+            if not re.search(r'(?m)^\s*def\s+' + re.escape(expected.strip()) + r'\s*\(', code):
+                return False
 
         # Append a basic smoke-test call. Use the LAST top-level function defined,
         # not the first — models often define helpers (is_prime, swap, etc.) before

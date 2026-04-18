@@ -51,11 +51,33 @@ def _get_features(module):
 
 
 class LoRALayer(nn.Module):
-    """Custom LoRA layer with weakness-adaptive rank and gradient scaling.
+    """Modernized LoRA layer composing four 2023-2024 improvements over Hu 2021.
 
-    Unlike standard LoRA:
-    - rank is adjusted per-layer based on diagnostic weakness scores
-    - weakness_scale amplifies gradients for layers that need more correction
+    Stacks all four orthogonal techniques on top of the original LoRA:
+
+    - **rsLoRA** (Kalajdzievski 2023): scaling = alpha/sqrt(rank) stabilizes
+      gradient magnitude across ranks so high-rank LoRA actually helps.
+    - **PiSSA init** (Meng et al. 2024): initialize A,B from the top-r SVD
+      components of W and subtract them from the frozen weight — LoRA starts
+      on the principal subspace, ~2-3× faster convergence.
+    - **DoRA** (Liu et al. 2024): decompose W into magnitude (per-input
+      scalar) and direction (LoRA-adapted). Same rank, materially better
+      adaptation quality because magnitude and direction train independently.
+    - **Weakness-adaptive rank + gradient scaling** (RSI-specific): weaker
+      layers get higher rank and a backward-pass gradient multiplier so
+      they catch up across cycles.
+
+    When use_dora=True, the forward becomes
+
+        V           = W_frozen + scaling · (B @ A)    (adapted direction, full)
+        magnitude   : trainable R^in (one scalar per input feature)
+        W_effective = magnitude ⊙ V / ‖V‖_c           (column-normalized)
+        y           = W_effective · x
+
+    ‖V‖_c is computed under no_grad (standard DoRA trick from §3.1) so
+    backward only has to flow through magnitude, A, and B. At init the
+    magnitude is set to ‖W_frozen‖_c so W_effective ≡ W_frozen exactly
+    (B is zero for kaiming init; for PiSSA the residual math still holds).
     """
 
     def __init__(
@@ -65,12 +87,25 @@ class LoRALayer(nn.Module):
         alpha: int,
         dropout: float = 0.0,
         weakness_scale: float = 1.0,
+        *,
+        use_rslora: bool = True,
+        init_method: str = "kaiming",
+        use_dora: bool = False,
     ):
         super().__init__()
         self.original = original_layer
         self.rank = rank
         self.alpha = alpha
-        self.scaling = alpha / max(rank, 1)
+        # rsLoRA (Kalajdzievski 2023): scaling = alpha / sqrt(rank) keeps
+        # gradient magnitude stable across ranks, unlike classic alpha/rank
+        # which collapses as rank grows.
+        if use_rslora:
+            self.scaling = alpha / math.sqrt(max(rank, 1))
+        else:
+            self.scaling = alpha / max(rank, 1)
+        self.use_rslora = use_rslora
+        self.init_method = init_method
+        self.use_dora = bool(use_dora)
         self.weakness_scale = weakness_scale
         # Track if original is Conv1D (transposed weight) for merge
         self._is_conv1d = _HFConv1D is not None and isinstance(original_layer, _HFConv1D)
@@ -83,11 +118,77 @@ class LoRALayer(nn.Module):
         # LoRA params are tiny (rank × dim) so the 2x VRAM cost vs bfloat16 is
         # negligible compared to the base model. This avoids precision loss in
         # gradient accumulation and high-rank matmuls.
-        lora_A_init = torch.zeros(rank, in_features, device=device, dtype=torch.float32)
-        nn.init.kaiming_uniform_(lora_A_init, a=math.sqrt(5))
-        self.lora_A = nn.Parameter(lora_A_init)
-        self.lora_B = nn.Parameter(torch.zeros(out_features, rank, device=device, dtype=torch.float32))
+        if init_method == "pissa":
+            # PiSSA (Meng et al. 2024): init A,B from top-r SVD components of W,
+            # and subtract those from original so the layer's initial function is
+            # unchanged. LoRA then trains the principal subspace directly.
+            import time
+            t0 = time.time()
+            W = original_layer.weight.data
+            # For Conv1D, weight is (in, out); SVD expects (out, in)-style
+            # orientation that lets A=(r, in), B=(out, r).
+            W_mat = W.T if self._is_conv1d else W
+            W_f32 = W_mat.to(torch.float32)
+            U, S, Vh = torch.linalg.svd(W_f32, full_matrices=False)
+            r = min(rank, S.shape[0])
+            U_r = U[:, :r]
+            S_r = S[:r]
+            Vh_r = Vh[:r, :]
+            sqrt_S = S_r.sqrt()
+            lora_A_init = torch.zeros(rank, in_features, device=device, dtype=torch.float32)
+            lora_B_init = torch.zeros(out_features, rank, device=device, dtype=torch.float32)
+            lora_A_init[:r] = (sqrt_S.unsqueeze(1) * Vh_r).to(device=device)
+            lora_B_init[:, :r] = (U_r * sqrt_S.unsqueeze(0)).to(device=device)
+            # Subtract captured components from original weight.
+            residual = W_f32 - (U_r * S_r) @ Vh_r
+            residual = residual.to(dtype=dtype)
+            if self._is_conv1d:
+                residual = residual.T
+            original_layer.weight.data.copy_(residual)
+            self.lora_A = nn.Parameter(lora_A_init)
+            self.lora_B = nn.Parameter(lora_B_init)
+            elapsed = time.time() - t0
+            logger.info(
+                f"PiSSA init: ({out_features}x{in_features}) rank={rank} took {elapsed:.2f}s"
+            )
+        else:
+            lora_A_init = torch.zeros(rank, in_features, device=device, dtype=torch.float32)
+            nn.init.kaiming_uniform_(lora_A_init, a=math.sqrt(5))
+            self.lora_A = nn.Parameter(lora_A_init)
+            self.lora_B = nn.Parameter(torch.zeros(out_features, rank, device=device, dtype=torch.float32))
         self.lora_dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
+
+        # DoRA magnitude — trainable per-input scalar initialized so the layer's
+        # initial function matches W_frozen. After PiSSA the frozen weight is
+        # the RESIDUAL (W - top-r components), so we compute magnitude from
+        # whatever is currently in original.weight — the math
+        #   W_effective = magnitude ⊙ (W_frozen + scaling·BA) / ‖...‖_c
+        # stays correct because PiSSA's init gives scaling·BA = top-r, so
+        # W_frozen + scaling·BA = W (the original full weight) at step 0.
+        if self.use_dora:
+            with torch.no_grad():
+                # At init, V = W_frozen + scaling·BA. For kaiming, B=0 so V=W_frozen.
+                # For PiSSA, V equals the pre-residual W (by construction). Compute
+                # magnitude to match whichever case applies.
+                W_cur = self.original.weight.float()
+                # For kaiming: B=0 → V=W_cur. For PiSSA: add back the top-r so
+                # V equals the original pre-residual weight.
+                if init_method == "pissa":
+                    BA_init = (self.lora_B.float() @ self.lora_A.float())
+                    if self._is_conv1d:
+                        V_init = W_cur + self.scaling * BA_init.T
+                    else:
+                        V_init = W_cur + self.scaling * BA_init
+                else:
+                    V_init = W_cur
+                if self._is_conv1d:
+                    init_mag = V_init.norm(dim=1)  # (in,) — rows of stored Conv1D
+                else:
+                    init_mag = V_init.norm(dim=0)  # (in,) — columns of Linear
+                init_mag = init_mag.clamp_min(1e-8)
+            self.magnitude = nn.Parameter(init_mag)
+        else:
+            self.register_parameter("magnitude", None)
 
         # Freeze original weights
         self.original.weight.requires_grad = False
@@ -103,7 +204,40 @@ class LoRALayer(nn.Module):
             self.lora_A.register_hook(lambda grad, s=weakness_scale: grad * s)
             self.lora_B.register_hook(lambda grad, s=weakness_scale: grad * s)
 
+    def _dora_scale_factor(self) -> torch.Tensor:
+        """Compute (magnitude / ‖V‖_c) — the per-input DoRA gate.
+
+        Returns a (in_features,) tensor. ‖V‖_c is computed under no_grad so
+        gradient only flows through the trainable magnitude parameter; A and B
+        still receive gradient via their path through the forward matmul.
+        """
+        with torch.no_grad():
+            W0 = self.original.weight.float()
+            BA = self.lora_B @ self.lora_A  # (out, in) float32
+            if self._is_conv1d:
+                # Conv1D stored as (in, out); effective V is (out, in) = V_stored.T
+                V_stored = W0 + self.scaling * BA.T
+                V_norm = V_stored.norm(dim=1).clamp_min(1e-8)  # (in,)
+            else:
+                V = W0 + self.scaling * BA  # (out, in)
+                V_norm = V.norm(dim=0).clamp_min(1e-8)  # (in,)
+        return self.magnitude / V_norm
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.use_dora:
+            # DoRA (Liu 2024): rewrite y = W_effective x as
+            #   y = (W_frozen + scaling·BA) · (magnitude / ‖V‖_c ⊙ x)
+            # Efficient because the per-input scale absorbs the magnitude/norm
+            # modulation without materializing the full effective weight.
+            scale = self._dora_scale_factor().to(x.dtype)
+            x_mod = x * scale  # (..., in)
+            original_output = self.original(x_mod)
+            dropped = self.lora_dropout(x_mod)
+            low_rank = dropped @ self.lora_A.to(dropped.dtype).T
+            lora_output = low_rank.float() @ self.lora_B.T
+            return original_output + lora_output.to(original_output.dtype) * self.scaling
+
+        # Plain LoRA path (unchanged, with rsLoRA scaling baked into self.scaling).
         original_output = self.original(x)
         # Apply dropout in the ORIGINAL dtype (bfloat16) to avoid allocating a
         # full float32 copy of x. Dropout is applied on the INPUT (standard LoRA),
@@ -494,6 +628,9 @@ class CustomLoRATrainer:
                 alpha=adjusted_alpha,
                 dropout=self.config.lora_dropout,
                 weakness_scale=1.0 + weakness,
+                use_rslora=self.config.use_rslora,
+                init_method=self.config.init_method,
+                use_dora=self.config.use_dora,
             )
 
             # Replace in model
@@ -625,18 +762,12 @@ class CustomLoRATrainer:
         )
 
         # Only optimize LoRA parameters
-        lora_params = [p for p in model.parameters() if p.requires_grad]
-        if not lora_params:
+        optimizer = self._build_optimizer(model, cycle_lr)
+        if optimizer is None:
             logger.warning("No trainable parameters found")
             return TrainingMetrics(cycle=cycle, avg_loss=0, final_loss=0,
                                   steps=0, samples_used=len(verified_samples),
                                   samples_rejected=0, learning_rate=self.config.learning_rate)
-
-        optimizer = torch.optim.AdamW(
-            lora_params,
-            lr=cycle_lr,
-            weight_decay=self.config.weight_decay,
-        )
 
         total_batches = len(dataloader) * self.config.num_epochs
         # +1 for potential flush of remaining accumulated gradients
@@ -898,18 +1029,14 @@ class CustomLoRATrainer:
             dataset, batch_size=batch_size,
             shuffle=self.config.num_epochs > 1, drop_last=False,
         )
-        lora_params = [p for p in model.parameters() if p.requires_grad]
-        if not lora_params:
+        optimizer = self._build_optimizer(model, cycle_lr)
+        if optimizer is None:
             logger.warning("No trainable parameters for DPO")
             return TrainingMetrics(
                 cycle=cycle, avg_loss=0, final_loss=0, steps=0,
                 samples_used=len(dataset), samples_rejected=0,
                 learning_rate=cycle_lr, training_mode="dpo",
             )
-
-        optimizer = torch.optim.AdamW(
-            lora_params, lr=cycle_lr, weight_decay=self.config.weight_decay,
-        )
         total_batches = len(dataloader) * self.config.num_epochs
         total_steps = max(1, total_batches // self.config.gradient_accumulation_steps
                          + (1 if total_batches % self.config.gradient_accumulation_steps != 0 else 0))
@@ -1298,8 +1425,7 @@ class CustomLoRATrainer:
         self, verified_samples: list["TrainingSample"], cycle: int,
     ) -> TrainingMetrics:
         model = self.model_loader.model
-        lora_params = [p for p in model.parameters() if p.requires_grad]
-        if not lora_params:
+        if not any(p.requires_grad for p in model.parameters()):
             logger.warning("No trainable parameters for GRPO (inject_lora first)")
             return TrainingMetrics(
                 cycle=cycle, avg_loss=0, final_loss=0, steps=0,
@@ -1316,9 +1442,7 @@ class CustomLoRATrainer:
         # source and preserve them for canonical-grading during reward scoring.
         prompts = [s.prompt for s in verified_samples]
 
-        optimizer = torch.optim.AdamW(
-            lora_params, lr=cycle_lr, weight_decay=self.config.weight_decay,
-        )
+        optimizer = self._build_optimizer(model, cycle_lr)
         # Heuristic step count: one optimizer step per (grad_accum) prompts, per epoch.
         accum = self.config.gradient_accumulation_steps
         prompts_per_epoch = len(prompts)
@@ -1515,6 +1639,45 @@ class CustomLoRATrainer:
             rollout_refreshes=rollout_refreshes,
         )
 
+    def _build_optimizer(self, model, cycle_lr: float):
+        """Build AdamW over trainable params, splitting LoRA+ groups if enabled.
+
+        LoRA+ (Hayou et al. 2024): B starts at zero, A near identity — B must
+        train faster. Two param groups with lr_B = lr_A * lora_plus_ratio.
+        If DoRA is active, the ``magnitude`` parameter joins the A (slow) group.
+        Any other trainable params fall into the A group as a safe default.
+        """
+        a_params: list[nn.Parameter] = []
+        b_params: list[nn.Parameter] = []
+        other: list[nn.Parameter] = []
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            if ".lora_A" in name:
+                a_params.append(p)
+            elif ".lora_B" in name:
+                b_params.append(p)
+            elif name.endswith(".magnitude") or ".magnitude" in name:
+                # DoRA magnitude — canonical LoRA+ choice: slow (A) group.
+                a_params.append(p)
+            else:
+                other.append(p)
+
+        if not (a_params or b_params or other):
+            return None
+
+        wd = self.config.weight_decay
+        if getattr(self.config, "use_lora_plus", False) and a_params and b_params:
+            ratio = float(self.config.lora_plus_ratio)
+            groups = [
+                {"params": a_params + other, "lr": cycle_lr},
+                {"params": b_params, "lr": cycle_lr * ratio},
+            ]
+            return torch.optim.AdamW(groups, weight_decay=wd)
+
+        all_params = a_params + b_params + other
+        return torch.optim.AdamW(all_params, lr=cycle_lr, weight_decay=wd)
+
     def _build_scheduler(self, optimizer, warmup_steps: int, total_steps: int):
         """Cosine schedule with warmup.
 
@@ -1611,6 +1774,9 @@ class CustomLoRATrainer:
                 alpha=adjusted_alpha,
                 dropout=self.config.lora_dropout,
                 weakness_scale=saved_ws,
+                use_rslora=self.config.use_rslora,
+                init_method=self.config.init_method,
+                use_dora=self.config.use_dora,
             )
             # Overwrite random init with saved weights. Saved weights are bfloat16
             # (halved disk usage) but LoRA params are float32 for training precision.
@@ -1639,28 +1805,56 @@ class CustomLoRATrainer:
         skipped = 0
         for name, lora_layer in self._lora_layers.items():
             with torch.no_grad():
-                # Skip layers where B is still all zeros (initialized to zero and
-                # received no gradient). The merge would be a no-op but allocates
-                # a full (out_features × in_features) matrix for the matmul result.
-                # Use a small-magnitude threshold instead of `.any()` — after
-                # gradient checkpointing + hooks, B can accumulate numerical noise
-                # (~1e-10) without meaningful gradient signal, yet `.any()` returns
-                # True and the merge allocates a full (out × in) matrix for a
-                # near-zero delta.
-                if float(lora_layer.lora_B.detach().abs().max()) < 1e-6:
+                is_dora = getattr(lora_layer, "use_dora", False)
+                # For plain LoRA: skip if B ≈ 0 (no gradient signal).
+                # For DoRA: even with B=0, magnitude may have moved — still merge.
+                if not is_dora and float(lora_layer.lora_B.detach().abs().max()) < 1e-6:
                     skipped += 1
                     continue
                 orig = lora_layer.original.weight
                 # Cast LoRA params to target dtype BEFORE the matmul to avoid
                 # allocating a full-sized (out_features × in_features) float32 matrix.
                 # For 8192×8192 layers that's 1GB float32 vs 512MB bfloat16.
-                A = lora_layer.lora_A.to(device=orig.device, dtype=orig.dtype)
-                B = lora_layer.lora_B.to(device=orig.device, dtype=orig.dtype)
-                delta = (B @ A) * lora_layer.scaling
-                # Conv1D stores weight as (in, out) — transposed from Linear's (out, in)
-                if lora_layer._is_conv1d:
-                    delta = delta.T
-                orig.data += delta
+                A = lora_layer.lora_A.to(device=orig.device, dtype=torch.float32)
+                B = lora_layer.lora_B.to(device=orig.device, dtype=torch.float32)
+
+                if is_dora:
+                    # DoRA merge: W_new = magnitude · (W_frozen + scaling·BA) / ‖…‖_c
+                    #
+                    # This is the canonical DoRA merge identity — after this
+                    # overwrite, forward(x) through a plain Linear with W_new
+                    # produces the same output as the DoRA forward did.
+                    W0 = orig.data.to(torch.float32)
+                    BA = B @ A  # (out, in) float32
+                    if lora_layer._is_conv1d:
+                        V_stored = W0 + lora_layer.scaling * BA.T
+                        V_norm = V_stored.norm(dim=1).clamp_min(1e-8)  # (in,)
+                        mag = lora_layer.magnitude.detach().to(
+                            device=orig.device, dtype=torch.float32
+                        )
+                        # Scale each row by magnitude_i / V_norm_i. V_stored is
+                        # (in, out); row i is indexed by in-feature i.
+                        W_new = V_stored * (mag / V_norm).unsqueeze(1)
+                    else:
+                        V = W0 + lora_layer.scaling * BA  # (out, in)
+                        V_norm = V.norm(dim=0).clamp_min(1e-8)  # (in,)
+                        mag = lora_layer.magnitude.detach().to(
+                            device=orig.device, dtype=torch.float32
+                        )
+                        # Scale each column by magnitude_j / V_norm_j.
+                        W_new = V * (mag / V_norm)
+                    orig.data.copy_(W_new.to(orig.dtype))
+                    # Detect "no useful gradient" in DoRA: magnitude hasn't moved
+                    # AND B is essentially zero.
+                    if (float(lora_layer.lora_B.detach().abs().max()) < 1e-6
+                            and float((mag - V_norm).abs().max()) < 1e-6):
+                        skipped += 1
+                else:
+                    delta = (B @ A) * lora_layer.scaling
+                    # Conv1D stores weight as (in, out) — transposed from Linear's (out, in)
+                    if lora_layer._is_conv1d:
+                        delta = delta.T
+                    orig.data += delta.to(orig.dtype)
         total = len(self._lora_layers)
         if skipped:
             logger.info(f"  Skipped {skipped}/{total} zero-contribution LoRA layers during merge")

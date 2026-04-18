@@ -97,6 +97,34 @@ def main():
     parser.add_argument("--prm-epochs", type=int, default=None,
                         help="PRM training epochs per cycle (default: 1)")
 
+    # rsLoRA & PiSSA
+    rslora_group = parser.add_mutually_exclusive_group()
+    rslora_group.add_argument("--use-rslora", dest="use_rslora", action="store_true", default=None,
+                              help="Use rsLoRA scaling = alpha/sqrt(rank) (default: on)")
+    rslora_group.add_argument("--no-rslora", dest="use_rslora", action="store_false",
+                              help="Use classic LoRA scaling = alpha/rank")
+    parser.add_argument("--init-method", default=None, choices=["kaiming", "pissa"],
+                        help="LoRA init: kaiming (default) or pissa (SVD-based, faster convergence)")
+
+    # DoRA (Liu et al. 2024): weight-decomposed LoRA — separates magnitude
+    # from direction, better quality at the same rank.
+    dora_group = parser.add_mutually_exclusive_group()
+    dora_group.add_argument("--use-dora", dest="use_dora", action="store_true", default=None,
+                            help="Enable DoRA — magnitude/direction decomposition (better quality, "
+                                 "+5-10%% VRAM)")
+    dora_group.add_argument("--no-dora", dest="use_dora", action="store_false",
+                            help="Disable DoRA (plain LoRA)")
+
+    # LoRA+ (Hayou et al. 2024): B trains faster than A via separate LR group
+    lora_plus_group = parser.add_mutually_exclusive_group()
+    lora_plus_group.add_argument("--use-lora-plus", dest="use_lora_plus", action="store_true",
+                                 default=None,
+                                 help="Enable LoRA+ (lr_B = lr_A * ratio) (default: on)")
+    lora_plus_group.add_argument("--no-lora-plus", dest="use_lora_plus", action="store_false",
+                                 help="Disable LoRA+ (single LR for A and B)")
+    parser.add_argument("--lora-plus-ratio", type=float, default=None,
+                        help="LoRA+ lr_B / lr_A ratio, must be in [1.0, 64.0] (default: 16.0)")
+
     # Metacognitive calibration
     parser.add_argument("--enable-calibration-loss", action="store_true",
                         help="Weight training loss by per-step Brier score (rewards calibrated confidences)")
@@ -224,6 +252,16 @@ def main():
         config.trainer.enable_calibration_loss = True
     if args.calibration_loss_weight is not None:
         config.trainer.calibration_loss_weight = args.calibration_loss_weight
+    if args.use_rslora is not None:
+        config.trainer.use_rslora = args.use_rslora
+    if args.init_method is not None:
+        config.trainer.init_method = args.init_method
+    if args.use_dora is not None:
+        config.trainer.use_dora = args.use_dora
+    if args.use_lora_plus is not None:
+        config.trainer.use_lora_plus = args.use_lora_plus
+    if args.lora_plus_ratio is not None:
+        config.trainer.lora_plus_ratio = args.lora_plus_ratio
     config.trainer.__post_init__()
 
     # vLLM mode

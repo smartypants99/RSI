@@ -221,6 +221,29 @@ class TrainerConfig:
     enable_calibration_loss: bool = False
     calibration_loss_weight: float = 0.1
 
+    # LoRA+ (Hayou et al. 2024): B trains faster than A because A starts near
+    # identity (Kaiming) while B starts at zero. Split into two optimizer groups
+    # with lr_B = lr_A * lora_plus_ratio. Canonical ratio = 16.
+    # When DoRA is active, the `magnitude` parameter joins the A (slow) group.
+    use_lora_plus: bool = True
+    lora_plus_ratio: float = 16.0
+
+    # rsLoRA (Kalajdzievski 2023): scaling = alpha / sqrt(rank) instead of
+    # alpha / rank. Strictly dominates classic scaling as rank grows.
+    use_rslora: bool = True
+    # LoRA initialization: "kaiming" (A kaiming, B zeros) or "pissa"
+    # (Meng et al. 2024: A,B from top-r SVD of base weight, with captured
+    # components subtracted from the original). PiSSA converges ~2-3x faster
+    # at the cost of a one-off SVD per LoRA layer.
+    init_method: str = "kaiming"
+
+    # DoRA (Liu et al. 2024): decompose W into magnitude + direction; LoRA
+    # adapts direction and a separate trainable magnitude vector scales each
+    # input feature independently. Same rank, materially better downstream
+    # quality. Cost: ~5-10% extra VRAM (full V materialization per forward for
+    # the norm computation, under no_grad), + one scalar per input feature.
+    use_dora: bool = False
+
     def __post_init__(self):
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}")
@@ -261,6 +284,14 @@ class TrainerConfig:
         if self.calibration_loss_weight < 0:
             raise ValueError(
                 f"calibration_loss_weight must be >= 0, got {self.calibration_loss_weight}"
+            )
+        if not (1.0 <= self.lora_plus_ratio <= 64.0):
+            raise ValueError(
+                f"lora_plus_ratio must be in [1.0, 64.0], got {self.lora_plus_ratio}"
+            )
+        if self.init_method not in ("kaiming", "pissa"):
+            raise ValueError(
+                f"init_method must be one of 'kaiming', 'pissa' — got {self.init_method!r}"
             )
 
 

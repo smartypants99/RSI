@@ -725,7 +725,14 @@ class ImprovementLoop:
                     f"(missing config.json or *.safetensors); refusing vLLM swap"
                 )
             self._vllm_saved_this_cycle = cycle
-            self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
+            # Skip the vLLM reload when configured — runs post-diag + eval in
+            # HF mode. Saves ~3-5 min per cycle when probe count is small.
+            skip_reload = (
+                self.config.vllm is not None
+                and getattr(self.config.vllm, "skip_reload_after_training", False)
+            )
+            if not skip_reload:
+                self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
         # Run post-training diagnostics on the SAME questions as pre-training.
         # Different cycle arg = different RNG seed = different questions, which
         # made `improvement = post - pre` compare apples to oranges.

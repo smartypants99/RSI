@@ -37,11 +37,20 @@ def main():
 
     # Diagnostics
     parser.add_argument("--questions-per-domain", type=int, default=None,
-                        help="Diagnostic questions per domain (default: 300)")
+                        help="Diagnostic questions per domain (default: 80)")
     parser.add_argument("--diagnostics-batch-size", type=int, default=None,
                         help="Diagnostics batch size (default: 16)")
     parser.add_argument("--confidence-threshold", type=float, default=None,
                         help="Confidence threshold for weakness detection (default: 0.7)")
+    parser.add_argument("--domains", default=None,
+                        help="Comma-separated domain subset, e.g. 'code' for coding-only RSI, "
+                             "or 'code,math' for both. Skips probes/training for unlisted domains. "
+                             "Default: all 8 (reasoning,math,code,science,logic,common_sense,"
+                             "language_understanding,abstraction)")
+    parser.add_argument("--skip-vllm-reload", action="store_true",
+                        help="After training, stay in HF mode instead of reloading vLLM. "
+                             "Saves ~3-5 min per cycle at the cost of slower post-training "
+                             "diagnostic + held-out eval. Net win for small domain subsets.")
 
     # Generator
     parser.add_argument("--samples-per-weakness", type=int, default=None,
@@ -198,6 +207,16 @@ def main():
         config.diagnostics.batch_size = args.diagnostics_batch_size
     if args.confidence_threshold is not None:
         config.diagnostics.confidence_threshold = args.confidence_threshold
+    if args.domains is not None:
+        requested = [d.strip() for d in args.domains.split(",") if d.strip()]
+        valid = set(config.diagnostics.domains)
+        invalid = [d for d in requested if d not in valid]
+        if invalid:
+            parser.error(f"unknown domain(s): {invalid}. Valid: {sorted(valid)}")
+        if not requested:
+            parser.error("--domains must list at least one domain")
+        config.diagnostics.domains = requested
+        logger.info(f"Domain subset: RSI will only probe/train on {requested}")
 
     # Generator config
     if args.samples_per_weakness is not None:
@@ -273,6 +292,7 @@ def main():
             max_model_len=config.model.max_seq_length,
             gpu_memory_utilization=args.gpu_memory_utilization,
             quantization_config=quant_config,
+            skip_reload_after_training=bool(args.skip_vllm_reload),
         )
 
     # Preflight: fail-fast validation BEFORE touching the GPU or downloading

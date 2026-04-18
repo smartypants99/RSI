@@ -329,6 +329,11 @@ class VLLMConfig:
     max_model_len: int = 4096
     gpu_memory_utilization: float = 0.85
     quantization_config: Optional[dict] = None
+    # If True, the orchestrator skips reloading vLLM after training and runs
+    # post-diagnostic + held-out eval in HF mode. Slower per-prompt but avoids
+    # the ~3-5 min vLLM reload + CUDA graph recapture. Net win when the probe
+    # count is small (e.g. single-domain RSI with ~40 questions).
+    skip_reload_after_training: bool = False
 
     def __post_init__(self):
         if not (0.0 < self.gpu_memory_utilization <= 1.0):

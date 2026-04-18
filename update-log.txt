@@ -1,523 +1,726 @@
-(main) root@C.35168062:/workspace$ git pull && bash run.sh
-fatal: not a git repository (or any of the parent directories): .git
-(main) root@C.35168062:/workspace$ ls
-RSI
-(main) root@C.35168062:/workspace$ cd RSI && git pull && bash run.sh 
-Already up to date.
-2026-04-18 11:34:29,193 [INFO] __main__: Domain subset: RSI will only probe/train on ['code']
-============================================================
-PREFLIGHT CHECK
-============================================================
-  ✓ python_version: Python 3.12.13
-  ✓ import_torch: torch available
-  ✓ import_transformers: transformers available
-  ✓ import_sympy: sympy available
-  ✓ torch: torch 2.10.0+cu128
-  ✓ cuda: NVIDIA RTX A6000, 48GB total VRAM, capability 8.6
-  ✓ vram_free: 47.0GB/48GB VRAM free
-  ✓ model_path: HF repo id Qwen/Qwen3-8B (will be downloaded if not cached)
-  ✓ output_dir_writable: outputs writable
-  ✓ disk_space: 37GB free at outputs
-  ✓ quant_exclusive: quantization config ok
-  ✓ import_vllm: vllm available
-------------------------------------------------------------
-PASS — 12 checks ok, 0 warnings
-============================================================
-2026-04-18 11:34:29,604 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:34:29,604 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
-2026-04-18 11:34:29,604 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:34:31,392 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
-INFO 04-18 11:34:31 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'Qwen/Qwen3-8B'}
-INFO 04-18 11:34:31 [model.py:549] Resolved architecture: Qwen3ForCausalLM
-INFO 04-18 11:34:31 [model.py:1678] Using max model len 4096
-INFO 04-18 11:34:31 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
-INFO 04-18 11:34:31 [vllm.py:790] Asynchronous scheduling is enabled.
-WARNING 04-18 11:34:33 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
-(EngineCore pid=1139) INFO 04-18 11:34:36 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='Qwen/Qwen3-8B', speculative_config=None, tokenizer='Qwen/Qwen3-8B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-8B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
-(EngineCore pid=1139) INFO 04-18 11:34:37 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:44409 backend=nccl
-(EngineCore pid=1139) INFO 04-18 11:34:37 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
-(EngineCore pid=1139) INFO 04-18 11:34:37 [gpu_model_runner.py:4735] Starting to load model Qwen/Qwen3-8B...
-(EngineCore pid=1139) INFO 04-18 11:34:37 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
-(EngineCore pid=1139) INFO 04-18 11:34:37 [flash_attn.py:596] Using FlashAttention version 2
-(EngineCore pid=1139) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
-(EngineCore pid=1139) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
-Loading safetensors checkpoint shards:   0% Completed | 0/5 [00:00<?, ?it/s]
-Loading safetensors checkpoint shards:  20% Completed | 1/5 [00:00<00:01,  2.77it/s]
-Loading safetensors checkpoint shards:  40% Completed | 2/5 [00:00<00:01,  2.58it/s]
-Loading safetensors checkpoint shards:  60% Completed | 3/5 [00:01<00:00,  2.57it/s]
-Loading safetensors checkpoint shards:  80% Completed | 4/5 [00:01<00:00,  2.77it/s]
-Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:01<00:00,  3.55it/s]
-Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:01<00:00,  3.09it/s]
-(EngineCore pid=1139) 
-(EngineCore pid=1139) INFO 04-18 11:34:39 [default_loader.py:384] Loading weights took 1.63 seconds
-(EngineCore pid=1139) INFO 04-18 11:34:40 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 2.408480 seconds
-(EngineCore pid=1139) INFO 04-18 11:34:42 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/ec79516ff2/rank_0_0/backbone for vLLM's torch.compile
-(EngineCore pid=1139) INFO 04-18 11:34:42 [backends.py:1111] Dynamo bytecode transform time: 2.26 s
-(EngineCore pid=1139) INFO 04-18 11:34:43 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 0.825 s
-(EngineCore pid=1139) INFO 04-18 11:34:43 [decorators.py:303] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/3e9ed926531e87a8afe73dac5c92a48c67e786b5fc7637c6c02b253726b14e48/rank_0_0/model
-(EngineCore pid=1139) INFO 04-18 11:34:43 [monitor.py:48] torch.compile took 3.32 s in total
-(EngineCore pid=1139) INFO 04-18 11:34:43 [monitor.py:76] Initial profiling/warmup run took 0.09 s
-(EngineCore pid=1139) INFO 04-18 11:34:44 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
-(EngineCore pid=1139) INFO 04-18 11:34:44 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
-(EngineCore pid=1139) INFO 04-18 11:34:45 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
-(EngineCore pid=1139) INFO 04-18 11:34:45 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
-(EngineCore pid=1139) INFO 04-18 11:34:45 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
-(EngineCore pid=1139) INFO 04-18 11:34:45 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
-(EngineCore pid=1139) INFO 04-18 11:34:45 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
-Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.92it/s]
-Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.84it/s]
-(EngineCore pid=1139) INFO 04-18 11:34:50 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
-(EngineCore pid=1139) INFO 04-18 11:34:50 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
-(EngineCore pid=1139) INFO 04-18 11:34:50 [core.py:283] init engine (profile, create kv cache, warmup model) took 10.44 seconds
-(EngineCore pid=1139) INFO 04-18 11:34:51 [vllm.py:790] Asynchronous scheduling is enabled.
-2026-04-18 11:34:51,419 [INFO] src.utils.vllm_backend: vLLM backend ready
-2026-04-18 11:34:51,419 [INFO] src.orchestrator.loop: 
-============================================================
-2026-04-18 11:34:51,420 [INFO] src.orchestrator.loop: CYCLE 1
-2026-04-18 11:34:51,420 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:34:51,420 [INFO] src.orchestrator.loop: [Cycle 1] Phase 1: DIAGNOSE
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3286.27it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.40it/s, est. speed input: 176.16 toks/s, output: 2181.00 toks/s]
-2026-04-18 11:35:09,847 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.00GB, current=0.00GB, reserved=0.00GB
-2026-04-18 11:35:09,847 [INFO] src.orchestrator.loop:   Found 2 weaknesses across 1 domains | Overall score: 0.463
-2026-04-18 11:35:09,847 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.81
-2026-04-18 11:35:09,847 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.60
-2026-04-18 11:35:09,847 [INFO] src.orchestrator.loop: [Cycle 1] Phase 2: GENERATE (2 weaknesses)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1715.51it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:26<00:00,  3.07it/s, est. speed input: 863.98 toks/s, output: 1216.30 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 48/48 [00:00<00:00, 1605.26it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 48/48 [00:18<00:00,  2.61it/s, est. speed input: 847.57 toks/s, output: 956.59 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 22/22 [00:00<00:00, 1872.95it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 22/22 [00:18<00:00,  1.19it/s, est. speed input: 307.62 toks/s, output: 376.04 toks/s]
-2026-04-18 11:36:13,013 [INFO] src.generator.data_generator: STaR: kept=21, rejected=107, rationalized=0, final=3 samples, 9 DPO pairs across 2 weakness buckets (32 failed diagnostic items processed)
-2026-04-18 11:36:13,014 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.00GB, current=0.00GB, reserved=0.00GB
-2026-04-18 11:36:13,014 [INFO] src.orchestrator.loop:   Generated 3 training samples
-2026-04-18 11:36:13,014 [INFO] src.orchestrator.loop: [Cycle 1] Phase 3: VERIFY
-2026-04-18 11:36:13,049 [INFO] src.orchestrator.loop:   1/3 passed verification (33%)
-2026-04-18 11:36:13,050 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.00GB, current=0.00GB, reserved=0.00GB
-2026-04-18 11:36:13,183 [INFO] src.orchestrator.loop: [Cycle 1] Phase 4: TRAIN on 1 verified samples
-2026-04-18 11:36:13,183 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
-(EngineCore pid=1139) INFO 04-18 11:36:13 [core.py:1210] Shutdown initiated (timeout=0)
-(EngineCore pid=1139) INFO 04-18 11:36:13 [core.py:1233] Shutdown complete
-[rank0]:[W418 11:36:13.469809900 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
-2026-04-18 11:36:13,564 [INFO] src.utils.vllm_backend: Loading HF model for training: Qwen/Qwen3-8B
-`torch_dtype` is deprecated! Use `dtype` instead!
-2026-04-18 11:36:14,311 [INFO] accelerate.utils.modeling: We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
-Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 5/5 [00:01<00:00,  3.08it/s]
-2026-04-18 11:36:16,148 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
-/venv/main/lib/python3.12/site-packages/torch/utils/checkpoint.py:232: UserWarning: None of the inputs have requires_grad=True. Gradients will be None
-  check_backward_validity(args)
-2026-04-18 11:36:31,954 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=28.63GB, current=15.44GB, reserved=19.01GB
-2026-04-18 11:36:31,955 [INFO] src.orchestrator.loop:   Training done: 1 steps, final loss: 1.1196
-2026-04-18 11:36:31,955 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5: EVALUATE
-2026-04-18 11:36:32,631 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
-2026-04-18 11:36:45,760 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
-2026-04-18 11:36:45,929 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:36:45 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-INFO 04-18 11:36:45 [model.py:549] Resolved architecture: Qwen3ForCausalLM
-INFO 04-18 11:36:45 [model.py:1678] Using max model len 4096
-The tokenizer you are loading from 'outputs/checkpoints/cycle_1' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
-(EngineCore pid=1295) INFO 04-18 11:36:49 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_1', speculative_config=None, tokenizer='outputs/checkpoints/cycle_1', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_1, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
-(EngineCore pid=1295) INFO 04-18 11:36:50 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:37949 backend=nccl
-(EngineCore pid=1295) INFO 04-18 11:36:50 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
-(EngineCore pid=1295) INFO 04-18 11:36:50 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_1...
-(EngineCore pid=1295) INFO 04-18 11:36:50 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
-(EngineCore pid=1295) INFO 04-18 11:36:50 [flash_attn.py:596] Using FlashAttention version 2
-(EngineCore pid=1295) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
-(EngineCore pid=1295) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+ 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_2'}
+INFO 04-18 12:03:13 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:03:13 [model.py:1678] Using max model len 4096
+The tokenizer you are loading from 'outputs/checkpoints/cycle_2' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1277) INFO 04-18 12:03:17 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_2', speculative_config=None, tokenizer='outputs/checkpoints/cycle_2', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_2, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1277) INFO 04-18 12:03:18 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:60835 backend=nccl
+(EngineCore pid=1277) INFO 04-18 12:03:18 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1277) INFO 04-18 12:03:18 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_2...
+(EngineCore pid=1277) INFO 04-18 12:03:19 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1277) INFO 04-18 12:03:19 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1277) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1277) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
 Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
-Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:00<00:01,  2.23it/s]
-Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:00<00:00,  2.08it/s]
-Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:01<00:00,  2.06it/s]
-Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.74it/s]
-Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.47it/s]
-(EngineCore pid=1295) 
-(EngineCore pid=1295) INFO 04-18 11:36:52 [default_loader.py:384] Loading weights took 1.64 seconds
-(EngineCore pid=1295) INFO 04-18 11:36:52 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 2.083184 seconds
-(EngineCore pid=1295) INFO 04-18 11:36:55 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/6ee48003aa/rank_0_0/backbone for vLLM's torch.compile
-(EngineCore pid=1295) INFO 04-18 11:36:55 [backends.py:1111] Dynamo bytecode transform time: 2.29 s
-(EngineCore pid=1295) INFO 04-18 11:36:56 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 0.866 s
-(EngineCore pid=1295) INFO 04-18 11:36:56 [decorators.py:303] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/eca9ad94f97038b0100de07c7b5f5f031fcad194b3258468528f069247278fe5/rank_0_0/model
-(EngineCore pid=1295) INFO 04-18 11:36:56 [monitor.py:48] torch.compile took 3.38 s in total
-(EngineCore pid=1295) INFO 04-18 11:36:56 [monitor.py:76] Initial profiling/warmup run took 0.09 s
-(EngineCore pid=1295) INFO 04-18 11:36:57 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
-(EngineCore pid=1295) INFO 04-18 11:36:57 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
-(EngineCore pid=1295) INFO 04-18 11:36:58 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
-(EngineCore pid=1295) INFO 04-18 11:36:58 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
-(EngineCore pid=1295) INFO 04-18 11:36:58 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
-(EngineCore pid=1295) INFO 04-18 11:36:58 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
-(EngineCore pid=1295) INFO 04-18 11:36:58 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
-Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.55it/s]
-Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.50it/s]
-(EngineCore pid=1295) INFO 04-18 11:37:03 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
-(EngineCore pid=1295) INFO 04-18 11:37:03 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
-(EngineCore pid=1295) INFO 04-18 11:37:03 [core.py:283] init engine (profile, create kv cache, warmup model) took 10.59 seconds
-(EngineCore pid=1295) The tokenizer you are loading from 'outputs/checkpoints/cycle_1' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
-(EngineCore pid=1295) INFO 04-18 11:37:04 [vllm.py:790] Asynchronous scheduling is enabled.
-2026-04-18 11:37:04,046 [INFO] src.utils.vllm_backend: vLLM backend ready
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4331.56it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.32it/s, est. speed input: 194.78 toks/s, output: 2210.63 toks/s]
-2026-04-18 11:37:22,602 [INFO] src.orchestrator.loop:   Score: 0.463 -> 0.263 (-0.200)
-2026-04-18 11:37:22,602 [WARNING] src.orchestrator.loop:   REGRESSION detected in: code: 0.463->0.263
-2026-04-18 11:37:22,602 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL (x3)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3069.00it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:15<00:00,  2.85it/s, est. speed input: 109.98 toks/s, output: 1460.51 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3764.33it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:15<00:00,  2.85it/s, est. speed input: 109.78 toks/s, output: 1457.81 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3837.35it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:15<00:00,  2.84it/s, est. speed input: 109.68 toks/s, output: 1456.50 toks/s]
-2026-04-18 11:38:10,052 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.089 scores=['0.089', '0.089', '0.089'] spread=0.000
-2026-04-18 11:38:10,078 [INFO] src.orchestrator.loop:   Pruned old checkpoint: cycle_1
-2026-04-18 11:38:10,078 [WARNING] src.orchestrator.loop:   checkpoint failed (FileNotFoundError): [Errno 2] No such file or directory: 'outputs/checkpoints/cycle_1/history.json'
-2026-04-18 11:38:10,079 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.40e-05 (from 2e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:38:10,079 [INFO] src.orchestrator.loop: 
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:01<00:03,  1.14s/it]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:01<00:01,  1.10it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:02<00:00,  1.41it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  2.00it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  1.57it/s]
+(EngineCore pid=1277) 
+(EngineCore pid=1277) INFO 04-18 12:03:22 [default_loader.py:384] Loading weights took 2.56 seconds
+(EngineCore pid=1277) INFO 04-18 12:03:22 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 3.160509 seconds
+(EngineCore pid=1277) INFO 04-18 12:03:24 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/6efb25d894/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1277) INFO 04-18 12:03:24 [backends.py:1111] Dynamo bytecode transform time: 2.54 s
+(EngineCore pid=1277) INFO 04-18 12:03:26 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 0.838 s
+(EngineCore pid=1277) INFO 04-18 12:03:26 [decorators.py:303] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/f3f9741fa211131ed0b3f0c87c96e795b9198f189fd6a1af747c26b66f2ead97/rank_0_0/model
+(EngineCore pid=1277) INFO 04-18 12:03:26 [monitor.py:48] torch.compile took 3.62 s in total
+(EngineCore pid=1277) INFO 04-18 12:03:26 [monitor.py:76] Initial profiling/warmup run took 0.09 s
+(EngineCore pid=1277) INFO 04-18 12:03:27 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1277) INFO 04-18 12:03:27 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1277) INFO 04-18 12:03:28 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=1277) INFO 04-18 12:03:28 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=1277) INFO 04-18 12:03:28 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=1277) INFO 04-18 12:03:28 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=1277) INFO 04-18 12:03:28 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.75it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.67it/s]
+(EngineCore pid=1277) INFO 04-18 12:03:33 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=1277) INFO 04-18 12:03:33 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=1277) INFO 04-18 12:03:33 [core.py:283] init engine (profile, create kv cache, warmup model) took 10.82 seconds
+(EngineCore pid=1277) The tokenizer you are loading from 'outputs/checkpoints/cycle_2' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1277) INFO 04-18 12:03:33 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:03:33,611 [INFO] src.utils.vllm_backend: vLLM backend ready
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4191.95it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.31it/s, est. speed input: 202.49 toks/s, output: 2204.63 toks/s]
+2026-04-18 12:03:52,319 [INFO] src.orchestrator.loop:   Score: 0.412 -> 0.263 (-0.150)
+2026-04-18 12:03:52,319 [WARNING] src.orchestrator.loop:   REGRESSION detected in: code: 0.412->0.263
+2026-04-18 12:03:52,320 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: HELD-OUT EVAL (x3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3505.05it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:15<00:00,  2.84it/s, est. speed input: 109.67 toks/s, output: 1456.34 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 4500.33it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:15<00:00,  2.84it/s, est. speed input: 109.55 toks/s, output: 1454.76 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 4522.87it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:15<00:00,  2.84it/s, est. speed input: 109.56 toks/s, output: 1454.89 toks/s]
+2026-04-18 12:04:39,856 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.089 scores=['0.089', '0.089', '0.089'] spread=0.000
+2026-04-18 12:04:39,856 [INFO] src.orchestrator.loop:     (prev 0.089, 0.000)
+2026-04-18 12:04:39,858 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.82e-05 (from 1.4e-05), bounded to ±30%; tracker=insufficient_data (n=1)
+2026-04-18 12:04:39,858 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-18 11:38:10,079 [INFO] src.orchestrator.loop: CYCLE 2
-2026-04-18 11:38:10,079 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:38:10,079 [INFO] src.orchestrator.loop: [Cycle 2] Phase 1: DIAGNOSE
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4438.42it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.23it/s, est. speed input: 198.72 toks/s, output: 2163.60 toks/s]
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.04GB
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:   Found 5 weaknesses across 1 domains | Overall score: 0.237
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:     - code/implementation: severity 1.00
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.77
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:     - code/complexity: severity 0.65
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:     - code/debugging: severity 0.32
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:     - code/bit_manipulation: severity 0.18
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop:   Injecting 1 regression weaknesses from prior cycle
-2026-04-18 11:38:29,037 [INFO] src.orchestrator.loop: [Cycle 2] Phase 2: GENERATE (6 weaknesses)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 88/88 [00:00<00:00, 1521.67it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 88/88 [01:13<00:00,  1.20it/s, est. speed input: 342.28 toks/s, output: 1094.17 toks/s]
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1550.87it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [01:12<00:00,  1.38it/s, est. speed input: 433.09 toks/s, output: 1130.90 toks/s]
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 1551.65it/s]
-Processed prompts: 100%|██████████████████████████████████████████████| 8/8 [00:27<00:00,  3.49s/it, est. speed input: 78.15 toks/s, output: 127.52 toks/s]
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1382.09it/s]
-Processed prompts: 100%|███████████████████████████████████████████████| 4/4 [00:33<00:00,  8.38s/it, est. speed input: 34.48 toks/s, output: 91.49 toks/s]
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1476.35it/s]
-Processed prompts: 100%|███████████████████████████████████████████████| 4/4 [00:45<00:00, 11.48s/it, est. speed input: 23.08 toks/s, output: 70.90 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 30/30 [00:00<00:00, 1788.64it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 30/30 [00:56<00:00,  1.89s/it, est. speed input: 140.68 toks/s, output: 410.47 toks/s]
-2026-04-18 11:43:40,221 [INFO] src.generator.data_generator:   Rebalance: capped code from 11 to 10 samples
-2026-04-18 11:43:40,221 [INFO] src.generator.data_generator: STaR: kept=31, rejected=173, rationalized=2, final=10 samples, 50 DPO pairs across 5 weakness buckets (51 failed diagnostic items processed)
-2026-04-18 11:43:40,222 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.04GB
-2026-04-18 11:43:40,222 [INFO] src.orchestrator.loop:   Generated 10 training samples
-2026-04-18 11:43:40,222 [INFO] src.orchestrator.loop: [Cycle 2] Phase 3: VERIFY
-2026-04-18 11:43:40,416 [INFO] src.orchestrator.loop:   3/10 passed verification (30%)
-2026-04-18 11:43:40,417 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.04GB
-2026-04-18 11:43:40,550 [INFO] src.orchestrator.loop: [Cycle 2] Phase 4: TRAIN on 3 verified samples
-2026-04-18 11:43:40,550 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
-(EngineCore pid=1295) INFO 04-18 11:43:40 [core.py:1210] Shutdown initiated (timeout=0)
-(EngineCore pid=1295) INFO 04-18 11:43:40 [core.py:1233] Shutdown complete
-[rank0]:[W418 11:43:40.836055232 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
-2026-04-18 11:43:40,928 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:40,930 [ERROR] src.orchestrator.loop:   Cycle 2 crashed (HFValidationError): Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-Traceback (most recent call last):
-  File "/venv/main/lib/python3.12/site-packages/transformers/utils/hub.py", line 479, in cached_files
-    hf_hub_download(
-  File "/venv/main/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 106, in _inner_fn
-    validate_repo_id(arg_value)
-  File "/venv/main/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 154, in validate_repo_id
-    raise HFValidationError(
-huggingface_hub.errors.HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 699, in _run_cycle
-    self.model_loader.swap_to_hf_for_training()
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 286, in swap_to_hf_for_training
-    self._load_hf()
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 140, in _load_hf
-    self._hf_tokenizer = AutoTokenizer.from_pretrained(
-                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/venv/main/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 1089, in from_pretrained
-    tokenizer_config = get_tokenizer_config(pretrained_model_name_or_path, **kwargs)
-                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/venv/main/lib/python3.12/site-packages/transformers/models/auto/tokenization_auto.py", line 921, in get_tokenizer_config
-    resolved_config_file = cached_file(
-                           ^^^^^^^^^^^^
-  File "/venv/main/lib/python3.12/site-packages/transformers/utils/hub.py", line 322, in cached_file
-    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/venv/main/lib/python3.12/site-packages/transformers/utils/hub.py", line 532, in cached_files
-    _get_cache_file_to_return(path_or_repo_id, filename, cache_dir, revision, repo_type)
-  File "/venv/main/lib/python3.12/site-packages/transformers/utils/hub.py", line 143, in _get_cache_file_to_return
-    resolved_file = try_to_load_from_cache(
-                    ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/venv/main/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 106, in _inner_fn
-    validate_repo_id(arg_value)
-  File "/venv/main/lib/python3.12/site-packages/huggingface_hub/utils/_validators.py", line 154, in validate_repo_id
-    raise HFValidationError(
-huggingface_hub.errors.HFValidationError: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-
-2026-04-18 11:43:41,045 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:41 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:41,046 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:41,046 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:41,046 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:41,161 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:41,161 [WARNING] src.orchestrator.loop:   checkpoint failed (FileNotFoundError): [Errno 2] No such file or directory: 'outputs/checkpoints/cycle_2/history.json'
-2026-04-18 11:43:41,162 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.82e-05 (from 1.4e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:41,162 [INFO] src.orchestrator.loop: 
+2026-04-18 12:04:39,858 [INFO] src.orchestrator.loop: CYCLE 3
+2026-04-18 12:04:39,858 [INFO] src.orchestrator.loop: ============================================================
+2026-04-18 12:04:39,859 [INFO] src.orchestrator.loop: [Cycle 3] Phase 1: DIAGNOSE
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4846.74it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.25it/s, est. speed input: 172.80 toks/s, output: 2175.82 toks/s]
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop:   Found 4 weaknesses across 1 domains | Overall score: 0.263
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.97
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.80
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop:     - code/complexity: severity 0.65
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop:     - code/debugging: severity 0.40
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop:   Injecting 1 regression weaknesses from prior cycle
+2026-04-18 12:04:58,758 [INFO] src.orchestrator.loop: [Cycle 3] Phase 2: GENERATE (5 weaknesses)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 88/88 [00:00<00:00, 1613.67it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 88/88 [00:54<00:00,  1.62it/s, est. speed input: 459.76 toks/s, output: 414.68 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1590.00it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 100/100 [00:55<00:00,  1.79it/s, est. speed input: 548.59 toks/s, output: 514.20 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 1608.09it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 8/8 [00:07<00:00,  1.01it/s, est. speed input: 275.80 toks/s, output: 184.12 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 8/8 [00:00<00:00, 1408.13it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 8/8 [00:07<00:00,  1.01it/s, est. speed input: 281.97 toks/s, output: 262.74 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1431.99it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:07<00:00,  1.95s/it, est. speed input: 136.15 toks/s, output: 138.20 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 32/32 [00:00<00:00, 1819.90it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 32/32 [00:09<00:00,  3.24it/s, est. speed input: 853.67 toks/s, output: 656.85 toks/s]
+2026-04-18 12:07:24,822 [INFO] src.generator.data_generator:   Rebalance: capped code from 16 to 10 samples
+2026-04-18 12:07:24,822 [INFO] src.generator.data_generator: STaR: kept=42, rejected=166, rationalized=2, final=10 samples, 40 DPO pairs across 5 weakness buckets (52 failed diagnostic items processed)
+2026-04-18 12:07:24,822 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:07:24,822 [INFO] src.orchestrator.loop:   Generated 10 training samples
+2026-04-18 12:07:24,822 [INFO] src.orchestrator.loop: [Cycle 3] Phase 3: VERIFY
+2026-04-18 12:07:25,236 [INFO] src.orchestrator.loop:   5/10 passed verification (50%)
+2026-04-18 12:07:25,237 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:07:25,372 [INFO] src.orchestrator.loop: [Cycle 3] Phase 4: TRAIN on 5 verified samples
+2026-04-18 12:07:25,372 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=1277) INFO 04-18 12:07:25 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=1277) INFO 04-18 12:07:25 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:07:25.660324269 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-18 12:07:25,750 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_2
+The tokenizer you are loading from 'outputs/checkpoints/cycle_2' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-04-18 12:07:26,028 [INFO] accelerate.utils.modeling: We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  2.17it/s]
+2026-04-18 12:07:27,952 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-18 12:08:35,731 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=41.53GB, current=15.44GB, reserved=24.77GB
+2026-04-18 12:08:35,731 [INFO] src.orchestrator.loop:   Training done: 2 steps, final loss: 0.6538
+2026-04-18 12:08:35,731 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5: EVALUATE
+2026-04-18 12:08:36,376 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-18 12:08:50,108 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-18 12:08:50,254 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_3
+INFO 04-18 12:08:50 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_3'}
+INFO 04-18 12:08:50 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:08:50 [model.py:1678] Using max model len 4096
+The tokenizer you are loading from 'outputs/checkpoints/cycle_3' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1465) INFO 04-18 12:08:54 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_3', speculative_config=None, tokenizer='outputs/checkpoints/cycle_3', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_3, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1465) INFO 04-18 12:08:55 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:42829 backend=nccl
+(EngineCore pid=1465) INFO 04-18 12:08:55 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1465) INFO 04-18 12:08:55 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_3...
+(EngineCore pid=1465) INFO 04-18 12:08:56 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1465) INFO 04-18 12:08:56 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1465) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1465) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:00<00:01,  1.92it/s]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:00<00:00,  2.05it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:01<00:00,  2.09it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.77it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.45it/s]
+(EngineCore pid=1465) 
+(EngineCore pid=1465) INFO 04-18 12:08:58 [default_loader.py:384] Loading weights took 1.65 seconds
+(EngineCore pid=1465) INFO 04-18 12:08:58 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 2.254690 seconds
+(EngineCore pid=1465) INFO 04-18 12:09:01 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/3c2c2815da/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1465) INFO 04-18 12:09:01 [backends.py:1111] Dynamo bytecode transform time: 2.53 s
+(EngineCore pid=1465) INFO 04-18 12:09:02 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 0.838 s
+(EngineCore pid=1465) INFO 04-18 12:09:02 [decorators.py:303] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/04f66696a1be23c1bb66b66d170db3b02807d47796b06df672a9d2d0618aff2d/rank_0_0/model
+(EngineCore pid=1465) INFO 04-18 12:09:02 [monitor.py:48] torch.compile took 3.60 s in total
+(EngineCore pid=1465) INFO 04-18 12:09:02 [monitor.py:76] Initial profiling/warmup run took 0.09 s
+(EngineCore pid=1465) INFO 04-18 12:09:03 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1465) INFO 04-18 12:09:03 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1465) INFO 04-18 12:09:04 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=1465) INFO 04-18 12:09:04 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=1465) INFO 04-18 12:09:04 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=1465) INFO 04-18 12:09:04 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=1465) INFO 04-18 12:09:04 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.60it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.62it/s]
+(EngineCore pid=1465) INFO 04-18 12:09:09 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=1465) INFO 04-18 12:09:09 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=1465) INFO 04-18 12:09:09 [core.py:283] init engine (profile, create kv cache, warmup model) took 10.88 seconds
+(EngineCore pid=1465) The tokenizer you are loading from 'outputs/checkpoints/cycle_3' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1465) INFO 04-18 12:09:09 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:09:09,735 [INFO] src.utils.vllm_backend: vLLM backend ready
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4574.69it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.42it/s, est. speed input: 188.49 toks/s, output: 2024.65 toks/s]
+2026-04-18 12:09:28,166 [INFO] src.orchestrator.loop:   Score: 0.263 -> 0.438 (+0.175)
+2026-04-18 12:09:28,167 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: HELD-OUT EVAL (x3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3565.78it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:14<00:00,  3.07it/s, est. speed input: 118.38 toks/s, output: 1219.97 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3719.23it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:14<00:00,  3.12it/s, est. speed input: 120.34 toks/s, output: 1168.61 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3678.93it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:14<00:00,  3.12it/s, est. speed input: 120.23 toks/s, output: 1167.47 toks/s]
+2026-04-18 12:10:13,087 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.281 scores=['0.267', '0.289', '0.289'] spread=0.022
+2026-04-18 12:10:13,088 [INFO] src.orchestrator.loop:     (prev 0.089, +0.193)
+2026-04-18 12:10:13,090 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.27e-05 (from 1.8200000000000002e-05), bounded to ±30%; tracker=insufficient_data (n=2)
+2026-04-18 12:10:13,090 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-18 11:43:41,162 [INFO] src.orchestrator.loop: CYCLE 3
-2026-04-18 11:43:41,162 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:43:41,162 [INFO] src.orchestrator.loop: [Cycle 3] Phase 1: DIAGNOSE
-2026-04-18 11:43:41,164 [ERROR] src.orchestrator.loop:   Cycle 3 crashed (RuntimeError): Neither vLLM nor HF model is loaded
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 613, in _run_cycle
-    diag = self.diagnostics.run(cycle)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1153, in run
-    score, evidence = self._probe_domain(domain, cycle)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1308, in _probe_domain
-    responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1124, in _generate_batch_with_oom_retry
-    self.model.generate_batch(batch, max_new_tokens=max_new_tokens, temperature=temperature)
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 248, in generate_batch
-    return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 253, in _hf_generate_batch
-    raise RuntimeError("Neither vLLM nor HF model is loaded")
-RuntimeError: Neither vLLM nor HF model is loaded
-
-2026-04-18 11:43:41,278 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:41 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:41,279 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:41,279 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:41,279 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:41,394 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:41,394 [WARNING] src.orchestrator.loop:   checkpoint failed (FileNotFoundError): [Errno 2] No such file or directory: 'outputs/checkpoints/cycle_3/history.json'
-2026-04-18 11:43:41,395 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.27e-05 (from 1.8200000000000002e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:41,395 [INFO] src.orchestrator.loop: 
+2026-04-18 12:10:13,090 [INFO] src.orchestrator.loop: CYCLE 4
+2026-04-18 12:10:13,090 [INFO] src.orchestrator.loop: ============================================================
+2026-04-18 12:10:13,091 [INFO] src.orchestrator.loop: [Cycle 4] Phase 1: DIAGNOSE
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4163.91it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 178.56 toks/s, output: 2000.27 toks/s]
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop:   Found 5 weaknesses across 1 domains | Overall score: 0.362
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.87
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.62
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop:     - code/complexity: severity 0.40
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop:     - code/debugging: severity 0.40
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop:     - code/bit_manipulation: severity 0.15
+2026-04-18 12:10:31,750 [INFO] src.orchestrator.loop: [Cycle 4] Phase 2: GENERATE (5 weaknesses)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1400.63it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 80/80 [00:08<00:00,  9.48it/s, est. speed input: 2718.68 toks/s, output: 1271.89 toks/s]
+<string>:1: SyntaxWarning: 'list' object is not callable; perhaps you missed a comma?
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1590.47it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 80/80 [00:11<00:00,  7.25it/s, est. speed input: 2142.13 toks/s, output: 1057.65 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1435.18it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:04<00:00,  1.22s/it, est. speed input: 217.87 toks/s, output: 129.21 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1438.62it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:03<00:00,  1.05it/s, est. speed input: 291.96 toks/s, output: 112.78 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1499.17it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:05<00:00,  1.30s/it, est. speed input: 203.70 toks/s, output: 123.37 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 34/34 [00:00<00:00, 1831.46it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 34/34 [00:06<00:00,  5.17it/s, est. speed input: 1347.53 toks/s, output: 632.22 toks/s]
+2026-04-18 12:11:13,425 [INFO] src.generator.data_generator: STaR: kept=14, rejected=158, rationalized=3, final=9 samples, 9 DPO pairs across 5 weakness buckets (43 failed diagnostic items processed)
+2026-04-18 12:11:13,426 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:11:13,426 [INFO] src.orchestrator.loop:   Generated 9 training samples
+2026-04-18 12:11:13,426 [INFO] src.orchestrator.loop: [Cycle 4] Phase 3: VERIFY
+2026-04-18 12:11:13,698 [INFO] src.orchestrator.loop:   4/9 passed verification (44%)
+2026-04-18 12:11:13,699 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:11:13,834 [INFO] src.orchestrator.loop: [Cycle 4] Phase 4: TRAIN on 4 verified samples
+2026-04-18 12:11:13,835 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=1465) INFO 04-18 12:11:13 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=1465) INFO 04-18 12:11:13 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:11:13.122794632 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-18 12:11:14,249 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_3
+The tokenizer you are loading from 'outputs/checkpoints/cycle_3' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-04-18 12:11:14,536 [INFO] accelerate.utils.modeling: We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  2.17it/s]
+2026-04-18 12:11:16,451 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-18 12:11:19,264 [WARNING] src.trainer.custom_lora:   Pre-training loss probe: 0.2341 < skip_if_initial_loss_below=0.300. Model has already memorized this distribution; skipping training to avoid further corruption.
+2026-04-18 12:11:19,295 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=27.10GB, current=15.44GB, reserved=15.47GB
+2026-04-18 12:11:19,295 [INFO] src.orchestrator.loop:   Training done: 0 steps, final loss: 0.2341
+2026-04-18 12:11:19,295 [INFO] src.orchestrator.loop: [Cycle 4] Phase 5: EVALUATE
+2026-04-18 12:11:19,962 [INFO] src.trainer.custom_lora:   Skipped 252/252 zero-contribution LoRA layers during merge
+2026-04-18 12:11:19,962 [WARNING] src.trainer.custom_lora:   Undertrained: 252/252 LoRA layers had zero B matrix. Training likely did not produce meaningful gradients this cycle.
+2026-04-18 12:11:19,963 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-18 12:11:33,286 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-18 12:11:33,443 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_4
+INFO 04-18 12:11:33 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_4'}
+INFO 04-18 12:11:33 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:11:33 [model.py:1678] Using max model len 4096
+The tokenizer you are loading from 'outputs/checkpoints/cycle_4' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1656) INFO 04-18 12:11:37 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_4', speculative_config=None, tokenizer='outputs/checkpoints/cycle_4', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_4, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1656) INFO 04-18 12:11:38 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:35121 backend=nccl
+(EngineCore pid=1656) INFO 04-18 12:11:38 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1656) INFO 04-18 12:11:39 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_4...
+(EngineCore pid=1656) INFO 04-18 12:11:39 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1656) INFO 04-18 12:11:39 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1656) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1656) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:01<00:03,  1.32s/it]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:01<00:01,  1.12it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:02<00:00,  1.43it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  2.02it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  1.56it/s]
+(EngineCore pid=1656) 
+(EngineCore pid=1656) INFO 04-18 12:11:42 [default_loader.py:384] Loading weights took 2.58 seconds
+(EngineCore pid=1656) INFO 04-18 12:11:42 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 3.341292 seconds
+(EngineCore pid=1656) INFO 04-18 12:11:48 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/dc7ab17977/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1656) INFO 04-18 12:11:48 [backends.py:1111] Dynamo bytecode transform time: 5.54 s
+(EngineCore pid=1656) INFO 04-18 12:11:48 [backends.py:372] Cache the graph of compile range (1, 8192) for later use
+(EngineCore pid=1656) INFO 04-18 12:11:49 [backends.py:390] Compiling a graph for compile range (1, 8192) takes 0.99 s
+(EngineCore pid=1656) INFO 04-18 12:11:51 [decorators.py:640] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/7d057c598dad78f23fbd7732589c671417f0f32d992c6e0082967f99ca68b93b/rank_0_0/model
+(EngineCore pid=1656) INFO 04-18 12:11:51 [monitor.py:48] torch.compile took 8.28 s in total
+(EngineCore pid=1656) INFO 04-18 12:11:51 [monitor.py:76] Initial profiling/warmup run took 0.09 s
+(EngineCore pid=1656) INFO 04-18 12:11:52 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1656) INFO 04-18 12:11:52 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1656) INFO 04-18 12:11:53 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=1656) INFO 04-18 12:11:53 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=1656) INFO 04-18 12:11:53 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=1656) INFO 04-18 12:11:53 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=1656) INFO 04-18 12:11:53 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.28it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.48it/s]
+(EngineCore pid=1656) INFO 04-18 12:11:58 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=1656) INFO 04-18 12:11:58 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=1656) INFO 04-18 12:11:58 [core.py:283] init engine (profile, create kv cache, warmup model) took 15.75 seconds
+(EngineCore pid=1656) The tokenizer you are loading from 'outputs/checkpoints/cycle_4' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1656) INFO 04-18 12:11:59 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:11:59,031 [INFO] src.utils.vllm_backend: vLLM backend ready
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4521.61it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.43it/s, est. speed input: 182.15 toks/s, output: 1992.24 toks/s]
+2026-04-18 12:12:17,384 [INFO] src.orchestrator.loop:   Score: 0.362 -> 0.400 (+0.038)
+2026-04-18 12:12:17,387 [INFO] src.orchestrator.loop:   Pruned old checkpoint: cycle_1
+2026-04-18 12:12:17,433 [INFO] src.orchestrator.loop:   Pruned old checkpoint: cycle_2
+2026-04-18 12:12:17,449 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=8.92e-06 (from 1.274e-05), bounded to ±30%; tracker=insufficient_data (n=2)
+2026-04-18 12:12:17,449 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-18 11:43:41,395 [INFO] src.orchestrator.loop: CYCLE 4
-2026-04-18 11:43:41,395 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:43:41,395 [INFO] src.orchestrator.loop: [Cycle 4] Phase 1: DIAGNOSE
-2026-04-18 11:43:41,396 [ERROR] src.orchestrator.loop:   Cycle 4 crashed (RuntimeError): Neither vLLM nor HF model is loaded
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 613, in _run_cycle
-    diag = self.diagnostics.run(cycle)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1153, in run
-    score, evidence = self._probe_domain(domain, cycle)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1308, in _probe_domain
-    responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1124, in _generate_batch_with_oom_retry
-    self.model.generate_batch(batch, max_new_tokens=max_new_tokens, temperature=temperature)
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 248, in generate_batch
-    return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 253, in _hf_generate_batch
-    raise RuntimeError("Neither vLLM nor HF model is loaded")
-RuntimeError: Neither vLLM nor HF model is loaded
-
-2026-04-18 11:43:41,511 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:41 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:41,511 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:41,512 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:41,512 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:41,627 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:41,628 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=8.92e-06 (from 1.274e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:41,628 [INFO] src.orchestrator.loop: 
+2026-04-18 12:12:17,449 [INFO] src.orchestrator.loop: CYCLE 5
+2026-04-18 12:12:17,449 [INFO] src.orchestrator.loop: ============================================================
+2026-04-18 12:12:17,449 [INFO] src.orchestrator.loop: [Cycle 5] Phase 1: DIAGNOSE
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3997.91it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 168.30 toks/s, output: 2023.97 toks/s]
+2026-04-18 12:12:35,990 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:12:35,990 [INFO] src.orchestrator.loop:   Found 3 weaknesses across 1 domains | Overall score: 0.425
+2026-04-18 12:12:35,990 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.88
+2026-04-18 12:12:35,990 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.48
+2026-04-18 12:12:35,990 [INFO] src.orchestrator.loop:     - code/complexity: severity 0.32
+2026-04-18 12:12:35,990 [INFO] src.orchestrator.loop: [Cycle 5] Phase 2: GENERATE (3 weaknesses)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1520.23it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:17<00:00,  4.58it/s, est. speed input: 1298.08 toks/s, output: 670.04 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 56/56 [00:00<00:00, 1349.95it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 56/56 [00:08<00:00,  6.73it/s, est. speed input: 1980.75 toks/s, output: 935.93 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1315.03it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:05<00:00,  1.36s/it, est. speed input: 196.11 toks/s, output: 130.68 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 27/27 [00:00<00:00, 1729.13it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 27/27 [00:05<00:00,  4.68it/s, est. speed input: 1217.13 toks/s, output: 607.61 toks/s]
+2026-04-18 12:13:15,744 [INFO] src.generator.data_generator:   Rebalance: capped code from 12 to 10 samples
+2026-04-18 12:13:15,745 [INFO] src.generator.data_generator: STaR: kept=23, rejected=117, rationalized=2, final=10 samples, 11 DPO pairs across 3 weakness buckets (35 failed diagnostic items processed)
+2026-04-18 12:13:15,745 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:13:15,745 [INFO] src.orchestrator.loop:   Generated 10 training samples
+2026-04-18 12:13:15,745 [INFO] src.orchestrator.loop: [Cycle 5] Phase 3: VERIFY
+2026-04-18 12:13:16,234 [INFO] src.orchestrator.loop:   7/10 passed verification (70%)
+2026-04-18 12:13:16,235 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:13:16,368 [INFO] src.orchestrator.loop: [Cycle 5] Phase 4: TRAIN on 7 verified samples
+2026-04-18 12:13:16,369 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=1656) INFO 04-18 12:13:16 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=1656) INFO 04-18 12:13:16 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:13:16.657123039 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-18 12:13:16,806 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_4
+The tokenizer you are loading from 'outputs/checkpoints/cycle_4' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-04-18 12:13:17,132 [INFO] accelerate.utils.modeling: We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  2.21it/s]
+2026-04-18 12:13:19,021 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-18 12:14:19,132 [WARNING] src.trainer.custom_lora:   Early stop: loss 0.1434 < early_stop_loss 0.15 at step 1
+2026-04-18 12:14:19,945 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=39.04GB, current=17.93GB, reserved=31.95GB
+2026-04-18 12:14:19,945 [INFO] src.orchestrator.loop:   Training done: 1 steps, final loss: 0.1434
+2026-04-18 12:14:19,945 [INFO] src.orchestrator.loop: [Cycle 5] Phase 5: EVALUATE
+2026-04-18 12:14:20,595 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-18 12:14:34,039 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-18 12:14:34,231 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_5
+INFO 04-18 12:14:34 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_5'}
+INFO 04-18 12:14:34 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:14:34 [model.py:1678] Using max model len 4096
+The tokenizer you are loading from 'outputs/checkpoints/cycle_5' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1837) INFO 04-18 12:14:38 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_5', speculative_config=None, tokenizer='outputs/checkpoints/cycle_5', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_5, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1837) INFO 04-18 12:14:39 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:51349 backend=nccl
+(EngineCore pid=1837) INFO 04-18 12:14:39 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1837) INFO 04-18 12:14:39 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_5...
+(EngineCore pid=1837) INFO 04-18 12:14:40 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1837) INFO 04-18 12:14:40 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1837) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1837) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:00<00:01,  1.79it/s]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:01<00:01,  1.99it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:01<00:00,  2.05it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.72it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.38it/s]
+(EngineCore pid=1837) 
+(EngineCore pid=1837) INFO 04-18 12:14:42 [default_loader.py:384] Loading weights took 1.69 seconds
+(EngineCore pid=1837) INFO 04-18 12:14:42 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 2.306260 seconds
+(EngineCore pid=1837) INFO 04-18 12:14:49 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/6f284bf18a/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1837) INFO 04-18 12:14:49 [backends.py:1111] Dynamo bytecode transform time: 6.36 s
+(EngineCore pid=1837) INFO 04-18 12:14:49 [backends.py:372] Cache the graph of compile range (1, 8192) for later use
+(EngineCore pid=1837) INFO 04-18 12:14:50 [backends.py:390] Compiling a graph for compile range (1, 8192) takes 1.00 s
+(EngineCore pid=1837) INFO 04-18 12:14:51 [decorators.py:640] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/b08b9903294b9fae8053eedd5fb71891ee70d5be028cccffcf04a7be753727ee/rank_0_0/model
+(EngineCore pid=1837) INFO 04-18 12:14:51 [monitor.py:48] torch.compile took 9.15 s in total
+(EngineCore pid=1837) INFO 04-18 12:14:52 [monitor.py:76] Initial profiling/warmup run took 0.10 s
+(EngineCore pid=1837) INFO 04-18 12:14:53 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1837) INFO 04-18 12:14:53 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1837) INFO 04-18 12:14:54 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=1837) INFO 04-18 12:14:54 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=1837) INFO 04-18 12:14:54 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=1837) INFO 04-18 12:14:54 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=1837) INFO 04-18 12:14:54 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.05it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.09it/s]
+(EngineCore pid=1837) INFO 04-18 12:14:59 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=1837) INFO 04-18 12:14:59 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=1837) INFO 04-18 12:14:59 [core.py:283] init engine (profile, create kv cache, warmup model) took 16.69 seconds
+(EngineCore pid=1837) The tokenizer you are loading from 'outputs/checkpoints/cycle_5' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1837) INFO 04-18 12:14:59 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:14:59,859 [INFO] src.utils.vllm_backend: vLLM backend ready
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4680.16it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:07<00:00, 11.40it/s, est. speed input: 438.68 toks/s, output: 1480.03 toks/s]
+2026-04-18 12:15:07,067 [INFO] src.orchestrator.loop:   Score: 0.425 -> 0.275 (-0.150)
+2026-04-18 12:15:07,067 [WARNING] src.orchestrator.loop:   REGRESSION detected in: code: 0.425->0.275
+2026-04-18 12:15:07,067 [INFO] src.orchestrator.loop: [Cycle 5] Phase 5b: HELD-OUT EVAL (x3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3149.51it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:04<00:00, 10.21it/s, est. speed input: 393.65 toks/s, output: 1134.00 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3290.22it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:04<00:00,  9.69it/s, est. speed input: 373.43 toks/s, output: 1043.02 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3593.00it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:04<00:00, 10.32it/s, est. speed input: 397.84 toks/s, output: 1107.30 toks/s]
+2026-04-18 12:15:21,625 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.141 scores=['0.156', '0.111', '0.156'] spread=0.044
+2026-04-18 12:15:21,625 [INFO] src.orchestrator.loop:     (prev 0.281, -0.141)
+2026-04-18 12:15:21,644 [INFO] src.orchestrator.loop:   Pruned old checkpoint: cycle_3
+2026-04-18 12:15:21,664 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.16e-05 (from 8.918e-06), bounded to ±30%; tracker=insufficient_data (n=3)
+2026-04-18 12:15:21,664 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-18 11:43:41,628 [INFO] src.orchestrator.loop: CYCLE 5
-2026-04-18 11:43:41,629 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:43:41,629 [INFO] src.orchestrator.loop: [Cycle 5] Phase 1: DIAGNOSE
-2026-04-18 11:43:41,630 [ERROR] src.orchestrator.loop:   Cycle 5 crashed (RuntimeError): Neither vLLM nor HF model is loaded
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 613, in _run_cycle
-    diag = self.diagnostics.run(cycle)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1153, in run
-    score, evidence = self._probe_domain(domain, cycle)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1308, in _probe_domain
-    responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1124, in _generate_batch_with_oom_retry
-    self.model.generate_batch(batch, max_new_tokens=max_new_tokens, temperature=temperature)
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 248, in generate_batch
-    return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 253, in _hf_generate_batch
-    raise RuntimeError("Neither vLLM nor HF model is loaded")
-RuntimeError: Neither vLLM nor HF model is loaded
-
-2026-04-18 11:43:41,745 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:41 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:41,746 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:41,746 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:41,746 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:41,860 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:41,862 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.16e-05 (from 8.918e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:41,862 [INFO] src.orchestrator.loop: 
+2026-04-18 12:15:21,664 [INFO] src.orchestrator.loop: CYCLE 6
+2026-04-18 12:15:21,664 [INFO] src.orchestrator.loop: ============================================================
+2026-04-18 12:15:21,664 [INFO] src.orchestrator.loop: [Cycle 6] Phase 1: DIAGNOSE
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4036.43it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:07<00:00, 11.33it/s, est. speed input: 453.76 toks/s, output: 1496.99 toks/s]
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop:   Found 4 weaknesses across 1 domains | Overall score: 0.275
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.89
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.71
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop:     - code/bit_manipulation: severity 0.55
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop:     - code/computing: severity 0.26
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop:   Injecting 1 regression weaknesses from prior cycle
+2026-04-18 12:15:29,087 [INFO] src.orchestrator.loop: [Cycle 6] Phase 2: GENERATE (5 weaknesses)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 88/88 [00:00<00:00, 1571.86it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 88/88 [00:05<00:00, 15.07it/s, est. speed input: 4308.22 toks/s, output: 1558.64 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1673.64it/s]
+Processed prompts: 100%|███████████████████████████████████████| 100/100 [00:07<00:00, 12.89it/s, est. speed input: 3870.24 toks/s, output: 1624.15 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 16/16 [00:00<00:00, 1747.63it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 16/16 [00:04<00:00,  3.84it/s, est. speed input: 1018.24 toks/s, output: 478.44 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1407.37it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:03<00:00,  1.31it/s, est. speed input: 386.41 toks/s, output: 137.02 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 36/36 [00:00<00:00, 1848.34it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 36/36 [00:06<00:00,  5.59it/s, est. speed input: 1471.88 toks/s, output: 680.54 toks/s]
+2026-04-18 12:15:56,517 [INFO] src.generator.data_generator: STaR: kept=1, rejected=207, rationalized=0, final=1 samples, 2 DPO pairs across 4 weakness buckets (52 failed diagnostic items processed)
+2026-04-18 12:15:56,517 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:15:56,518 [INFO] src.orchestrator.loop:   Generated 1 training samples
+2026-04-18 12:15:56,518 [INFO] src.orchestrator.loop: [Cycle 6] Phase 3: VERIFY
+2026-04-18 12:15:56,519 [INFO] src.orchestrator.loop:   1/1 passed verification (100%)
+2026-04-18 12:15:56,519 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:15:56,654 [INFO] src.orchestrator.loop: [Cycle 6] Phase 4: TRAIN on 1 verified samples
+2026-04-18 12:15:56,654 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=1837) INFO 04-18 12:15:56 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=1837) INFO 04-18 12:15:56 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:15:56.956989028 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-18 12:15:57,313 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_5
+The tokenizer you are loading from 'outputs/checkpoints/cycle_5' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-04-18 12:15:57,613 [INFO] accelerate.utils.modeling: We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  2.21it/s]
+2026-04-18 12:15:59,499 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-18 12:16:15,151 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=28.63GB, current=15.44GB, reserved=18.96GB
+2026-04-18 12:16:15,151 [INFO] src.orchestrator.loop:   Training done: 1 steps, final loss: 0.3513
+2026-04-18 12:16:15,151 [INFO] src.orchestrator.loop: [Cycle 6] Phase 5: EVALUATE
+2026-04-18 12:16:15,796 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-18 12:16:29,008 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-18 12:16:29,163 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_6
+INFO 04-18 12:16:29 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_6'}
+INFO 04-18 12:16:29 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:16:29 [model.py:1678] Using max model len 4096
+The tokenizer you are loading from 'outputs/checkpoints/cycle_6' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1976) INFO 04-18 12:16:33 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_6', speculative_config=None, tokenizer='outputs/checkpoints/cycle_6', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_6, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1976) INFO 04-18 12:16:34 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:44729 backend=nccl
+(EngineCore pid=1976) INFO 04-18 12:16:34 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1976) INFO 04-18 12:16:34 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_6...
+(EngineCore pid=1976) INFO 04-18 12:16:34 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1976) INFO 04-18 12:16:34 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1976) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1976) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:01<00:04,  1.44s/it]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:01<00:01,  1.09it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:02<00:00,  1.39it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  1.98it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  1.51it/s]
+(EngineCore pid=1976) 
+(EngineCore pid=1976) INFO 04-18 12:16:37 [default_loader.py:384] Loading weights took 2.67 seconds
+(EngineCore pid=1976) INFO 04-18 12:16:38 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 3.253546 seconds
+(EngineCore pid=1976) INFO 04-18 12:16:43 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/1ee7bc4d94/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1976) INFO 04-18 12:16:43 [backends.py:1111] Dynamo bytecode transform time: 5.46 s
+(EngineCore pid=1976) INFO 04-18 12:16:44 [backends.py:372] Cache the graph of compile range (1, 8192) for later use
+(EngineCore pid=1976) INFO 04-18 12:16:44 [backends.py:390] Compiling a graph for compile range (1, 8192) takes 0.99 s
+(EngineCore pid=1976) INFO 04-18 12:16:46 [decorators.py:640] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/f14ded5da69de15243885a9d92919cc963262ec24aad26b253d0b03eaff6142f/rank_0_0/model
+(EngineCore pid=1976) INFO 04-18 12:16:46 [monitor.py:48] torch.compile took 8.18 s in total
+(EngineCore pid=1976) INFO 04-18 12:16:46 [monitor.py:76] Initial profiling/warmup run took 0.08 s
+(EngineCore pid=1976) INFO 04-18 12:16:47 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1976) INFO 04-18 12:16:47 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1976) INFO 04-18 12:16:48 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=1976) INFO 04-18 12:16:48 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=1976) INFO 04-18 12:16:48 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=1976) INFO 04-18 12:16:48 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=1976) INFO 04-18 12:16:48 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.49it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.47it/s]
+(EngineCore pid=1976) INFO 04-18 12:16:53 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=1976) INFO 04-18 12:16:53 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=1976) INFO 04-18 12:16:53 [core.py:283] init engine (profile, create kv cache, warmup model) took 15.58 seconds
+(EngineCore pid=1976) The tokenizer you are loading from 'outputs/checkpoints/cycle_6' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=1976) INFO 04-18 12:16:54 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:16:54,132 [INFO] src.utils.vllm_backend: vLLM backend ready
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4595.93it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:15<00:00,  5.09it/s, est. speed input: 203.98 toks/s, output: 1612.57 toks/s]
+2026-04-18 12:17:10,926 [INFO] src.orchestrator.loop:   Score: 0.275 -> 0.438 (+0.162)
+2026-04-18 12:17:10,926 [INFO] src.orchestrator.loop: [Cycle 6] Phase 5b: HELD-OUT EVAL (x3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 2632.67it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 45/45 [00:13<00:00,  3.38it/s, est. speed input: 130.30 toks/s, output: 661.20 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3852.78it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 45/45 [00:13<00:00,  3.37it/s, est. speed input: 129.81 toks/s, output: 703.83 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 3857.34it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 45/45 [00:13<00:00,  3.37it/s, est. speed input: 129.95 toks/s, output: 691.86 toks/s]
+2026-04-18 12:17:54,849 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.474 scores=['0.489', '0.444', '0.489'] spread=0.044
+2026-04-18 12:17:54,849 [INFO] src.orchestrator.loop:     (prev 0.141, +0.333)
+2026-04-18 12:17:54,852 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=8.12e-06 (from 1.15934e-05), bounded to ±30%; tracker=insufficient_data (n=4)
+2026-04-18 12:17:54,852 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-18 11:43:41,862 [INFO] src.orchestrator.loop: CYCLE 6
-2026-04-18 11:43:41,862 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:43:41,862 [INFO] src.orchestrator.loop: [Cycle 6] Phase 1: DIAGNOSE
-2026-04-18 11:43:41,863 [ERROR] src.orchestrator.loop:   Cycle 6 crashed (RuntimeError): Neither vLLM nor HF model is loaded
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 613, in _run_cycle
-    diag = self.diagnostics.run(cycle)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1153, in run
-    score, evidence = self._probe_domain(domain, cycle)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1308, in _probe_domain
-    responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1124, in _generate_batch_with_oom_retry
-    self.model.generate_batch(batch, max_new_tokens=max_new_tokens, temperature=temperature)
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 248, in generate_batch
-    return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 253, in _hf_generate_batch
-    raise RuntimeError("Neither vLLM nor HF model is loaded")
-RuntimeError: Neither vLLM nor HF model is loaded
-
-2026-04-18 11:43:41,980 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:41 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:41,981 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:41,981 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:41,981 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:42,095 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:42,096 [WARNING] src.orchestrator.loop:   checkpoint failed (FileNotFoundError): [Errno 2] No such file or directory: 'outputs/checkpoints/cycle_6/history.json'
-2026-04-18 11:43:42,096 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=8.12e-06 (from 1.15934e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:42,096 [INFO] src.orchestrator.loop: 
+2026-04-18 12:17:54,852 [INFO] src.orchestrator.loop: CYCLE 7
+2026-04-18 12:17:54,852 [INFO] src.orchestrator.loop: ============================================================
+2026-04-18 12:17:54,852 [INFO] src.orchestrator.loop: [Cycle 7] Phase 1: DIAGNOSE
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2872.05it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:16<00:00,  5.00it/s, est. speed input: 199.71 toks/s, output: 1670.09 toks/s]
+2026-04-18 12:18:11,965 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:18:11,965 [INFO] src.orchestrator.loop:   Found 4 weaknesses across 1 domains | Overall score: 0.350
+2026-04-18 12:18:11,966 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.81
+2026-04-18 12:18:11,966 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.62
+2026-04-18 12:18:11,966 [INFO] src.orchestrator.loop:     - code/bit_manipulation: severity 0.42
+2026-04-18 12:18:11,966 [INFO] src.orchestrator.loop:     - code/complexity: severity 0.40
+2026-04-18 12:18:11,966 [INFO] src.orchestrator.loop: [Cycle 7] Phase 2: GENERATE (4 weaknesses)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1568.03it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 80/80 [00:08<00:00,  8.90it/s, est. speed input: 2657.22 toks/s, output: 1399.11 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1704.70it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 80/80 [00:06<00:00, 11.96it/s, est. speed input: 3436.69 toks/s, output: 1618.20 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 12/12 [00:00<00:00, 1187.91it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 12/12 [00:05<00:00,  2.27it/s, est. speed input: 600.96 toks/s, output: 356.68 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1382.21it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:03<00:00,  1.16it/s, est. speed input: 307.52 toks/s, output: 134.40 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 30/30 [00:00<00:00, 1706.62it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 30/30 [00:06<00:00,  4.49it/s, est. speed input: 1182.45 toks/s, output: 631.76 toks/s]
+2026-04-18 12:18:44,856 [INFO] src.generator.data_generator:   Rebalance: capped code from 15 to 10 samples
+2026-04-18 12:18:44,856 [INFO] src.generator.data_generator: STaR: kept=20, rejected=156, rationalized=4, final=10 samples, 22 DPO pairs across 4 weakness buckets (44 failed diagnostic items processed)
+2026-04-18 12:18:44,856 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:18:44,856 [INFO] src.orchestrator.loop:   Generated 10 training samples
+2026-04-18 12:18:44,856 [INFO] src.orchestrator.loop: [Cycle 7] Phase 3: VERIFY
+2026-04-18 12:18:45,257 [INFO] src.orchestrator.loop:   7/10 passed verification (70%)
+2026-04-18 12:18:45,257 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:18:45,392 [INFO] src.orchestrator.loop: [Cycle 7] Phase 4: TRAIN on 7 verified samples
+2026-04-18 12:18:45,392 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=1976) INFO 04-18 12:18:45 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=1976) INFO 04-18 12:18:45 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:18:45.679915501 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-18 12:18:45,808 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_6
+The tokenizer you are loading from 'outputs/checkpoints/cycle_6' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-04-18 12:18:46,113 [INFO] accelerate.utils.modeling: We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  2.19it/s]
+2026-04-18 12:18:48,021 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-18 12:18:50,828 [WARNING] src.trainer.custom_lora:   Pre-training loss probe: 0.2606 < skip_if_initial_loss_below=0.300. Model has already memorized this distribution; skipping training to avoid further corruption.
+2026-04-18 12:18:50,858 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=27.10GB, current=15.44GB, reserved=15.47GB
+2026-04-18 12:18:50,858 [INFO] src.orchestrator.loop:   Training done: 0 steps, final loss: 0.2606
+2026-04-18 12:18:50,859 [INFO] src.orchestrator.loop: [Cycle 7] Phase 5: EVALUATE
+2026-04-18 12:18:51,530 [INFO] src.trainer.custom_lora:   Skipped 252/252 zero-contribution LoRA layers during merge
+2026-04-18 12:18:51,530 [WARNING] src.trainer.custom_lora:   Undertrained: 252/252 LoRA layers had zero B matrix. Training likely did not produce meaningful gradients this cycle.
+2026-04-18 12:18:51,531 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-18 12:19:04,764 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-18 12:19:04,919 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_7
+INFO 04-18 12:19:04 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_7'}
+INFO 04-18 12:19:04 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:19:04 [model.py:1678] Using max model len 4096
+The tokenizer you are loading from 'outputs/checkpoints/cycle_7' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=2230) INFO 04-18 12:19:09 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_7', speculative_config=None, tokenizer='outputs/checkpoints/cycle_7', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_7, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=2230) INFO 04-18 12:19:10 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:52877 backend=nccl
+(EngineCore pid=2230) INFO 04-18 12:19:10 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=2230) INFO 04-18 12:19:10 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_7...
+(EngineCore pid=2230) INFO 04-18 12:19:11 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=2230) INFO 04-18 12:19:11 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=2230) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=2230) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:00<00:01,  2.22it/s]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:00<00:00,  2.16it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:01<00:00,  2.14it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.83it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:01<00:00,  2.54it/s]
+(EngineCore pid=2230) 
+(EngineCore pid=2230) INFO 04-18 12:19:13 [default_loader.py:384] Loading weights took 1.59 seconds
+(EngineCore pid=2230) INFO 04-18 12:19:13 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 2.142285 seconds
+(EngineCore pid=2230) INFO 04-18 12:19:18 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/a44281db67/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=2230) INFO 04-18 12:19:18 [backends.py:1111] Dynamo bytecode transform time: 5.43 s
+(EngineCore pid=2230) INFO 04-18 12:19:19 [backends.py:372] Cache the graph of compile range (1, 8192) for later use
+(EngineCore pid=2230) INFO 04-18 12:19:20 [backends.py:390] Compiling a graph for compile range (1, 8192) takes 0.97 s
+(EngineCore pid=2230) INFO 04-18 12:19:21 [decorators.py:640] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/94021b71989a52d2b9541eeb798582dee492561b5c33f0517ebed906ee41865f/rank_0_0/model
+(EngineCore pid=2230) INFO 04-18 12:19:21 [monitor.py:48] torch.compile took 8.14 s in total
+(EngineCore pid=2230) INFO 04-18 12:19:21 [monitor.py:76] Initial profiling/warmup run took 0.10 s
+(EngineCore pid=2230) INFO 04-18 12:19:22 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=2230) INFO 04-18 12:19:22 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=2230) INFO 04-18 12:19:23 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=2230) INFO 04-18 12:19:24 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=2230) INFO 04-18 12:19:24 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=2230) INFO 04-18 12:19:24 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=2230) INFO 04-18 12:19:24 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.43it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.51it/s]
+(EngineCore pid=2230) INFO 04-18 12:19:28 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=2230) INFO 04-18 12:19:28 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=2230) INFO 04-18 12:19:28 [core.py:283] init engine (profile, create kv cache, warmup model) took 15.58 seconds
+(EngineCore pid=2230) The tokenizer you are loading from 'outputs/checkpoints/cycle_7' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=2230) INFO 04-18 12:19:29 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:19:29,471 [INFO] src.utils.vllm_backend: vLLM backend ready
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4426.71it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:15<00:00,  5.11it/s, est. speed input: 198.77 toks/s, output: 1619.03 toks/s]
+2026-04-18 12:19:46,234 [INFO] src.orchestrator.loop:   Score: 0.350 -> 0.412 (+0.062)
+2026-04-18 12:19:46,375 [INFO] src.orchestrator.loop:   Pruned old checkpoint: cycle_4
+2026-04-18 12:19:46,397 [INFO] src.orchestrator.loop:   Pruned old checkpoint: cycle_5
+2026-04-18 12:19:46,415 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=5.68e-06 (from 8.115379999999999e-06), bounded to ±30%; tracker=insufficient_data (n=4)
+2026-04-18 12:19:46,415 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-18 11:43:42,096 [INFO] src.orchestrator.loop: CYCLE 7
-2026-04-18 11:43:42,096 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:43:42,097 [INFO] src.orchestrator.loop: [Cycle 7] Phase 1: DIAGNOSE
-2026-04-18 11:43:42,098 [ERROR] src.orchestrator.loop:   Cycle 7 crashed (RuntimeError): Neither vLLM nor HF model is loaded
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 613, in _run_cycle
-    diag = self.diagnostics.run(cycle)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1153, in run
-    score, evidence = self._probe_domain(domain, cycle)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1308, in _probe_domain
-    responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1124, in _generate_batch_with_oom_retry
-    self.model.generate_batch(batch, max_new_tokens=max_new_tokens, temperature=temperature)
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 248, in generate_batch
-    return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 253, in _hf_generate_batch
-    raise RuntimeError("Neither vLLM nor HF model is loaded")
-RuntimeError: Neither vLLM nor HF model is loaded
-
-2026-04-18 11:43:42,212 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:42 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:42,213 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:42,213 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:42,213 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:42,330 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:42,330 [WARNING] src.orchestrator.loop:   checkpoint failed (FileNotFoundError): [Errno 2] No such file or directory: 'outputs/checkpoints/cycle_7/history.json'
-2026-04-18 11:43:42,331 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=5.68e-06 (from 8.115379999999999e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:42,331 [INFO] src.orchestrator.loop: 
+2026-04-18 12:19:46,415 [INFO] src.orchestrator.loop: CYCLE 8
+2026-04-18 12:19:46,415 [INFO] src.orchestrator.loop: ============================================================
+2026-04-18 12:19:46,415 [INFO] src.orchestrator.loop: [Cycle 8] Phase 1: DIAGNOSE
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4250.36it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:16<00:00,  4.88it/s, est. speed input: 177.98 toks/s, output: 1694.52 toks/s]
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop:   Found 5 weaknesses across 1 domains | Overall score: 0.362
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.74
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.62
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop:     - code/bit_manipulation: severity 0.47
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop:     - code/debugging: severity 0.40
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop:     - code/complexity: severity 0.40
+2026-04-18 12:20:03,701 [INFO] src.orchestrator.loop: [Cycle 8] Phase 2: GENERATE (5 weaknesses)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1399.99it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 80/80 [00:08<00:00,  9.11it/s, est. speed input: 2653.38 toks/s, output: 1390.13 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1670.62it/s]
+Processed prompts: 100%|█████████████████████████████████████████| 80/80 [00:07<00:00, 10.60it/s, est. speed input: 3046.62 toks/s, output: 1425.66 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 12/12 [00:00<00:00, 1203.33it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 12/12 [00:05<00:00,  2.25it/s, est. speed input: 597.78 toks/s, output: 325.52 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1317.41it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:03<00:00,  1.01it/s, est. speed input: 292.11 toks/s, output: 110.17 toks/s]
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:00<00:00, 1345.41it/s]
+Processed prompts: 100%|█████████████████████████████████████████████| 4/4 [00:03<00:00,  1.20it/s, est. speed input: 319.52 toks/s, output: 118.92 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 34/34 [00:00<00:00, 1710.61it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 34/34 [00:06<00:00,  5.45it/s, est. speed input: 1407.33 toks/s, output: 709.51 toks/s]
+2026-04-18 12:20:40,389 [INFO] src.generator.data_generator:   Rebalance: capped code from 13 to 10 samples
+2026-04-18 12:20:40,390 [INFO] src.generator.data_generator: STaR: kept=12, rejected=168, rationalized=6, final=10 samples, 20 DPO pairs across 5 weakness buckets (45 failed diagnostic items processed)
+2026-04-18 12:20:40,390 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:20:40,390 [INFO] src.orchestrator.loop:   Generated 10 training samples
+2026-04-18 12:20:40,390 [INFO] src.orchestrator.loop: [Cycle 8] Phase 3: VERIFY
+2026-04-18 12:20:40,799 [INFO] src.orchestrator.loop:   8/10 passed verification (80%)
+2026-04-18 12:20:40,800 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.04GB
+2026-04-18 12:20:40,936 [INFO] src.orchestrator.loop: [Cycle 8] Phase 4: TRAIN on 8 verified samples
+2026-04-18 12:20:40,936 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=2230) INFO 04-18 12:20:40 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=2230) INFO 04-18 12:20:40 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:20:40.224827802 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-18 12:20:41,333 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_7
+The tokenizer you are loading from 'outputs/checkpoints/cycle_7' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-04-18 12:20:41,638 [INFO] accelerate.utils.modeling: We will use 90% of the memory on device 0 for storing the model, and 10% for the buffer to avoid OOM. You can set `max_memory` in to a higher value to use more memory (at your own risk).
+Loading checkpoint shards: 100%|█████████████████████████████████████████████████████████████████████████████████████████████| 4/4 [00:01<00:00,  2.23it/s]
+2026-04-18 12:20:43,512 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-18 12:21:52,995 [WARNING] src.trainer.custom_lora: OOM during training (batch_size=2)
+2026-04-18 12:21:53,130 [WARNING] src.trainer.custom_lora:   Retrying with batch_size=1
+2026-04-18 12:21:54,738 [WARNING] src.trainer.custom_lora:   Pre-training loss probe: 0.2309 < skip_if_initial_loss_below=0.300. Model has already memorized this distribution; skipping training to avoid further corruption.
+2026-04-18 12:21:54,766 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=41.53GB, current=17.93GB, reserved=31.91GB
+2026-04-18 12:21:54,766 [INFO] src.orchestrator.loop:   Training done: 0 steps, final loss: 0.2309
+2026-04-18 12:21:54,766 [INFO] src.orchestrator.loop: [Cycle 8] Phase 5: EVALUATE
+2026-04-18 12:21:55,412 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-18 12:22:09,663 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-18 12:22:09,845 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_8
+INFO 04-18 12:22:09 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_8'}
+INFO 04-18 12:22:09 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:22:09 [model.py:1678] Using max model len 4096
+The tokenizer you are loading from 'outputs/checkpoints/cycle_8' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=2402) INFO 04-18 12:22:13 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_8', speculative_config=None, tokenizer='outputs/checkpoints/cycle_8', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_8, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=2402) INFO 04-18 12:22:14 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:56137 backend=nccl
+(EngineCore pid=2402) INFO 04-18 12:22:14 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=2402) INFO 04-18 12:22:15 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_8...
+(EngineCore pid=2402) INFO 04-18 12:22:15 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=2402) INFO 04-18 12:22:15 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=2402) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=2402) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:01<00:04,  1.44s/it]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:01<00:01,  1.11it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:02<00:00,  1.41it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  2.00it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  1.52it/s]
+(EngineCore pid=2402) 
+(EngineCore pid=2402) INFO 04-18 12:22:18 [default_loader.py:384] Loading weights took 2.64 seconds
+(EngineCore pid=2402) INFO 04-18 12:22:18 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 3.214127 seconds
+(EngineCore pid=2402) INFO 04-18 12:22:24 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/60cc5be664/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=2402) INFO 04-18 12:22:24 [backends.py:1111] Dynamo bytecode transform time: 5.43 s
+(EngineCore pid=2402) INFO 04-18 12:22:24 [backends.py:372] Cache the graph of compile range (1, 8192) for later use
+(EngineCore pid=2402) INFO 04-18 12:22:25 [backends.py:390] Compiling a graph for compile range (1, 8192) takes 0.96 s
+(EngineCore pid=2402) INFO 04-18 12:22:26 [decorators.py:640] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/a90e5504e82284ae803980232c7069e3583e1b500201900b3c4f81a17adb91e6/rank_0_0/model
+(EngineCore pid=2402) INFO 04-18 12:22:26 [monitor.py:48] torch.compile took 8.13 s in total
+(EngineCore pid=2402) INFO 04-18 12:22:26 [monitor.py:76] Initial profiling/warmup run took 0.09 s
+(EngineCore pid=2402) INFO 04-18 12:22:28 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=2402) INFO 04-18 12:22:28 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=2402) INFO 04-18 12:22:29 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=2402) INFO 04-18 12:22:29 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=2402) INFO 04-18 12:22:29 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=2402) INFO 04-18 12:22:29 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=2402) INFO 04-18 12:22:29 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.53it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.47it/s]
+(EngineCore pid=2402) INFO 04-18 12:22:34 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=2402) INFO 04-18 12:22:34 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=2402) INFO 04-18 12:22:34 [core.py:283] init engine (profile, create kv cache, warmup model) took 15.55 seconds
+(EngineCore pid=2402) The tokenizer you are loading from 'outputs/checkpoints/cycle_8' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=2402) INFO 04-18 12:22:34 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:22:34,676 [INFO] src.utils.vllm_backend: vLLM backend ready
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 4010.04it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 80/80 [00:13<00:00,  5.83it/s, est. speed input: 212.48 toks/s, output: 842.14 toks/s]
+2026-04-18 12:22:49,428 [INFO] src.orchestrator.loop:   Score: 0.362 -> 0.312 (-0.050)
+2026-04-18 12:22:49,452 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=7.38e-06 (from 5.6807659999999985e-06), bounded to ±30%; tracker=insufficient_data (n=4)
+2026-04-18 12:22:49,452 [WARNING] src.orchestrator.loop:   EARLY STOP: Score degraded for 2 cycles (current=0.312, best=0.474 at cycle 6). Reverting to best checkpoint.
+2026-04-18 12:22:49,591 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=2402) INFO 04-18 12:22:49 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=2402) INFO 04-18 12:22:49 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:22:49.926295035 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-18 12:22:50,006 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_6
+INFO 04-18 12:22:50 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_6'}
+INFO 04-18 12:22:50 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-18 12:22:50 [model.py:1678] Using max model len 4096
+(EngineCore pid=2527) INFO 04-18 12:22:53 [core.py:105] Initializing a V1 LLM engine (v0.19.0) with config: model='outputs/checkpoints/cycle_6', speculative_config=None, tokenizer='outputs/checkpoints/cycle_6', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_6, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=2527) INFO 04-18 12:22:54 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.2:33499 backend=nccl
+(EngineCore pid=2527) INFO 04-18 12:22:54 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=2527) INFO 04-18 12:22:54 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_6...
+(EngineCore pid=2527) INFO 04-18 12:22:54 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=2527) INFO 04-18 12:22:54 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=2527) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=2527) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:00<00:01,  2.02it/s]
+Loading safetensors checkpoint shards:  50% Completed | 2/4 [00:01<00:01,  1.29it/s]
+Loading safetensors checkpoint shards:  75% Completed | 3/4 [00:02<00:00,  1.10it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  1.42it/s]
+Loading safetensors checkpoint shards: 100% Completed | 4/4 [00:02<00:00,  1.37it/s]
+(EngineCore pid=2527) 
+(EngineCore pid=2527) INFO 04-18 12:22:57 [default_loader.py:384] Loading weights took 2.94 seconds
+(EngineCore pid=2527) INFO 04-18 12:22:58 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 3.425849 seconds
+(EngineCore pid=2527) INFO 04-18 12:23:00 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/1ee7bc4d94/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=2527) INFO 04-18 12:23:00 [backends.py:1111] Dynamo bytecode transform time: 2.36 s
+(EngineCore pid=2527) INFO 04-18 12:23:01 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 0.838 s
+(EngineCore pid=2527) INFO 04-18 12:23:01 [decorators.py:303] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/f14ded5da69de15243885a9d92919cc963262ec24aad26b253d0b03eaff6142f/rank_0_0/model
+(EngineCore pid=2527) INFO 04-18 12:23:01 [monitor.py:48] torch.compile took 3.43 s in total
+(EngineCore pid=2527) INFO 04-18 12:23:01 [monitor.py:76] Initial profiling/warmup run took 0.09 s
+(EngineCore pid=2527) INFO 04-18 12:23:03 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=2527) INFO 04-18 12:23:03 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=2527) INFO 04-18 12:23:03 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.59 GiB total
+(EngineCore pid=2527) INFO 04-18 12:23:03 [gpu_worker.py:436] Available KV cache memory: 12.39 GiB
+(EngineCore pid=2527) INFO 04-18 12:23:03 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6124 to maintain the same effective KV cache size.
+(EngineCore pid=2527) INFO 04-18 12:23:03 [kv_cache_utils.py:1319] GPU KV cache size: 90,208 tokens
+(EngineCore pid=2527) INFO 04-18 12:23:03 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 22.02x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:02<00:00, 17.36it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 21.21it/s]
+(EngineCore pid=2527) INFO 04-18 12:23:08 [gpu_model_runner.py:6046] Graph capturing finished in 5 secs, took 0.57 GiB
+(EngineCore pid=2527) INFO 04-18 12:23:08 [gpu_worker.py:597] CUDA graph pool memory: 0.57 GiB (actual), 0.59 GiB (estimated), difference: 0.01 GiB (2.4%).
+(EngineCore pid=2527) INFO 04-18 12:23:08 [core.py:283] init engine (profile, create kv cache, warmup model) took 10.72 seconds
+(EngineCore pid=2527) The tokenizer you are loading from 'outputs/checkpoints/cycle_6' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+(EngineCore pid=2527) INFO 04-18 12:23:09 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-18 12:23:09,351 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-18 12:23:09,351 [INFO] src.orchestrator.loop: Early stopping at cycle 8: degradation for 2 cycles; reverted to best checkpoint (cycle 6)
+2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: Final report saved to outputs/final_report.json
+2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-18 11:43:42,331 [INFO] src.orchestrator.loop: CYCLE 8
-2026-04-18 11:43:42,331 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:43:42,331 [INFO] src.orchestrator.loop: [Cycle 8] Phase 1: DIAGNOSE
-2026-04-18 11:43:42,333 [ERROR] src.orchestrator.loop:   Cycle 8 crashed (RuntimeError): Neither vLLM nor HF model is loaded
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 613, in _run_cycle
-    diag = self.diagnostics.run(cycle)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1153, in run
-    score, evidence = self._probe_domain(domain, cycle)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1308, in _probe_domain
-    responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1124, in _generate_batch_with_oom_retry
-    self.model.generate_batch(batch, max_new_tokens=max_new_tokens, temperature=temperature)
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 248, in generate_batch
-    return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 253, in _hf_generate_batch
-    raise RuntimeError("Neither vLLM nor HF model is loaded")
-RuntimeError: Neither vLLM nor HF model is loaded
-
-2026-04-18 11:43:42,447 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:42 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:42,447 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:42,447 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:42,447 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:42,562 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:42,562 [WARNING] src.orchestrator.loop:   checkpoint failed (FileNotFoundError): [Errno 2] No such file or directory: 'outputs/checkpoints/cycle_8/history.json'
-2026-04-18 11:43:42,563 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=7.38e-06 (from 5.6807659999999985e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:42,563 [INFO] src.orchestrator.loop: 
-============================================================
-2026-04-18 11:43:42,563 [INFO] src.orchestrator.loop: CYCLE 9
-2026-04-18 11:43:42,563 [INFO] src.orchestrator.loop: ============================================================
-2026-04-18 11:43:42,563 [INFO] src.orchestrator.loop: [Cycle 9] Phase 1: DIAGNOSE
-2026-04-18 11:43:42,565 [ERROR] src.orchestrator.loop:   Cycle 9 crashed (RuntimeError): Neither vLLM nor HF model is loaded
-Traceback (most recent call last):
-  File "/workspace/RSI/src/orchestrator/loop.py", line 232, in run
-    result = self._run_cycle(cycle)
-             ^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/orchestrator/loop.py", line 613, in _run_cycle
-    diag = self.diagnostics.run(cycle)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1153, in run
-    score, evidence = self._probe_domain(domain, cycle)
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1308, in _probe_domain
-    responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
-                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/diagnostics/engine.py", line 1124, in _generate_batch_with_oom_retry
-    self.model.generate_batch(batch, max_new_tokens=max_new_tokens, temperature=temperature)
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 248, in generate_batch
-    return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/workspace/RSI/src/utils/vllm_backend.py", line 253, in _hf_generate_batch
-    raise RuntimeError("Neither vLLM nor HF model is loaded")
-RuntimeError: Neither vLLM nor HF model is loaded
-
-2026-04-18 11:43:42,679 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
-INFO 04-18 11:43:42 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
-2026-04-18 11:43:42,680 [WARNING] src.utils.vllm_backend: vLLM reload failed (OSError: Can't load the configuration of 'outputs/checkpoints/cycle_1'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'outputs/checkpoints/cycle_1' is the correct path to a directory containing a config.json file). Falling back to HF.
-2026-04-18 11:43:42,680 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
-2026-04-18 11:43:42,680 [WARNING] src.orchestrator.loop:   recovery: vLLM reload failed: Repo id must be in the form 'repo_name' or 'namespace/repo_name': 'outputs/checkpoints/cycle_1'. Use `repo_type` argument if needed.
-2026-04-18 11:43:42,794 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-18 11:43:42,795 [WARNING] src.orchestrator.loop:   checkpoint failed (FileNotFoundError): [Errno 2] No such file or directory: 'outputs/checkpoints/cycle_9/history.json'
-2026-04-18 11:43:42,795 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=9.60e-06 (from 7.384995799999998e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-18 11:43:42,796 [INFO] src.orchestrator.loop: Stopping at cycle 9: 16 consecutive failed cycles — system is unable to produce training data
-2026-04-18 11:43:42,796 [INFO] src.orchestrator.loop: Final report saved to outputs/final_report.json
-2026-04-18 11:43:42,796 [INFO] src.orchestrator.loop: 
-============================================================
-2026-04-18 11:43:42,796 [INFO] src.orchestrator.loop: IMPROVEMENT LOOP COMPLETE
-2026-04-18 11:43:42,796 [INFO] src.orchestrator.loop: Total improvement: 0.463 -> 0.000 (-0.463)
-2026-04-18 11:43:42,796 [INFO] src.orchestrator.loop: Cycles with errors: 9/9 (see cycle logs for details)
-2026-04-18 11:43:42,796 [INFO] src.orchestrator.loop: ============================================================
+2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: IMPROVEMENT LOOP COMPLETE
+2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: Total improvement: 0.463 -> 0.312 (-0.150)
+2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: ============================================================
+(EngineCore pid=2527) INFO 04-18 12:23:09 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=2527) INFO 04-18 12:23:09 [core.py:1233] Shutdown complete
+[rank0]:[W418 12:23:09.637047896 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
 (main) root@C.35168062:/workspace/RSI$ 

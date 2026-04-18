@@ -985,6 +985,29 @@ class CustomLoRATrainer:
                         loss = outputs.loss
                         unweighted_loss = loss.item()
 
+                    # Pre-backward early stop: if the forward-pass loss is
+                    # already below threshold, DO NOT do backward+step.
+                    # Critical: cycle 5 showed that once step 1 fires on a
+                    # near-memorized distribution, the damage lands even if
+                    # loss post-step is low. Checking BEFORE backward prevents
+                    # that single-step corruption. Also gates when grad_accum>1:
+                    # refuse to accumulate more grads that will eventually be
+                    # applied.
+                    if unweighted_loss < self.config.early_stop_loss:
+                        logger.warning(
+                            f"  Early stop (pre-backward): loss {unweighted_loss:.4f}"
+                            f" < early_stop_loss {self.config.early_stop_loss}"
+                            f" at batch {batch_count + 1}"
+                            f" (step_count={step_count}, accum={accum_count})"
+                        )
+                        # If there are pending accumulated grads from earlier
+                        # batches, flush them before exiting — but only when
+                        # we've already fired at least one full-group step.
+                        # Otherwise drop the partial grads cleanly.
+                        if accum_count > 0 and step_count == 0:
+                            optimizer.zero_grad()
+                        raise _EarlyStop()
+
                     loss = loss / effective_accum
                     loss.backward()
                     accum_count += 1
@@ -1001,19 +1024,6 @@ class CustomLoRATrainer:
 
                     total_loss += unweighted_loss
                     batch_count += 1
-
-                    # Loss-based early stop: guards against the cycle-3 memorization
-                    # regime (loss → 0.04 on 9 samples). Only triggers AFTER at least
-                    # one optimizer step so we don't no-op a cycle that merely starts
-                    # below the threshold.
-                    if (step_count >= 1
-                            and unweighted_loss < self.config.early_stop_loss):
-                        logger.warning(
-                            f"  Early stop: loss {unweighted_loss:.4f}"
-                            f" < early_stop_loss {self.config.early_stop_loss}"
-                            f" at step {step_count}"
-                        )
-                        raise _EarlyStop()
 
             # Flush any remaining accumulated gradients. last_loss already holds
             # the most recent batch's unweighted loss from the loop above.

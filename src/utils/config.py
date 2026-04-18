@@ -180,6 +180,14 @@ class TrainerConfig:
     early_stop_loss: float = 0.15
     max_steps_per_cycle: int = 8
     min_steps_per_cycle: int = 1
+    # skip_if_initial_loss_below: pre-training loss probe. Before the first
+    # backward step, we forward a single batch under no_grad and check the
+    # loss. If it's already below this threshold, the model has effectively
+    # memorized the training distribution and any further step will corrupt
+    # it (this is the failure mode that put held-out at 0.000 after cycle 4
+    # where step 1 hit loss 0.0547). Training returns zero-step metrics
+    # instead of applying the damaging update. Set to 0 to disable the probe.
+    skip_if_initial_loss_below: float = 0.30
     warmup_ratio: float = 0.1
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
@@ -275,6 +283,10 @@ class TrainerConfig:
             raise ValueError(f"gradient_accumulation_steps must be >= 1, got {self.gradient_accumulation_steps}")
         if self.early_stop_loss <= 0:
             raise ValueError(f"early_stop_loss must be > 0, got {self.early_stop_loss}")
+        if self.skip_if_initial_loss_below < 0:
+            raise ValueError(
+                f"skip_if_initial_loss_below must be >= 0, got {self.skip_if_initial_loss_below}"
+            )
         if self.max_steps_per_cycle < 1:
             raise ValueError(f"max_steps_per_cycle must be >= 1, got {self.max_steps_per_cycle}")
         if self.min_steps_per_cycle < 1:

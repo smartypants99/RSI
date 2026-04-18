@@ -870,6 +870,48 @@ class CustomLoRATrainer:
         if hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
 
+        # Pre-training loss probe: if the very first batch's forward loss is
+        # already below the skip threshold, the model has effectively memorized
+        # this training distribution. The loss-based early-stop triggers AFTER
+        # step 1, but by then the single damaging update has already been
+        # applied — which is exactly the failure mode observed in cycle 4
+        # (step 1 loss 0.0547, held-out went to 0.000). This probe catches that
+        # case BEFORE any gradient is applied.
+        skip_loss = getattr(self.config, "skip_if_initial_loss_below", 0.0)
+        if skip_loss > 0.0:
+            try:
+                first_batch = next(iter(dataloader))
+                probe_batch = {
+                    k: v.to(device) for k, v in first_batch.items()
+                    if k not in ("sample_weight", "calibration_brier")
+                }
+                with torch.no_grad():
+                    probe_out = model(**probe_batch)
+                    probe_loss = float(probe_out.loss.item())
+                del probe_out, probe_batch, first_batch
+                if probe_loss < skip_loss:
+                    logger.warning(
+                        f"  Pre-training loss probe: {probe_loss:.4f} < "
+                        f"skip_if_initial_loss_below={skip_loss:.3f}. "
+                        f"Model has already memorized this distribution; "
+                        f"skipping training to avoid further corruption."
+                    )
+                    # Clean up gradient checkpointing + cache before returning
+                    if hasattr(model, "gradient_checkpointing_disable"):
+                        model.gradient_checkpointing_disable()
+                    model.config.use_cache = True
+                    model.eval()
+                    torch.cuda.empty_cache()
+                    return TrainingMetrics(
+                        cycle=cycle, avg_loss=probe_loss, final_loss=probe_loss,
+                        steps=0, samples_used=len(dataset), samples_rejected=samples_rejected,
+                        learning_rate=cycle_lr, lora_layers_injected=len(self._lora_layers),
+                        avg_rank=(sum(l.rank for l in self._lora_layers.values())
+                                  / max(1, len(self._lora_layers))),
+                    )
+            except StopIteration:
+                pass  # empty dataloader — the main loop will handle it
+
         total_loss = 0.0
         batch_count = 0  # for averaging total_loss
         last_loss = 0.0

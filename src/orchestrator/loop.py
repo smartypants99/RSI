@@ -1031,8 +1031,18 @@ class ImprovementLoop:
             json.dump(progress, f, indent=2)
 
     def _check_early_stopping(self, cycle: int, result: CycleResult) -> tuple[bool, str]:
-        """Check if model is degrading and revert to best checkpoint if needed."""
-        current_score = result.post_score
+        """Check if model is degrading and revert to best checkpoint if needed.
+
+        "Best" is defined by held-out eval_score (frozen ground-truth bank) when
+        available, falling back to post_score only when eval hasn't run.
+        Previously tracked post_score exclusively — which included curriculum
+        drift and let cycle 1 get labeled "best" despite its worst held-out
+        (0.0625) and −0.325 regression. Using eval_score makes checkpoint
+        rollback actually point at the best-generalizing checkpoint.
+        """
+        current_score = (
+            result.eval_score if result.eval_score is not None else result.post_score
+        )
         if current_score > self._best_score:
             self._best_score = current_score
             self._best_checkpoint_cycle = cycle
@@ -1040,7 +1050,11 @@ class ImprovementLoop:
             return False, ""
 
         if len(self.history) >= 2:
-            prev_score = self.history[-2].post_score
+            prev_result = self.history[-2]
+            prev_score = (
+                prev_result.eval_score if prev_result.eval_score is not None
+                else prev_result.post_score
+            )
             if current_score < prev_score - 0.005:
                 self._degradation_count += 1
             else:

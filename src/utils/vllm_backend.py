@@ -286,7 +286,15 @@ class VLLMModelLoader:
         self._load_hf()
 
     def swap_to_vllm_after_training(self, checkpoint_path: str | None = None) -> None:
-        """Unload HF, reload vLLM with merged weights. Falls back to HF on failure."""
+        """Unload HF, reload vLLM with merged weights. Falls back to HF on failure.
+
+        Validates ``_current_model_path`` before loading. A local directory
+        missing config.json (or marked incomplete) means a prior cycle's
+        training failed without writing weights; loading it would raise
+        "Can't load the configuration" and kill every subsequent cycle.
+        When that happens, fall back to the original repo-id / base model
+        so the loop keeps making progress.
+        """
         if checkpoint_path:
             self._current_model_path = checkpoint_path
             self.config.model_path = checkpoint_path
@@ -300,11 +308,36 @@ class VLLMModelLoader:
             self._load_hf()
             return
 
+        # Guard against stale/incomplete local checkpoints. HF repo ids have
+        # exactly one slash and no path separator beyond that — treat those
+        # as valid. Local dirs must contain config.json and not be marked
+        # .incomplete.
+        from pathlib import Path as _P
+        p = _P(self._current_model_path)
+        is_local_dir = p.exists() and p.is_dir()
+        if is_local_dir:
+            has_config = (p / "config.json").exists()
+            is_incomplete = (p / ".incomplete").exists()
+            if not has_config or is_incomplete:
+                reason = "missing config.json" if not has_config else "marked incomplete"
+                logger.warning(
+                    f"Stale checkpoint at {p} ({reason}). Falling back to "
+                    f"base model {self.model_path} for this swap."
+                )
+                self._current_model_path = self.model_path
+                self.config.model_path = self.model_path
+
         try:
             self._load_vllm()
         except Exception as e:
             logger.warning(f"vLLM reload failed ({type(e).__name__}: {e}). Falling back to HF.")
             self._llm = None
+            # If loading from checkpoint path failed, try the base model as a
+            # last resort so the loop doesn't cascade-fail on a bad path.
+            if self._current_model_path != self.model_path:
+                logger.info(f"Retrying HF load from base model: {self.model_path}")
+                self._current_model_path = self.model_path
+                self.config.model_path = self.model_path
             self._load_hf()
 
     # ---- Compatibility with ModelLoader interface ----

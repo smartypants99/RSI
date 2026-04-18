@@ -1263,14 +1263,38 @@ class ImprovementLoop:
         """
         output_dir = self.config.orchestrator.output_dir
         already_saved = self._use_vllm and getattr(self, "_vllm_saved_this_cycle", None) == cycle
+        cycle_dir = output_dir / "checkpoints" / f"cycle_{cycle}"
         if not already_saved:
             try:
                 self.model_loader.save_checkpoint(output_dir / "checkpoints", cycle)
             except Exception as e:
                 logger.error(f"  Model checkpoint save failed: {e}")
-                (output_dir / "checkpoints" / f"cycle_{cycle}").mkdir(parents=True, exist_ok=True)
+                # Only create the dir if model save succeeded at least partially
+                # (e.g. wrote config.json). Empty directories here poison later
+                # vLLM reloads: after a failed training cycle, _current_model_path
+                # can point at this empty dir, and vLLM fails to load with a
+                # misleading "config.json not found" error.
+                if not cycle_dir.exists() or not (cycle_dir / "config.json").exists():
+                    logger.warning(
+                        f"  Not creating empty checkpoint dir {cycle_dir} "
+                        f"(would poison future vLLM reloads)"
+                    )
+        # Ensure the dir exists ONLY when the save actually produced files —
+        # needed so history.json below can be written.
+        if cycle_dir.exists() and (cycle_dir / "config.json").exists():
+            pass  # real checkpoint
+        elif already_saved:
+            # vLLM save path already created the dir with files — safe.
+            cycle_dir.mkdir(parents=True, exist_ok=True)
         else:
-            (output_dir / "checkpoints" / f"cycle_{cycle}").mkdir(parents=True, exist_ok=True)
+            # Checkpoint save failed AND nothing was written. Create a
+            # minimal marker dir just for history.json, but mark it so that
+            # swap_to_vllm_after_training() won't accidentally load from it.
+            cycle_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                (cycle_dir / ".incomplete").write_text("no model weights saved")
+            except OSError:
+                pass
 
         # Prune old model checkpoints — keep last 2 + best checkpoint
         ckpt_dir = output_dir / "checkpoints"

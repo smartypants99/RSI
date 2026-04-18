@@ -1,0 +1,455 @@
+{
+  "cycles": [
+    {
+      "cycle": 1,
+      "pre_score": 0.4625,
+      "post_score": 0.1375,
+      "improvement": -0.325,
+      "eval_score": 0.0625,
+      "eval_domain_scores": {
+        "code": 0.0625
+      },
+      "samples_generated": 3,
+      "samples_verified": 1,
+      "weaknesses_found": 2,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.1375
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 2,
+        "chain_length_spread": 0.69,
+        "avg_chain_length": 4.3,
+        "samples_per_domain": {
+          "code": 3
+        }
+      },
+      "phase_times": {
+        "diagnose": 18.49097752571106,
+        "generate": 61.44903540611267,
+        "verify": 0.03803896903991699,
+        "train": 24.513141632080078,
+        "eval": 18.584951162338257
+      },
+      "timestamp": 1776484488.0087905,
+      "duration_seconds": 161.09896969795227,
+      "errors": [],
+      "training": {
+        "avg_loss": 1.1195652484893799,
+        "final_loss": 1.1195652484893799,
+        "steps": 1,
+        "lora_layers": 252,
+        "avg_rank": 64.0,
+        "samples_used": 1,
+        "samples_rejected": 0,
+        "learning_rate": 2e-05
+      }
+    },
+    {
+      "cycle": 2,
+      "pre_score": 0.075,
+      "post_score": 0.225,
+      "improvement": 0.15000000000000002,
+      "eval_score": 0.25,
+      "eval_domain_scores": {
+        "code": 0.25
+      },
+      "samples_generated": 14,
+      "samples_verified": 5,
+      "weaknesses_found": 6,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.225
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 2,
+        "chain_length_spread": 0.93,
+        "avg_chain_length": 3.2,
+        "samples_per_domain": {
+          "code": 14
+        }
+      },
+      "phase_times": {
+        "diagnose": 18.689050436019897,
+        "generate": 470.3487286567688,
+        "verify": 0.05540204048156738,
+        "train": 101.35299730300903,
+        "eval": 18.75301480293274
+      },
+      "timestamp": 1776484667.694182,
+      "duration_seconds": 647.7229821681976,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.7436511980162727,
+        "final_loss": 0.6384976506233215,
+        "steps": 1,
+        "lora_layers": 252,
+        "avg_rank": 64.0,
+        "samples_used": 5,
+        "samples_rejected": 0,
+        "learning_rate": 9.899494936611665e-06
+      }
+    }
+  ],
+  "escalation_state": {
+    "verification": false,
+    "diagnosis": false,
+    "generation": false
+  },
+  "plateau_count": 1,
+  "consecutive_failures": 0,
+  "domain_score_history": {
+    "code": [
+      0.1375,
+      0.225
+    ]
+  },
+  "last_deescalation_cycle": -10,
+  "custom_solution_template": null,
+  "model_generated_questions": {},
+  "pending_regressions": [],
+  "best_score": 0.1375,
+  "best_checkpoint_cycle": 1,
+  "degradation_count": 0,
+  "improvement_ema": -0.023249999999999986,
+  "meta_state": {
+    "records": [
+      {
+        "cycle": 1,
+        "config_snapshot": {
+          "learning_rate": 2e-05,
+          "lora_rank": 64,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": 0.0625,
+        "held_out_delta": null,
+        "reasoning": ""
+      }
+    ],
+    "lr_bandit": {
+      "arms": [
+        {
+          "value": 5e-06,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 1e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 2e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 4e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 8e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        }
+      ],
+      "last_pulled": 5e-06
+    },
+    "prompt_variants": [],
+    "verifier_weights": {},
+    "cov": {},
+    "n_obs": 0,
+    "last_proposal": {
+      "learning_rate": 1.4e-05,
+      "verifier_check_weights": null,
+      "generator_template": null
+    },
+    "last_pre_revert_state": {
+      "learning_rate": 2e-05,
+      "verifier_check_weights": {
+        "logical_validity": 1.0,
+        "step_completeness": 1.0,
+        "assumption_grounding": 1.0,
+        "domain_exec": 2.0,
+        "consistency": 1.5
+      },
+      "generator_template": null
+    }
+  },
+  "curriculum": {
+    "active_classes": [
+      "math.linear_system",
+      "math.modular",
+      "math.gcd_chain",
+      "math.polynomial_eval",
+      "math.fraction_arith",
+      "math.combinatorics",
+      "reasoning.sequence",
+      "reasoning.logic_sat",
+      "reasoning.word_rates",
+      "code.predict_output",
+      "code.base_conversion"
+    ],
+    "retired_classes": [],
+    "class_meta": {
+      "math.linear_system": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.modular": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.gcd_chain": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.polynomial_eval": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.fraction_arith": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.combinatorics": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.sequence": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.logic_sat": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.word_rates": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "code.predict_output": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "code.base_conversion": {
+        "ceiling": 10,
+        "generation": 0
+      }
+    },
+    "solve_rate": {
+      "math.linear_system": {},
+      "math.modular": {},
+      "math.gcd_chain": {},
+      "math.polynomial_eval": {},
+      "math.fraction_arith": {},
+      "math.combinatorics": {},
+      "reasoning.sequence": {},
+      "reasoning.logic_sat": {},
+      "reasoning.word_rates": {},
+      "code.predict_output": {
+        "5": {
+          "attempts": 21,
+          "solved": 7,
+          "history": [
+            [
+              3,
+              7
+            ],
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              4
+            ],
+            [
+              3,
+              7
+            ]
+          ]
+        },
+        "6": {
+          "attempts": 26,
+          "solved": 7,
+          "history": [
+            [
+              3,
+              13
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              2,
+              5
+            ],
+            [
+              2,
+              6
+            ]
+          ]
+        },
+        "4": {
+          "attempts": 21,
+          "solved": 4,
+          "history": [
+            [
+              0,
+              10
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              3,
+              6
+            ],
+            [
+              1,
+              4
+            ]
+          ]
+        },
+        "3": {
+          "attempts": 26,
+          "solved": 4,
+          "history": [
+            [
+              0,
+              7
+            ],
+            [
+              0,
+              7
+            ],
+            [
+              1,
+              6
+            ],
+            [
+              3,
+              6
+            ]
+          ]
+        }
+      },
+      "code.base_conversion": {
+        "5": {
+          "attempts": 38,
+          "solved": 22,
+          "history": [
+            [
+              14,
+              16
+            ],
+            [
+              1,
+              6
+            ],
+            [
+              0,
+              6
+            ],
+            [
+              3,
+              5
+            ],
+            [
+              4,
+              5
+            ]
+          ]
+        },
+        "6": {
+          "attempts": 28,
+          "solved": 5,
+          "history": [
+            [
+              0,
+              4
+            ],
+            [
+              0,
+              8
+            ],
+            [
+              0,
+              8
+            ],
+            [
+              4,
+              5
+            ],
+            [
+              1,
+              3
+            ]
+          ]
+        },
+        "4": {
+          "attempts": 36,
+          "solved": 5,
+          "history": [
+            [
+              0,
+              2
+            ],
+            [
+              0,
+              14
+            ],
+            [
+              0,
+              12
+            ],
+            [
+              3,
+              4
+            ],
+            [
+              2,
+              4
+            ]
+          ]
+        },
+        "3": {
+          "attempts": 3,
+          "solved": 3,
+          "history": [
+            [
+              3,
+              3
+            ]
+          ]
+        }
+      }
+    }
+  }
+}

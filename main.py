@@ -112,6 +112,13 @@ def main():
     # Logging
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
+    # Preflight / dry-run
+    parser.add_argument("--skip-preflight", action="store_true",
+                        help="Skip environment preflight checks (NOT recommended)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Run preflight, instantiate all components, then exit "
+                             "without training. Catches config/env issues before GPU time.")
+
     args = parser.parse_args()
 
     # Create output dir BEFORE setting up file logging
@@ -230,7 +237,36 @@ def main():
             quantization_config=quant_config,
         )
 
-    loop = ImprovementLoop(config)
+    # Preflight: fail-fast validation BEFORE touching the GPU or downloading
+    # weights. This is the "before GPU time" safety net — misconfiguration
+    # should surface in seconds, not two hours into training.
+    if not args.skip_preflight:
+        from src.utils.preflight import run_preflight
+        report = run_preflight(config, require_cuda=not args.dry_run)
+        report.print_summary()
+        if not report.ok:
+            logger.error("Preflight failed — aborting. Fix the errors above "
+                         "and re-run. Use --skip-preflight to bypass (not recommended).")
+            import sys
+            sys.exit(2)
+
+    # Instantiate the loop. Constructor alone validates many invariants via
+    # dataclass __post_init__ validators, so catching exceptions here keeps
+    # the error path unified: any problem shows up as a clear failure before
+    # the first cycle starts.
+    try:
+        loop = ImprovementLoop(config)
+    except (ValueError, TypeError, ImportError, RuntimeError) as e:
+        logger.error(f"Failed to build ImprovementLoop: {type(e).__name__}: {e}")
+        import sys
+        sys.exit(2)
+
+    if args.dry_run:
+        logger.info("=" * 60)
+        logger.info("DRY RUN COMPLETE — all components instantiated, no training started.")
+        logger.info("Remove --dry-run to begin the real training loop.")
+        logger.info("=" * 60)
+        return
 
     try:
         loop.run()

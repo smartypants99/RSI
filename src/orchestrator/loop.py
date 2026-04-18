@@ -534,6 +534,15 @@ class ImprovementLoop:
                 stub.timestamp = cycle_data.get("timestamp", 0)
                 stub.duration = cycle_data.get("duration_seconds", 0)
                 stub.had_diagnostics = cycle_data.get("had_diagnostics", False)
+                # Restore eval_score too — previously dropped on resume, which
+                # broke every downstream consumer that keys on it:
+                #   - LR bandit (prev_eval=None → delta=None → never observes)
+                #   - best-checkpoint tracker (falls back to post_score)
+                #   - early-stop degradation detector
+                # Data from cycle_2 in original run showed bandit.arms stuck at
+                # (1, 1) after 3 cycles because of this.
+                stub.eval_score = cycle_data.get("eval_score")
+                stub.eval_domain_scores = cycle_data.get("eval_domain_scores", {}) or {}
                 self.history.append(stub)
 
             num_cycles = len(self.history)

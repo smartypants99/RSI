@@ -782,10 +782,14 @@ class CustomLoRATrainer:
             logger.info(f"  Skipped {samples_rejected} samples (prompt too long for sequence length)")
 
         batch_size = self.config.batch_size
-        # Cross-cycle LR decay: early cycles do coarse correction (higher LR),
-        # later cycles do refinement (lower LR). Decay by sqrt to avoid
-        # decaying too aggressively — cycle 1 gets full LR, cycle 100 gets 1/10.
-        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+        # Use the LR as configured. Previously applied a silent √cycle decay
+        # here, which collided with the meta LR bandit's proposals — the
+        # bandit would set config.learning_rate = X, then training would
+        # silently apply X/√cycle, so cycle 2's bandit-set LR became
+        # 0.7× its proposal. Meta decisions are no longer silently
+        # overridden; users wanting per-cycle LR decay can configure it
+        # through the meta controller or pass --learning-rate explicitly.
+        cycle_lr = self.config.learning_rate
         return self._train_inner(dataset, model, tokenizer, cycle, batch_size,
                                  samples_rejected, verified_samples, cycle_lr,
                                  retry_on_oom=True)

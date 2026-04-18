@@ -549,6 +549,39 @@ def _compute_calibration(
     return ece, brier, n
 
 
+class _EarlyStop(Exception):
+    """Internal signal: loss dropped below early_stop_loss mid-training."""
+
+
+def _plan_step_budget(
+    total_batches: int,
+    base_accum: int,
+    max_steps_per_cycle: int,
+    min_steps_per_cycle: int,
+) -> tuple[int, int, bool]:
+    """Plan (effective_accum, total_steps, skip) for a training cycle.
+
+    Pure function, extracted from `_train_inner` so the adaptive-step logic
+    is unit-testable without spinning up a torch model. Scales grad_accum up
+    (never down) so that total_steps <= max_steps_per_cycle. If even with
+    accum = total_batches we fall below min_steps_per_cycle, returns skip=True.
+    """
+    base_accum = max(1, base_accum)
+    max_steps = max(1, max_steps_per_cycle)
+    min_steps = max(1, min_steps_per_cycle)
+    if total_batches <= 0:
+        return base_accum, 0, True
+    need_accum = max(1, (total_batches + max_steps - 1) // max_steps)
+    effective_accum = max(base_accum, need_accum)
+    total_steps = max(
+        1,
+        total_batches // effective_accum
+        + (1 if total_batches % effective_accum != 0 else 0),
+    )
+    skip = total_steps < min_steps
+    return effective_accum, total_steps, skip
+
+
 class CustomLoRATrainer:
     """Custom LoRA trainer with proper lifecycle management.
 
@@ -790,9 +823,34 @@ class CustomLoRATrainer:
         lora_params = [p for g in optimizer.param_groups for p in g["params"]]
 
         total_batches = len(dataloader) * self.config.num_epochs
-        # +1 for potential flush of remaining accumulated gradients
-        total_steps = max(1, total_batches // self.config.gradient_accumulation_steps
-                         + (1 if total_batches % self.config.gradient_accumulation_steps != 0 else 0))
+        # Adaptive grad-accum: the configured grad_accum assumes larger datasets.
+        # With 9 samples and num_epochs=5, grad_accum=1 yields ~25 optimizer steps
+        # and reliably memorizes (cycle-3 regression). Scale grad_accum up so
+        # actual steps ≤ max_steps_per_cycle. Honor the user's configured value
+        # as a floor — never reduce it.
+        base_accum = self.config.gradient_accumulation_steps
+        effective_accum, total_steps, skip_cycle = _plan_step_budget(
+            total_batches,
+            base_accum,
+            self.config.max_steps_per_cycle,
+            self.config.min_steps_per_cycle,
+        )
+        if effective_accum != base_accum:
+            logger.info(
+                f"  Adaptive grad_accum: {base_accum} → {effective_accum}"
+                f" (total_batches={total_batches}, cap={self.config.max_steps_per_cycle})"
+            )
+        if skip_cycle:
+            logger.warning(
+                f"  Skipping cycle: expected_steps={total_steps}"
+                f" < min_steps_per_cycle={self.config.min_steps_per_cycle}"
+                f" (total_batches={total_batches}, accum={effective_accum})"
+            )
+            return TrainingMetrics(
+                cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                samples_used=len(dataset), samples_rejected=samples_rejected,
+                learning_rate=cycle_lr,
+            )
         warmup_steps = int(total_steps * self.config.warmup_ratio)
         scheduler = self._build_scheduler(optimizer, warmup_steps, total_steps)
 
@@ -878,14 +936,14 @@ class CustomLoRATrainer:
                         loss = outputs.loss
                         unweighted_loss = loss.item()
 
-                    loss = loss / self.config.gradient_accumulation_steps
+                    loss = loss / effective_accum
                     loss.backward()
                     accum_count += 1
 
                     last_loss = unweighted_loss
                     if self._collect_loss_trajectory:
                         self._loss_trajectory.append(float(unweighted_loss))
-                    if accum_count % self.config.gradient_accumulation_steps == 0:
+                    if accum_count % effective_accum == 0:
                         torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
                         optimizer.step()
                         scheduler.step()
@@ -895,14 +953,32 @@ class CustomLoRATrainer:
                     total_loss += unweighted_loss
                     batch_count += 1
 
+                    # Loss-based early stop: guards against the cycle-3 memorization
+                    # regime (loss → 0.04 on 9 samples). Only triggers AFTER at least
+                    # one optimizer step so we don't no-op a cycle that merely starts
+                    # below the threshold.
+                    if (step_count >= 1
+                            and unweighted_loss < self.config.early_stop_loss):
+                        logger.warning(
+                            f"  Early stop: loss {unweighted_loss:.4f}"
+                            f" < early_stop_loss {self.config.early_stop_loss}"
+                            f" at step {step_count}"
+                        )
+                        raise _EarlyStop()
+
             # Flush any remaining accumulated gradients. last_loss already holds
             # the most recent batch's unweighted loss from the loop above.
-            if accum_count % self.config.gradient_accumulation_steps != 0:
+            if accum_count % effective_accum != 0:
                 torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
                 optimizer.step()
                 scheduler.step()
                 optimizer.zero_grad()
                 step_count += 1
+        except _EarlyStop:
+            # Loss-based early stop. Any partially-accumulated gradients are
+            # deliberately dropped — applying them would undercut the very
+            # regularization we are enforcing.
+            pass
         except torch.cuda.OutOfMemoryError:
             # OOM during training — clean up, then retry with halved batch if allowed.
             logger.warning(f"OOM during training (batch_size={batch_size})")
@@ -941,6 +1017,14 @@ class CustomLoRATrainer:
         avg_loss = total_loss / max(batch_count, 1)
         ranks = [l.rank for l in self._lora_layers.values()]
         ece, brier, cal_n = _compute_calibration(verified_samples)
+        # Overfit detector: low final loss on few samples indicates memorization,
+        # which matches the cycle-3 regression pattern (loss 0.044 on 9 samples).
+        if last_loss < 0.1 and len(dataset) < 20 and step_count > 0:
+            logger.warning(
+                f"  Overfit suspected: final_loss={last_loss:.4f} < 0.1"
+                f" on samples_used={len(dataset)} < 20."
+                f" Training likely memorized; consider revert."
+            )
         return TrainingMetrics(
             cycle=cycle,
             avg_loss=avg_loss,

@@ -159,9 +159,27 @@ class TrainerConfig:
     lora_alpha: int = 128
     lora_dropout: float = 0.05
     learning_rate: float = 2e-5
-    num_epochs: int = 3
+    # Defaults tuned for small-cycle RSI regime (typ. 5-30 verified samples/cycle).
+    # Cycle-2 (success) = 1-2 optimizer steps, final loss ~0.4-0.8.
+    # Cycle-3 (overfit) = 25+ steps on 9 samples, final loss 0.045.
+    # With samples<30: num_epochs=2, grad_accum=4 keeps steps in the 2-4 range
+    # instead of the 25+ that caused memorization.
+    num_epochs: int = 2
     batch_size: int = 2
-    gradient_accumulation_steps: int = 16
+    gradient_accumulation_steps: int = 4
+
+    # Regularization knobs (see _train_inner in custom_lora.py).
+    # early_stop_loss: if unweighted loss drops below this mid-training, stop
+    #   immediately. 0.15 is well below natural SFT floor (~0.4) but above the
+    #   0.044 memorization catastrophe observed in cycle 3.
+    # max_steps_per_cycle: hard cap on optimizer steps per cycle. If the
+    #   naive (num_epochs × len(dataloader)) / grad_accum would exceed this,
+    #   grad_accum is scaled up automatically.
+    # min_steps_per_cycle: if the computed step budget is below this, the
+    #   cycle is skipped with a warning (too little signal to update safely).
+    early_stop_loss: float = 0.15
+    max_steps_per_cycle: int = 8
+    min_steps_per_cycle: int = 1
     warmup_ratio: float = 0.1
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
@@ -255,6 +273,17 @@ class TrainerConfig:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
         if self.gradient_accumulation_steps < 1:
             raise ValueError(f"gradient_accumulation_steps must be >= 1, got {self.gradient_accumulation_steps}")
+        if self.early_stop_loss <= 0:
+            raise ValueError(f"early_stop_loss must be > 0, got {self.early_stop_loss}")
+        if self.max_steps_per_cycle < 1:
+            raise ValueError(f"max_steps_per_cycle must be >= 1, got {self.max_steps_per_cycle}")
+        if self.min_steps_per_cycle < 1:
+            raise ValueError(f"min_steps_per_cycle must be >= 1, got {self.min_steps_per_cycle}")
+        if self.min_steps_per_cycle > self.max_steps_per_cycle:
+            raise ValueError(
+                f"min_steps_per_cycle ({self.min_steps_per_cycle}) > "
+                f"max_steps_per_cycle ({self.max_steps_per_cycle})"
+            )
         if not (0.0 <= self.warmup_ratio <= 1.0):
             raise ValueError(f"warmup_ratio must be in [0, 1], got {self.warmup_ratio}")
         if self.min_rank > self.max_rank:

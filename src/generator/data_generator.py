@@ -612,6 +612,16 @@ class DataGenerator:
 
     DEDUP_JACCARD_THRESHOLD = 0.85
     MAX_DOMAIN_FRACTION = 0.40
+    # Cap any single subdomain (e.g. code/implementation) to this fraction of
+    # the final sample set. Without this cap, STaR's bias toward whichever
+    # subdomain has the densest problem bank (for code: implementation) means
+    # the loop re-trains on trivial already-solved stubs (head/tail/length)
+    # cycle after cycle while untouched subdomains (bit_manipulation, debugging,
+    # complexity) never contribute. Forensic finding: winning cycles (3, 6)
+    # happened to add a novel subdomain; losing cycles just re-ran
+    # implementation. Enforcing this cap makes that the default rather than
+    # an accident of STaR's rejection rate.
+    MAX_SUBDOMAIN_FRACTION = 0.50
 
     def __init__(self, config: GeneratorConfig, model_loader: ModelLoader):
         self.config = config
@@ -1232,30 +1242,54 @@ class DataGenerator:
         }
 
     def _rebalance_domains(self, samples: list[TrainingSample]) -> list[TrainingSample]:
-        """Cap over-represented domains so no single domain dominates training."""
+        """Cap over-represented domains and subdomains so training stays diverse.
+
+        Two-pass:
+          1. Per-domain cap at MAX_DOMAIN_FRACTION (original behavior)
+          2. Per-subdomain cap at MAX_SUBDOMAIN_FRACTION — prevents the
+             code/implementation monoculture that killed cycles 1/2/5.
+        Within each over-represented bucket, keep highest-severity samples.
+        """
         if not samples:
             return samples
-        max_per_domain = max(10, int(len(samples) * self.MAX_DOMAIN_FRACTION))
+
+        # Pass 1: domain-level cap
+        max_per_domain = max(2, int(len(samples) * self.MAX_DOMAIN_FRACTION))
         domain_buckets: dict[str, list[TrainingSample]] = {}
         for s in samples:
             domain_buckets.setdefault(s.domain, []).append(s)
+        over_d = {d for d, ss in domain_buckets.items() if len(ss) > max_per_domain}
+        if over_d:
+            kept: list[TrainingSample] = []
+            for domain, ds in domain_buckets.items():
+                if domain in over_d:
+                    ds.sort(key=lambda s: s.severity_at_generation, reverse=True)
+                    ds = ds[:max_per_domain]
+                    logger.info(
+                        f"  Rebalance(domain): capped {domain} to {len(ds)} samples"
+                    )
+                kept.extend(ds)
+            samples = kept
 
-        over_represented = {d for d, ss in domain_buckets.items() if len(ss) > max_per_domain}
-        if not over_represented:
-            return samples
+        # Pass 2: subdomain-level cap — target_weakness is "domain/subdomain"
+        max_per_sub = max(2, int(len(samples) * self.MAX_SUBDOMAIN_FRACTION))
+        sub_buckets: dict[str, list[TrainingSample]] = {}
+        for s in samples:
+            sub_buckets.setdefault(s.target_weakness or s.domain, []).append(s)
+        over_s = {sd for sd, ss in sub_buckets.items() if len(ss) > max_per_sub}
+        if over_s:
+            kept = []
+            for sub, ss in sub_buckets.items():
+                if sub in over_s:
+                    ss.sort(key=lambda s: s.severity_at_generation, reverse=True)
+                    ss = ss[:max_per_sub]
+                    logger.info(
+                        f"  Rebalance(subdomain): capped {sub} to {len(ss)} samples"
+                    )
+                kept.extend(ss)
+            samples = kept
 
-        result: list[TrainingSample] = []
-        for domain, domain_samples in domain_buckets.items():
-            if domain in over_represented:
-                domain_samples.sort(key=lambda s: s.severity_at_generation, reverse=True)
-                kept = domain_samples[:max_per_domain]
-                logger.info(
-                    f"  Rebalance: capped {domain} from {len(domain_samples)} to {len(kept)} samples"
-                )
-                result.extend(kept)
-            else:
-                result.extend(domain_samples)
-        return result
+        return samples
 
     def _accept_unique(self, sample: TrainingSample) -> bool:
         if sample.content_hash in self._seen_hashes:

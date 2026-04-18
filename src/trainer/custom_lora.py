@@ -768,6 +768,10 @@ class CustomLoRATrainer:
             return TrainingMetrics(cycle=cycle, avg_loss=0, final_loss=0,
                                   steps=0, samples_used=len(verified_samples),
                                   samples_rejected=0, learning_rate=self.config.learning_rate)
+        # Flatten optimizer param groups — used below for gradient clipping.
+        # The LoRA+ refactor moved optimizer construction into _build_optimizer,
+        # so the trainable param list has to be recovered from the optimizer.
+        lora_params = [p for g in optimizer.param_groups for p in g["params"]]
 
         total_batches = len(dataloader) * self.config.num_epochs
         # +1 for potential flush of remaining accumulated gradients
@@ -1037,6 +1041,7 @@ class CustomLoRATrainer:
                 samples_used=len(dataset), samples_rejected=0,
                 learning_rate=cycle_lr, training_mode="dpo",
             )
+        lora_params = [p for g in optimizer.param_groups for p in g["params"]]
         total_batches = len(dataloader) * self.config.num_epochs
         total_steps = max(1, total_batches // self.config.gradient_accumulation_steps
                          + (1 if total_batches % self.config.gradient_accumulation_steps != 0 else 0))
@@ -1443,6 +1448,14 @@ class CustomLoRATrainer:
         prompts = [s.prompt for s in verified_samples]
 
         optimizer = self._build_optimizer(model, cycle_lr)
+        if optimizer is None:
+            logger.warning("No trainable parameters for GRPO (inject_lora first)")
+            return TrainingMetrics(
+                cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                samples_used=0, samples_rejected=0,
+                learning_rate=cycle_lr, training_mode="grpo",
+            )
+        lora_params = [p for g in optimizer.param_groups for p in g["params"]]
         # Heuristic step count: one optimizer step per (grad_accum) prompts, per epoch.
         accum = self.config.gradient_accumulation_steps
         prompts_per_epoch = len(prompts)

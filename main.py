@@ -34,6 +34,17 @@ def main():
                         help="Cycles without improvement before stopping (default: 3)")
     parser.add_argument("--min-improvement-threshold", type=float, default=None,
                         help="Minimum improvement to count as progress (default: 0.01)")
+    parser.add_argument("--heldout-repetitions", type=int, default=None,
+                        help="Run held-out eval N times per cycle. Spread between reps "
+                             "is a direct measurement of evaluation noise (default: 1)")
+    parser.add_argument("--write-cycle-metrics", action="store_true",
+                        help="Dump outputs/cycle_metrics/cycle_N.json with per-sample, "
+                             "STaR, per-rep, and pre/post-diff data for forensics")
+    parser.add_argument("--write-cycle-samples", action="store_true",
+                        help="Dump outputs/cycle_samples/cycle_N.jsonl — full training "
+                             "samples per cycle for manual inspection / diffing")
+    parser.add_argument("--collect-training-loss-trajectory", action="store_true",
+                        help="Capture per-batch SFT loss for cycle_metrics forensics")
 
     # Diagnostics
     parser.add_argument("--questions-per-domain", type=int, default=None,
@@ -199,6 +210,14 @@ def main():
         config.orchestrator.plateau_patience = args.plateau_patience
     if args.min_improvement_threshold is not None:
         config.orchestrator.min_improvement_threshold = args.min_improvement_threshold
+    if args.heldout_repetitions is not None:
+        config.orchestrator.heldout_repetitions = args.heldout_repetitions
+    if args.write_cycle_metrics:
+        config.orchestrator.write_cycle_metrics = True
+    if args.write_cycle_samples:
+        config.orchestrator.write_cycle_samples = True
+    if args.collect_training_loss_trajectory:
+        config.orchestrator.collect_training_loss_trajectory = True
 
     # Diagnostics config
     if args.questions_per_domain is not None:

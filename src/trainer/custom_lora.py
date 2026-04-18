@@ -881,8 +881,11 @@ class CustomLoRATrainer:
         if skip_loss > 0.0:
             try:
                 first_batch = next(iter(dataloader))
+                # Resolve device here — the cached `device` local below is set
+                # only after this probe runs.
+                probe_device = self.model_loader.device
                 probe_batch = {
-                    k: v.to(device) for k, v in first_batch.items()
+                    k: v.to(probe_device) for k, v in first_batch.items()
                     if k not in ("sample_weight", "calibration_brier")
                 }
                 with torch.no_grad():

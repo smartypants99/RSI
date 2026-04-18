@@ -1,0 +1,990 @@
+{
+  "cycles": [
+    {
+      "cycle": 1,
+      "pre_score": 0.4625,
+      "post_score": 0.3125,
+      "improvement": -0.15000000000000002,
+      "eval_score": 0.08888888888888889,
+      "eval_domain_scores": {
+        "code": 0.08888888888888889
+      },
+      "samples_generated": 4,
+      "samples_verified": 2,
+      "weaknesses_found": 2,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.3125
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 2,
+        "chain_length_spread": 0.75,
+        "avg_chain_length": 4.0,
+        "samples_per_domain": {
+          "code": 4
+        }
+      },
+      "phase_times": {
+        "diagnose": 18.467522144317627,
+        "generate": 62.60899305343628,
+        "verify": 0.07182979583740234,
+        "train": 31.87955379486084,
+        "eval": 47.47598576545715
+      },
+      "timestamp": 1776513306.5714343,
+      "duration_seconds": 167.0674660205841,
+      "errors": [],
+      "training": {
+        "avg_loss": 1.1830673217773438,
+        "final_loss": 1.1830673217773438,
+        "steps": 1,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 2,
+        "samples_rejected": 0,
+        "learning_rate": 2e-05
+      }
+    },
+    {
+      "cycle": 2,
+      "pre_score": 0.4125,
+      "post_score": 0.2625,
+      "improvement": -0.14999999999999997,
+      "eval_score": 0.08888888888888889,
+      "eval_domain_scores": {
+        "code": 0.08888888888888889
+      },
+      "samples_generated": 6,
+      "samples_verified": 3,
+      "weaknesses_found": 3,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.2625
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 1,
+        "chain_length_spread": 0.3,
+        "avg_chain_length": 3.3,
+        "samples_per_domain": {
+          "code": 6
+        }
+      },
+      "phase_times": {
+        "diagnose": 19.033677101135254,
+        "generate": 193.80891251564026,
+        "verify": 0.3030705451965332,
+        "train": 44.769103050231934,
+        "eval": 47.536235332489014
+      },
+      "timestamp": 1776513521.1168067,
+      "duration_seconds": 311.20323729515076,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.9094953835010529,
+        "final_loss": 0.949367105960846,
+        "steps": 1,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 3,
+        "samples_rejected": 0,
+        "learning_rate": 1.4e-05
+      }
+    },
+    {
+      "cycle": 3,
+      "pre_score": 0.2625,
+      "post_score": 0.4375,
+      "improvement": 0.175,
+      "eval_score": 0.28148148148148144,
+      "eval_domain_scores": {
+        "code": 0.28888888888888886
+      },
+      "samples_generated": 10,
+      "samples_verified": 5,
+      "weaknesses_found": 5,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.4375
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 2,
+        "chain_length_spread": 0.0,
+        "avg_chain_length": 3.0,
+        "samples_per_domain": {
+          "code": 10
+        }
+      },
+      "phase_times": {
+        "diagnose": 18.899210691452026,
+        "generate": 146.06365513801575,
+        "verify": 0.4140019416809082,
+        "train": 70.3586654663086,
+        "eval": 44.92090582847595
+      },
+      "timestamp": 1776513879.858953,
+      "duration_seconds": 288.30825686454773,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.7673561771710714,
+        "final_loss": 0.6538461446762085,
+        "steps": 2,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 5,
+        "samples_rejected": 0,
+        "learning_rate": 1.8200000000000002e-05
+      }
+    },
+    {
+      "cycle": 4,
+      "pre_score": 0.3625,
+      "post_score": 0.4,
+      "improvement": 0.03750000000000003,
+      "eval_score": null,
+      "eval_domain_scores": {},
+      "samples_generated": 9,
+      "samples_verified": 4,
+      "weaknesses_found": 5,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.4
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 3,
+        "chain_length_spread": 0.0,
+        "avg_chain_length": 3.0,
+        "samples_per_domain": {
+          "code": 9
+        }
+      },
+      "phase_times": {
+        "diagnose": 18.65886425971985,
+        "generate": 41.675413846969604,
+        "verify": 0.27224254608154297,
+        "train": 5.460083484649658
+      },
+      "timestamp": 1776514213.091013,
+      "duration_seconds": 124.2940080165863,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.23405835032463074,
+        "final_loss": 0.23405835032463074,
+        "steps": 0,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 4,
+        "samples_rejected": 0,
+        "learning_rate": 1.274e-05
+      }
+    },
+    {
+      "cycle": 5,
+      "pre_score": 0.425,
+      "post_score": 0.275,
+      "improvement": -0.14999999999999997,
+      "eval_score": 0.14074074074074075,
+      "eval_domain_scores": {
+        "code": 0.15555555555555556
+      },
+      "samples_generated": 10,
+      "samples_verified": 7,
+      "weaknesses_found": 3,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.275
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 2,
+        "chain_length_spread": 0.0,
+        "avg_chain_length": 3.0,
+        "samples_per_domain": {
+          "code": 10
+        }
+      },
+      "phase_times": {
+        "diagnose": 18.540305852890015,
+        "generate": 39.754847049713135,
+        "verify": 0.48884105682373047,
+        "train": 63.57629036903381,
+        "eval": 14.558335542678833
+      },
+      "timestamp": 1776514337.44952,
+      "duration_seconds": 169.61802911758423,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.3049413710832596,
+        "final_loss": 0.1434294432401657,
+        "steps": 1,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 7,
+        "samples_rejected": 0,
+        "learning_rate": 8.918e-06
+      }
+    },
+    {
+      "cycle": 6,
+      "pre_score": 0.275,
+      "post_score": 0.4375,
+      "improvement": 0.16249999999999998,
+      "eval_score": 0.47407407407407404,
+      "eval_domain_scores": {
+        "code": 0.4888888888888889
+      },
+      "samples_generated": 1,
+      "samples_verified": 1,
+      "weaknesses_found": 5,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.4375
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 1,
+        "chain_length_spread": 0.0,
+        "avg_chain_length": 3.0,
+        "samples_per_domain": {
+          "code": 1
+        }
+      },
+      "phase_times": {
+        "diagnose": 7.42205810546875,
+        "generate": 27.430198669433594,
+        "verify": 0.0011434555053710938,
+        "train": 18.497207403182983,
+        "eval": 43.92313504219055
+      },
+      "timestamp": 1776514521.664644,
+      "duration_seconds": 109.26191258430481,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.3513071835041046,
+        "final_loss": 0.3513071835041046,
+        "steps": 1,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 1,
+        "samples_rejected": 0,
+        "learning_rate": 1.15934e-05
+      }
+    },
+    {
+      "cycle": 7,
+      "pre_score": 0.35,
+      "post_score": 0.4125,
+      "improvement": 0.0625,
+      "eval_score": null,
+      "eval_domain_scores": {},
+      "samples_generated": 10,
+      "samples_verified": 7,
+      "weaknesses_found": 4,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.4125
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 2,
+        "chain_length_spread": 0.0,
+        "avg_chain_length": 3.0,
+        "samples_per_domain": {
+          "code": 10
+        }
+      },
+      "phase_times": {
+        "diagnose": 17.112546682357788,
+        "generate": 32.89036965370178,
+        "verify": 0.40030813217163086,
+        "train": 5.465912103652954
+      },
+      "timestamp": 1776514674.852802,
+      "duration_seconds": 111.38167834281921,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.26055923104286194,
+        "final_loss": 0.26055923104286194,
+        "steps": 0,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 7,
+        "samples_rejected": 0,
+        "learning_rate": 8.115379999999999e-06
+      }
+    },
+    {
+      "cycle": 8,
+      "pre_score": 0.3625,
+      "post_score": 0.3125,
+      "improvement": -0.04999999999999999,
+      "eval_score": null,
+      "eval_domain_scores": {},
+      "samples_generated": 10,
+      "samples_verified": 8,
+      "weaknesses_found": 5,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {
+        "code": 0.3125
+      },
+      "diversity_stats": {
+        "topic_coverage": 0.125,
+        "unique_domains": 1,
+        "unique_subdomains": 2,
+        "chain_length_spread": 0.0,
+        "avg_chain_length": 3.0,
+        "samples_per_domain": {
+          "code": 10
+        }
+      },
+      "phase_times": {
+        "diagnose": 17.285519123077393,
+        "generate": 36.68833518028259,
+        "verify": 0.40909910202026367,
+        "train": 73.82908749580383
+      },
+      "timestamp": 1776514786.415585,
+      "duration_seconds": 183.0128309726715,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.2309463769197464,
+        "final_loss": 0.2309463769197464,
+        "steps": 0,
+        "lora_layers": 252,
+        "avg_rank": 16.0,
+        "samples_used": 8,
+        "samples_rejected": 0,
+        "learning_rate": 5.6807659999999985e-06
+      }
+    }
+  ],
+  "escalation_state": {
+    "verification": false,
+    "diagnosis": false,
+    "generation": false
+  },
+  "plateau_count": 0,
+  "consecutive_failures": 1,
+  "domain_score_history": {
+    "code": [
+      0.3125,
+      0.2625,
+      0.4375,
+      0.4,
+      0.275,
+      0.4375,
+      0.4125,
+      0.3125
+    ]
+  },
+  "last_deescalation_cycle": -10,
+  "custom_solution_template": null,
+  "model_generated_questions": {},
+  "pending_regressions": [],
+  "best_score": 0.47407407407407404,
+  "best_checkpoint_cycle": 6,
+  "degradation_count": 1,
+  "improvement_ema": 0.00910215150000001,
+  "meta_state": {
+    "records": [
+      {
+        "cycle": 1,
+        "config_snapshot": {
+          "learning_rate": 2e-05,
+          "lora_rank": 16,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": 0.08888888888888889,
+        "held_out_delta": null,
+        "reasoning": ""
+      },
+      {
+        "cycle": 2,
+        "config_snapshot": {
+          "learning_rate": 1.4e-05,
+          "lora_rank": 16,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": 0.08888888888888889,
+        "held_out_delta": 0.0,
+        "reasoning": ""
+      },
+      {
+        "cycle": 3,
+        "config_snapshot": {
+          "learning_rate": 1.8200000000000002e-05,
+          "lora_rank": 16,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": 0.28148148148148144,
+        "held_out_delta": 0.19259259259259254,
+        "reasoning": ""
+      },
+      {
+        "cycle": 4,
+        "config_snapshot": {
+          "learning_rate": 1.274e-05,
+          "lora_rank": 16,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": null,
+        "held_out_delta": null,
+        "reasoning": ""
+      },
+      {
+        "cycle": 5,
+        "config_snapshot": {
+          "learning_rate": 8.918e-06,
+          "lora_rank": 16,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": 0.14074074074074075,
+        "held_out_delta": -0.1407407407407407,
+        "reasoning": ""
+      },
+      {
+        "cycle": 6,
+        "config_snapshot": {
+          "learning_rate": 1.15934e-05,
+          "lora_rank": 16,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": 0.47407407407407404,
+        "held_out_delta": 0.33333333333333326,
+        "reasoning": ""
+      },
+      {
+        "cycle": 7,
+        "config_snapshot": {
+          "learning_rate": 8.115379999999999e-06,
+          "lora_rank": 16,
+          "consistency_threshold": null,
+          "verifier_check_weights": {
+            "logical_validity": 1.0,
+            "step_completeness": 1.0,
+            "assumption_grounding": 1.0,
+            "domain_exec": 2.0,
+            "consistency": 1.5
+          },
+          "generator_template": null
+        },
+        "held_out_score": null,
+        "held_out_delta": null,
+        "reasoning": ""
+      }
+    ],
+    "lr_bandit": {
+      "arms": [
+        {
+          "value": 5e-06,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 1e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 2e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 4e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 8e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        }
+      ],
+      "last_pulled": 5e-06
+    },
+    "prompt_variants": [],
+    "verifier_weights": {},
+    "cov": {},
+    "n_obs": 0,
+    "last_proposal": {
+      "learning_rate": 5.6807659999999985e-06,
+      "verifier_check_weights": null,
+      "generator_template": null
+    },
+    "last_pre_revert_state": {
+      "learning_rate": 8.115379999999999e-06,
+      "verifier_check_weights": {
+        "logical_validity": 1.0,
+        "step_completeness": 1.0,
+        "assumption_grounding": 1.0,
+        "domain_exec": 2.0,
+        "consistency": 1.5
+      },
+      "generator_template": null
+    }
+  },
+  "curriculum": {
+    "active_classes": [
+      "math.linear_system",
+      "math.modular",
+      "math.gcd_chain",
+      "math.polynomial_eval",
+      "math.fraction_arith",
+      "math.combinatorics",
+      "reasoning.sequence",
+      "reasoning.logic_sat",
+      "reasoning.word_rates",
+      "code.predict_output",
+      "code.base_conversion"
+    ],
+    "retired_classes": [],
+    "class_meta": {
+      "math.linear_system": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.modular": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.gcd_chain": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.polynomial_eval": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.fraction_arith": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.combinatorics": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.sequence": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.logic_sat": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.word_rates": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "code.predict_output": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "code.base_conversion": {
+        "ceiling": 13,
+        "generation": 1
+      }
+    },
+    "solve_rate": {
+      "math.linear_system": {},
+      "math.modular": {},
+      "math.gcd_chain": {},
+      "math.polynomial_eval": {},
+      "math.fraction_arith": {},
+      "math.combinatorics": {},
+      "reasoning.sequence": {},
+      "reasoning.logic_sat": {},
+      "reasoning.word_rates": {},
+      "code.predict_output": {
+        "5": {
+          "attempts": 58,
+          "solved": 18,
+          "history": [
+            [
+              8,
+              20
+            ],
+            [
+              3,
+              7
+            ],
+            [
+              4,
+              13
+            ],
+            [
+              1,
+              6
+            ],
+            [
+              2,
+              12
+            ]
+          ]
+        },
+        "6": {
+          "attempts": 27,
+          "solved": 9,
+          "history": [
+            [
+              4,
+              13
+            ],
+            [
+              5,
+              14
+            ]
+          ]
+        },
+        "4": {
+          "attempts": 49,
+          "solved": 13,
+          "history": [
+            [
+              4,
+              9
+            ],
+            [
+              2,
+              9
+            ],
+            [
+              2,
+              11
+            ],
+            [
+              4,
+              11
+            ],
+            [
+              1,
+              9
+            ]
+          ]
+        },
+        "3": {
+          "attempts": 47,
+          "solved": 12,
+          "history": [
+            [
+              1,
+              8
+            ],
+            [
+              3,
+              8
+            ],
+            [
+              2,
+              8
+            ],
+            [
+              3,
+              12
+            ],
+            [
+              3,
+              11
+            ]
+          ]
+        },
+        "2": {
+          "attempts": 50,
+          "solved": 11,
+          "history": [
+            [
+              5,
+              12
+            ],
+            [
+              2,
+              10
+            ],
+            [
+              4,
+              8
+            ],
+            [
+              0,
+              10
+            ],
+            [
+              0,
+              10
+            ]
+          ]
+        },
+        "1": {
+          "attempts": 64,
+          "solved": 24,
+          "history": [
+            [
+              7,
+              14
+            ],
+            [
+              9,
+              25
+            ],
+            [
+              8,
+              25
+            ]
+          ]
+        }
+      },
+      "code.base_conversion": {
+        "5": {
+          "attempts": 17,
+          "solved": 15,
+          "history": [
+            [
+              14,
+              16
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "6": {
+          "attempts": 7,
+          "solved": 7,
+          "history": [
+            [
+              4,
+              4
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              2
+            ]
+          ]
+        },
+        "4": {
+          "attempts": 3,
+          "solved": 3,
+          "history": [
+            [
+              2,
+              2
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "8": {
+          "attempts": 7,
+          "solved": 7,
+          "history": [
+            [
+              2,
+              2
+            ],
+            [
+              3,
+              3
+            ],
+            [
+              2,
+              2
+            ]
+          ]
+        },
+        "7": {
+          "attempts": 1,
+          "solved": 1,
+          "history": [
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "9": {
+          "attempts": 5,
+          "solved": 4,
+          "history": [
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "10": {
+          "attempts": 11,
+          "solved": 11,
+          "history": [
+            [
+              1,
+              1
+            ],
+            [
+              5,
+              5
+            ],
+            [
+              1,
+              1
+            ],
+            [
+              2,
+              2
+            ],
+            [
+              2,
+              2
+            ]
+          ]
+        },
+        "11": {
+          "attempts": 1,
+          "solved": 1,
+          "history": [
+            [
+              1,
+              1
+            ]
+          ]
+        },
+        "12": {
+          "attempts": 9,
+          "solved": 5,
+          "history": [
+            [
+              1,
+              2
+            ],
+            [
+              2,
+              2
+            ],
+            [
+              0,
+              1
+            ],
+            [
+              1,
+              2
+            ],
+            [
+              1,
+              2
+            ]
+          ]
+        },
+        "13": {
+          "attempts": 24,
+          "solved": 11,
+          "history": [
+            [
+              2,
+              5
+            ],
+            [
+              4,
+              6
+            ],
+            [
+              2,
+              5
+            ],
+            [
+              2,
+              4
+            ],
+            [
+              1,
+              4
+            ]
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,47 +1,47 @@
 {
   "cycle": 1,
   "pre_score": 0.4625,
-  "post_score": 0.1375,
-  "improvement": -0.325,
-  "eval_score": 0.0625,
+  "post_score": 0.3125,
+  "improvement": -0.15000000000000002,
+  "eval_score": 0.08888888888888889,
   "eval_domain_scores": {
-    "code": 0.0625
+    "code": 0.08888888888888889
   },
-  "samples_generated": 3,
-  "samples_verified": 1,
+  "samples_generated": 4,
+  "samples_verified": 2,
   "weaknesses_found": 2,
   "had_diagnostics": true,
   "escalation_events": [],
   "post_diag_domain_scores": {
-    "code": 0.1375
+    "code": 0.3125
   },
   "diversity_stats": {
     "topic_coverage": 0.125,
     "unique_domains": 1,
     "unique_subdomains": 2,
-    "chain_length_spread": 0.69,
-    "avg_chain_length": 4.3,
+    "chain_length_spread": 0.75,
+    "avg_chain_length": 4.0,
     "samples_per_domain": {
-      "code": 3
+      "code": 4
     }
   },
   "phase_times": {
-    "diagnose": 18.49097752571106,
-    "generate": 61.44903540611267,
-    "verify": 0.03803896903991699,
-    "train": 24.513141632080078,
-    "eval": 18.584951162338257
+    "diagnose": 18.467522144317627,
+    "generate": 62.60899305343628,
+    "verify": 0.07182979583740234,
+    "train": 31.87955379486084,
+    "eval": 47.47598576545715
   },
-  "timestamp": 1776484488.0087905,
-  "duration_seconds": 161.09896969795227,
+  "timestamp": 1776513306.5714343,
+  "duration_seconds": 167.0674660205841,
   "errors": [],
   "training": {
-    "avg_loss": 1.1195652484893799,
-    "final_loss": 1.1195652484893799,
+    "avg_loss": 1.1830673217773438,
+    "final_loss": 1.1830673217773438,
     "steps": 1,
     "lora_layers": 252,
-    "avg_rank": 64.0,
-    "samples_used": 1,
+    "avg_rank": 16.0,
+    "samples_used": 2,
     "samples_rejected": 0,
     "learning_rate": 2e-05
   }

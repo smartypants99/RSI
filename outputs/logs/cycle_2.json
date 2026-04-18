@@ -1,48 +1,48 @@
 {
   "cycle": 2,
-  "pre_score": 0.075,
-  "post_score": 0.225,
-  "improvement": 0.15000000000000002,
-  "eval_score": 0.25,
+  "pre_score": 0.4125,
+  "post_score": 0.2625,
+  "improvement": -0.14999999999999997,
+  "eval_score": 0.08888888888888889,
   "eval_domain_scores": {
-    "code": 0.25
+    "code": 0.08888888888888889
   },
-  "samples_generated": 14,
-  "samples_verified": 5,
-  "weaknesses_found": 6,
+  "samples_generated": 6,
+  "samples_verified": 3,
+  "weaknesses_found": 3,
   "had_diagnostics": true,
   "escalation_events": [],
   "post_diag_domain_scores": {
-    "code": 0.225
+    "code": 0.2625
   },
   "diversity_stats": {
     "topic_coverage": 0.125,
     "unique_domains": 1,
-    "unique_subdomains": 2,
-    "chain_length_spread": 0.93,
-    "avg_chain_length": 3.2,
+    "unique_subdomains": 1,
+    "chain_length_spread": 0.3,
+    "avg_chain_length": 3.3,
     "samples_per_domain": {
-      "code": 14
+      "code": 6
     }
   },
   "phase_times": {
-    "diagnose": 18.689050436019897,
-    "generate": 470.3487286567688,
-    "verify": 0.05540204048156738,
-    "train": 101.35299730300903,
-    "eval": 18.75301480293274
+    "diagnose": 19.033677101135254,
+    "generate": 193.80891251564026,
+    "verify": 0.3030705451965332,
+    "train": 44.769103050231934,
+    "eval": 47.536235332489014
   },
-  "timestamp": 1776484667.694182,
-  "duration_seconds": 647.7229821681976,
+  "timestamp": 1776513521.1168067,
+  "duration_seconds": 311.20323729515076,
   "errors": [],
   "training": {
-    "avg_loss": 0.7436511980162727,
-    "final_loss": 0.6384976506233215,
+    "avg_loss": 0.9094953835010529,
+    "final_loss": 0.949367105960846,
     "steps": 1,
     "lora_layers": 252,
-    "avg_rank": 64.0,
-    "samples_used": 5,
+    "avg_rank": 16.0,
+    "samples_used": 3,
     "samples_rejected": 0,
-    "learning_rate": 9.899494936611665e-06
+    "learning_rate": 1.4e-05
   }
 }

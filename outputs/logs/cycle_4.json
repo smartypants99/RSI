@@ -1,0 +1,45 @@
+{
+  "cycle": 4,
+  "pre_score": 0.3625,
+  "post_score": 0.4,
+  "improvement": 0.03750000000000003,
+  "eval_score": null,
+  "eval_domain_scores": {},
+  "samples_generated": 9,
+  "samples_verified": 4,
+  "weaknesses_found": 5,
+  "had_diagnostics": true,
+  "escalation_events": [],
+  "post_diag_domain_scores": {
+    "code": 0.4
+  },
+  "diversity_stats": {
+    "topic_coverage": 0.125,
+    "unique_domains": 1,
+    "unique_subdomains": 3,
+    "chain_length_spread": 0.0,
+    "avg_chain_length": 3.0,
+    "samples_per_domain": {
+      "code": 9
+    }
+  },
+  "phase_times": {
+    "diagnose": 18.65886425971985,
+    "generate": 41.675413846969604,
+    "verify": 0.27224254608154297,
+    "train": 5.460083484649658
+  },
+  "timestamp": 1776514213.091013,
+  "duration_seconds": 124.2940080165863,
+  "errors": [],
+  "training": {
+    "avg_loss": 0.23405835032463074,
+    "final_loss": 0.23405835032463074,
+    "steps": 0,
+    "lora_layers": 252,
+    "avg_rank": 16.0,
+    "samples_used": 4,
+    "samples_rejected": 0,
+    "learning_rate": 1.274e-05
+  }
+}

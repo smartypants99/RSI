@@ -16,7 +16,7 @@ exec python main.py \
     --model Qwen/Qwen3-8B \
     --use-vllm \
     --gpu-memory-utilization 0.60 \
-    --domains code \
+    --domains code,math,logic \
     --use-dora \
     --consistency-samples 3 \
     --samples-per-weakness 60 \
@@ -24,6 +24,7 @@ exec python main.py \
     --lora-rank 16 \
     --plateau-patience 8 \
     --heldout-repetitions 3 \
+    --max-cycles 25 \
     --write-cycle-metrics \
     --write-cycle-samples \
     ${RESUME_ARG}

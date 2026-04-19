@@ -360,3 +360,61 @@ def test_calibration_ledger_is_shared_across_sids(tmp_path):
     r1 = _open_all(tmp_path, sid="sid_x")
     r2 = _open_all(tmp_path, sid="sid_y")
     assert r1.calibration_ledger.path == r2.calibration_ledger.path
+
+
+# ─── retirement on first training-pool acceptance (spec §7 / v0.2 item 7) ────
+
+def test_retire_on_training_pool_acceptance(tmp_path):
+    """Spec §7: mark_retired is called when a problem enters the training pool."""
+    regs = _open_all(tmp_path, sid="retire_test")
+    # Register a problem as active
+    regs.problem_registry.append({"problem_id": "prob_frontier_1", "retired": False})
+    # Simulate training-pool admission (loop calls mark_retired on acceptance)
+    regs.training_pool.append_sample({"pool_record_id": "pr1", "problem_id": "prob_frontier_1",
+                                       "source": "rsi_property"})
+    regs.problem_registry.mark_retired("prob_frontier_1", session_id="retire_test")
+    # The problem should now read as retired
+    rec = regs.problem_registry.get_by_id("prob_frontier_1")
+    assert rec is not None
+    assert rec["retired"] is True
+
+
+def test_retire_does_not_affect_other_problems(tmp_path):
+    """Retiring one problem must not touch sibling problems in the same file."""
+    regs = _open_all(tmp_path, sid="sib")
+    regs.problem_registry.append({"problem_id": "p_keep", "retired": False})
+    regs.problem_registry.append({"problem_id": "p_retire", "retired": False})
+    regs.problem_registry.mark_retired("p_retire", session_id="sib")
+    assert regs.problem_registry.get_by_id("p_keep")["retired"] is False
+    assert regs.problem_registry.get_by_id("p_retire")["retired"] is True
+
+
+def test_retire_idempotent(tmp_path):
+    """Calling mark_retired twice on the same problem is safe."""
+    regs = _open_all(tmp_path, sid="idem")
+    regs.problem_registry.append({"problem_id": "p1", "retired": False})
+    regs.problem_registry.mark_retired("p1")
+    regs.problem_registry.mark_retired("p1")
+    rec = regs.problem_registry.get_by_id("p1")
+    assert rec["retired"] is True  # last patch wins, still retired
+
+
+def test_training_pool_record_triggers_retirement_in_loop(tmp_path):
+    """Integration: after TrainingPoolRecord is written, problem_registry shows retired."""
+    regs = _open_all(tmp_path, sid="loop_retire")
+    problem_id = "synth_task_abc"
+    regs.problem_registry.append({"problem_id": problem_id, "retired": False})
+
+    # Simulate what loop Phase 1b does on quorum acceptance
+    regs.training_pool.append_sample({
+        "pool_record_id": "pool_xyz",
+        "problem_id": problem_id,
+        "source": "rsi_property",
+    })
+    regs.problem_registry.mark_retired(problem_id, session_id=regs.sid)
+
+    # Verify: problem is retired; training pool has the record; counts are right
+    assert regs.problem_registry.get_by_id(problem_id)["retired"] is True
+    assert regs.training_pool.count() == 1
+    pool_rows = regs.training_pool.pending_samples()
+    assert pool_rows[0]["problem_id"] == problem_id

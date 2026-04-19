@@ -768,7 +768,9 @@ class ImprovementLoop:
                             training_sample = task.to_training_sample()
                             synthesis_samples.append(training_sample)
                             n_admitted += 1
-                            # Write TrainingPoolRecord for accepted samples.
+                            # Write TrainingPoolRecord and retire the problem
+                            # (spec §7: retire on first training-pool acceptance
+                            # so generator's novelty check skips it next cycle).
                             if _reg is not None and TrainingPoolRecord is not None:
                                 try:
                                     _reg.training_pool.append_sample(TrainingPoolRecord(
@@ -781,8 +783,9 @@ class ImprovementLoop:
                                         response=ref,
                                         session_id=_reg.sid,
                                     ))
+                                    _reg.problem_registry.mark_retired(task_id, session_id=_reg.sid)
                                 except Exception as exc:
-                                    logger.debug("registry write failed (TrainingPoolRecord): %s", exc)
+                                    logger.debug("registry write failed (TrainingPoolRecord/retire): %s", exc)
                         else:
                             n_quorum_fail += 1
                             logger.debug("  Quorum rejected task %s: %s", task_id, verdict.reason)

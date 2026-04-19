@@ -1295,11 +1295,57 @@ class ImprovementLoop:
             logger.warning(f"  Rejected model template — missing placeholders: {missing}")
 
     def _should_stop(self, result: CycleResult) -> tuple[bool, str]:
-        """Check if we should stop using EMA-smoothed improvement for plateau detection."""
+        """Check if we should stop using EMA-smoothed improvement for plateau detection.
+
+        Proper RSI never stops because of "no weaknesses found" — when the
+        model saturates the current difficulty, we raise the bar. We only
+        stop on genuine plateau (EMA improvement < threshold for N cycles)
+        or on sustained training failure.
+        """
+        # Saturation handler: instead of quitting when everything passes the
+        # current confidence_threshold, make the threshold stricter. The
+        # curriculum's hard/expert weight also gets bumped so upcoming probes
+        # are harder. This is how open-ended RSI is supposed to work.
         if result.diagnostics and not result.diagnostics.weaknesses:
-            self._plateau_count = 0
-            self._consecutive_failures = 0
-            return True, "all domains above threshold — nothing left to improve"
+            cur = self.config.diagnostics.confidence_threshold
+            # Step up in 0.05 increments, cap at 0.95 (leave headroom for noise).
+            new_thresh = min(0.95, round(cur + 0.05, 3))
+            if new_thresh > cur:
+                self.config.diagnostics.confidence_threshold = new_thresh
+                # Also shift difficulty mix toward harder bands so new probes
+                # aren't re-asking the same problems the model just solved.
+                mix = self.config.diagnostics.difficulty_mix
+                bump = {
+                    "easy": max(0.05, mix.get("easy", 0.3) - 0.05),
+                    "medium": max(0.10, mix.get("medium", 0.35) - 0.03),
+                    "hard": min(0.60, mix.get("hard", 0.25) + 0.04),
+                    "expert": min(0.50, mix.get("expert", 0.10) + 0.04),
+                }
+                # Renormalize so weights sum to 1.
+                total = sum(bump.values())
+                self.config.diagnostics.difficulty_mix = {
+                    k: round(v / total, 3) for k, v in bump.items()
+                }
+                logger.info(
+                    f"  Saturation: all domains above {cur:.2f}. Raising "
+                    f"confidence_threshold → {new_thresh:.2f} and shifting "
+                    f"difficulty mix to {self.config.diagnostics.difficulty_mix}. "
+                    f"RSI continues."
+                )
+                # Reset plateau counter — new difficulty regime, fresh start.
+                self._plateau_count = 0
+                self._consecutive_failures = 0
+                return False, ""
+            else:
+                # Already at max threshold. Only now do we admit the RSI
+                # pipeline has run out of room within the current eval harness.
+                self._plateau_count = 0
+                self._consecutive_failures = 0
+                return True, (
+                    f"saturated at confidence_threshold={cur:.2f} (max 0.95) — "
+                    f"eval harness exhausted, consider expanding domains or "
+                    f"adding harder question banks"
+                )
 
         undertrained = getattr(self.trainer, "_last_merge_undertrained", False)
         if result.training_metrics and result.training_metrics.steps > 0 and not undertrained:

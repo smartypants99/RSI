@@ -1,48 +1,38 @@
 {
   "cycle": 5,
-  "pre_score": 0.425,
-  "post_score": 0.275,
-  "improvement": -0.14999999999999997,
-  "eval_score": 0.14074074074074075,
+  "pre_score": 0.7,
+  "post_score": 0.7,
+  "improvement": 0.0,
+  "eval_score": 0.8592592592592593,
   "eval_domain_scores": {
-    "code": 0.15555555555555556
+    "code": 0.8444444444444444
   },
-  "samples_generated": 10,
-  "samples_verified": 7,
-  "weaknesses_found": 3,
+  "eval_subdomain_scores": {
+    "code/computing": 1.0,
+    "code/implementation": 0.8292682926829268
+  },
+  "samples_generated": 0,
+  "samples_verified": 0,
+  "weaknesses_found": 0,
   "had_diagnostics": true,
   "escalation_events": [],
-  "post_diag_domain_scores": {
-    "code": 0.275
-  },
-  "diversity_stats": {
-    "topic_coverage": 0.125,
-    "unique_domains": 1,
-    "unique_subdomains": 2,
-    "chain_length_spread": 0.0,
-    "avg_chain_length": 3.0,
-    "samples_per_domain": {
-      "code": 10
-    }
-  },
+  "post_diag_domain_scores": {},
+  "diversity_stats": {},
   "phase_times": {
-    "diagnose": 18.540305852890015,
-    "generate": 39.754847049713135,
-    "verify": 0.48884105682373047,
-    "train": 63.57629036903381,
-    "eval": 14.558335542678833
+    "diagnose": 17.47525715827942,
+    "eval": 50.56920671463013
   },
-  "timestamp": 1776514337.44952,
-  "duration_seconds": 169.61802911758423,
+  "timestamp": 1776580351.4563234,
+  "duration_seconds": 17.476406574249268,
   "errors": [],
   "training": {
-    "avg_loss": 0.3049413710832596,
-    "final_loss": 0.1434294432401657,
-    "steps": 1,
-    "lora_layers": 252,
-    "avg_rank": 16.0,
-    "samples_used": 7,
+    "avg_loss": null,
+    "final_loss": null,
+    "steps": 0,
+    "lora_layers": 0,
+    "avg_rank": 0,
+    "samples_used": 0,
     "samples_rejected": 0,
-    "learning_rate": 8.918e-06
+    "learning_rate": 0
   }
 }

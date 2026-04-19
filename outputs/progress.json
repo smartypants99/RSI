@@ -1,46 +1,52 @@
 {
-  "cycle": 8,
-  "timestamp": 1776514969.43058,
+  "cycle": 5,
+  "timestamp": 1776580419.5050745,
   "scores": {
-    "pre_training": 0.3625,
-    "post_training": 0.3125,
-    "held_out_eval": null,
-    "improvement": -0.04999999999999999,
-    "improvement_ema": 0.00910215150000001,
-    "best_score": 0.47407407407407404,
-    "best_checkpoint_cycle": 6
+    "pre_training": 0.7,
+    "post_training": 0.7,
+    "held_out_eval": 0.8592592592592593,
+    "improvement": 0.0,
+    "improvement_ema": 0.05631937499999999,
+    "best_score": 0.8666666666666667,
+    "best_checkpoint_cycle": 3
   },
   "domain_scores": {
     "pre": {
-      "code": 0.3625
+      "code": 0.7
     },
-    "post": {
-      "code": 0.3125
-    },
-    "eval": {}
-  },
-  "samples": {
-    "generated": 10,
-    "verified": 8,
-    "rejected": 2,
-    "pass_rate": 0.8,
-    "diversity": {
-      "topic_coverage": 0.125,
-      "unique_domains": 1,
-      "unique_subdomains": 2,
-      "chain_length_spread": 0.0,
-      "avg_chain_length": 3.0,
-      "samples_per_domain": {
-        "code": 10
-      }
+    "post": {},
+    "eval": {
+      "code": 0.8444444444444444
     }
   },
+  "subdomain_scores": {
+    "pre": {
+      "code/implementation": 0.696969696969697,
+      "code/complexity": 1.0,
+      "code/bit_manipulation": 0.2857142857142857,
+      "code/computing": 1.0,
+      "code/prediction": 0.7096774193548387,
+      "code/debugging": 1.0
+    },
+    "post": {},
+    "eval": {
+      "code/computing": 1.0,
+      "code/implementation": 0.8292682926829268
+    }
+  },
+  "samples": {
+    "generated": 0,
+    "verified": 0,
+    "rejected": 0,
+    "pass_rate": 0.0,
+    "diversity": {}
+  },
   "training": {
-    "avg_loss": 0.2309463769197464,
-    "final_loss": 0.2309463769197464,
+    "avg_loss": null,
+    "final_loss": null,
     "steps": 0,
-    "learning_rate": 5.6807659999999985e-06,
-    "lora_layers": 252
+    "learning_rate": 0,
+    "lora_layers": 0
   },
   "calibration": {
     "ece": null,
@@ -48,10 +54,8 @@
     "samples": 0
   },
   "timing": {
-    "diagnose": 17.285519123077393,
-    "generate": 36.68833518028259,
-    "verify": 0.40909910202026367,
-    "train": 73.82908749580383
+    "diagnose": 17.47525715827942,
+    "eval": 50.56920671463013
   },
   "escalations": {
     "verification": false,
@@ -64,66 +68,67 @@
   "history_summary": [
     {
       "cycle": 1,
-      "pre": 0.4625,
-      "post": 0.3125,
-      "improvement": -0.15000000000000002,
+      "pre": 0.4125,
+      "post": 0.35,
+      "improvement": -0.0625,
       "eval": 0.08888888888888889,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 0.0
+      },
+      "pass_rate": 1.0,
       "had_errors": false
     },
     {
       "cycle": 2,
-      "pre": 0.4125,
-      "post": 0.2625,
-      "improvement": -0.14999999999999997,
-      "eval": 0.08888888888888889,
+      "pre": 0.375,
+      "post": 0.5375,
+      "improvement": 0.16249999999999998,
+      "eval": 0.362962962962963,
+      "eval_subdomain": {
+        "code/computing": 0.5,
+        "code/implementation": 0.34146341463414637
+      },
+      "pass_rate": 0.14285714285714285,
       "had_errors": false
     },
     {
       "cycle": 3,
-      "pre": 0.2625,
-      "post": 0.4375,
-      "improvement": 0.175,
-      "eval": 0.28148148148148144,
+      "pre": 0.45,
+      "post": 0.75,
+      "improvement": 0.3,
+      "eval": 0.8666666666666667,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 0.8536585365853658
+      },
+      "pass_rate": 0.45454545454545453,
       "had_errors": false
     },
     {
       "cycle": 4,
-      "pre": 0.3625,
-      "post": 0.4,
-      "improvement": 0.03750000000000003,
-      "eval": null,
+      "pre": 0.6625,
+      "post": 0.6625,
+      "improvement": 0.0,
+      "eval": 0.8592592592592593,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 0.8536585365853658
+      },
+      "pass_rate": 0.0,
       "had_errors": false
     },
     {
       "cycle": 5,
-      "pre": 0.425,
-      "post": 0.275,
-      "improvement": -0.14999999999999997,
-      "eval": 0.14074074074074075,
-      "had_errors": false
-    },
-    {
-      "cycle": 6,
-      "pre": 0.275,
-      "post": 0.4375,
-      "improvement": 0.16249999999999998,
-      "eval": 0.47407407407407404,
-      "had_errors": false
-    },
-    {
-      "cycle": 7,
-      "pre": 0.35,
-      "post": 0.4125,
-      "improvement": 0.0625,
-      "eval": null,
-      "had_errors": false
-    },
-    {
-      "cycle": 8,
-      "pre": 0.3625,
-      "post": 0.3125,
-      "improvement": -0.04999999999999999,
-      "eval": null,
+      "pre": 0.7,
+      "post": 0.7,
+      "improvement": 0.0,
+      "eval": 0.8592592592592593,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 0.8292682926829268
+      },
+      "pass_rate": null,
       "had_errors": false
     }
   ]

@@ -1,14 +1,14 @@
 {
-  "total_cycles": 8,
-  "improving_cycles": 4,
-  "initial_score": 0.4625,
-  "final_score": 0.3125,
-  "total_improvement": -0.15000000000000002,
+  "total_cycles": 5,
+  "improving_cycles": 2,
+  "initial_score": 0.4125,
+  "final_score": 0.7,
+  "total_improvement": 0.2875,
   "best_cycle": 3,
-  "best_cycle_improvement": 0.175,
-  "total_samples_generated": 60,
-  "total_samples_verified": 37,
-  "verification_pass_rate": 0.6166666666666667,
+  "best_cycle_improvement": 0.3,
+  "total_samples_generated": 25,
+  "total_samples_verified": 9,
+  "verification_pass_rate": 0.36,
   "escalations": {
     "verification": false,
     "diagnosis": false,
@@ -19,66 +19,42 @@
   "score_trajectory": [
     {
       "cycle": 1,
-      "pre": 0.4625,
-      "post": 0.3125,
-      "improvement": -0.15000000000000002,
-      "samples": 2,
-      "had_errors": false
-    },
-    {
-      "cycle": 2,
       "pre": 0.4125,
-      "post": 0.2625,
-      "improvement": -0.14999999999999997,
+      "post": 0.35,
+      "improvement": -0.0625,
       "samples": 3,
       "had_errors": false
     },
     {
-      "cycle": 3,
-      "pre": 0.2625,
-      "post": 0.4375,
-      "improvement": 0.175,
-      "samples": 5,
-      "had_errors": false
-    },
-    {
-      "cycle": 4,
-      "pre": 0.3625,
-      "post": 0.4,
-      "improvement": 0.03750000000000003,
-      "samples": 4,
-      "had_errors": false
-    },
-    {
-      "cycle": 5,
-      "pre": 0.425,
-      "post": 0.275,
-      "improvement": -0.14999999999999997,
-      "samples": 7,
-      "had_errors": false
-    },
-    {
-      "cycle": 6,
-      "pre": 0.275,
-      "post": 0.4375,
+      "cycle": 2,
+      "pre": 0.375,
+      "post": 0.5375,
       "improvement": 0.16249999999999998,
       "samples": 1,
       "had_errors": false
     },
     {
-      "cycle": 7,
-      "pre": 0.35,
-      "post": 0.4125,
-      "improvement": 0.0625,
-      "samples": 7,
+      "cycle": 3,
+      "pre": 0.45,
+      "post": 0.75,
+      "improvement": 0.3,
+      "samples": 5,
       "had_errors": false
     },
     {
-      "cycle": 8,
-      "pre": 0.3625,
-      "post": 0.3125,
-      "improvement": -0.04999999999999999,
-      "samples": 8,
+      "cycle": 4,
+      "pre": 0.6625,
+      "post": 0.6625,
+      "improvement": 0.0,
+      "samples": 0,
+      "had_errors": false
+    },
+    {
+      "cycle": 5,
+      "pre": 0.7,
+      "post": 0.7,
+      "improvement": 0.0,
+      "samples": 0,
       "had_errors": false
     }
   ]

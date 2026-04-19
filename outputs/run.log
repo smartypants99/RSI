@@ -375,3 +375,164 @@
 2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: IMPROVEMENT LOOP COMPLETE
 2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: Total improvement: 0.463 -> 0.312 (-0.150)
 2026-04-18 12:23:09,352 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:08:32,146 [INFO] __main__: Domain subset: RSI will only probe/train on ['code']
+2026-04-19 06:08:33,199 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:08:33,199 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
+2026-04-19 06:08:33,199 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:08:36,002 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
+2026-04-19 06:08:36,408 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-19 06:12:06,900 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-19 06:12:06,900 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-19 06:12:06,900 [INFO] src.orchestrator.loop: CYCLE 1
+2026-04-19 06:12:06,900 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:12:06,900 [INFO] src.orchestrator.loop: [Cycle 1] Phase 1: DIAGNOSE
+2026-04-19 06:12:26,027 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.00GB, current=0.00GB, reserved=0.00GB
+2026-04-19 06:12:26,027 [INFO] src.orchestrator.loop:   Found 3 weaknesses across 1 domains | Overall score: 0.412
+2026-04-19 06:12:26,027 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.78
+2026-04-19 06:12:26,027 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.60
+2026-04-19 06:12:26,027 [INFO] src.orchestrator.loop:     - code/debugging: severity 0.32
+2026-04-19 06:12:26,027 [INFO] src.orchestrator.loop: [Cycle 1] Phase 2: GENERATE (3 weaknesses)
+2026-04-19 06:13:25,654 [INFO] src.generator.data_generator:   STaR consistency filter: dropped 1 samples below threshold 0.34
+2026-04-19 06:13:58,975 [INFO] src.generator.data_generator:   Rebalance(domain): skipped — only 1 domain(s) in play; cap has no diversity effect
+2026-04-19 06:13:58,976 [INFO] src.generator.data_generator: STaR: kept=20, rejected=112, rationalized=1, final=3 samples, 13 DPO pairs across 3 weakness buckets (33 failed diagnostic items processed)
+2026-04-19 06:13:58,976 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.00GB, current=0.00GB, reserved=0.00GB
+2026-04-19 06:13:58,977 [INFO] src.orchestrator.loop:   Generated 3 training samples
+2026-04-19 06:13:58,977 [INFO] src.orchestrator.loop: [Cycle 1] Phase 3: VERIFY
+2026-04-19 06:13:59,216 [INFO] src.orchestrator.loop:   3/3 passed verification (100%)
+2026-04-19 06:13:59,217 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.00GB, current=0.00GB, reserved=0.00GB
+2026-04-19 06:13:59,645 [INFO] src.orchestrator.loop: [Cycle 1] Phase 4: TRAIN on 3 verified samples
+2026-04-19 06:13:59,645 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-19 06:14:01,118 [INFO] src.utils.vllm_backend: Loading HF model for training: Qwen/Qwen3-8B
+2026-04-19 06:14:10,295 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-19 06:14:52,500 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=35.53GB, current=15.44GB, reserved=24.74GB
+2026-04-19 06:14:52,501 [INFO] src.orchestrator.loop:   Training done: 1 steps, final loss: 1.3310
+2026-04-19 06:14:52,501 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5: EVALUATE
+2026-04-19 06:15:00,004 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-19 06:15:33,251 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-19 06:15:33,628 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
+2026-04-19 06:16:26,483 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-19 06:16:45,341 [INFO] src.orchestrator.loop:   Score: 0.412 -> 0.350 (-0.062)
+2026-04-19 06:16:45,342 [WARNING] src.orchestrator.loop:   REGRESSION detected in: code: 0.412->0.350
+2026-04-19 06:16:45,342 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL (x3)
+2026-04-19 06:17:32,213 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.089 scores=['0.089', '0.089', '0.089'] spread=0.000
+2026-04-19 06:17:32,219 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.40e-05 (from 2e-05), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-19 06:17:32,219 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-19 06:17:32,220 [INFO] src.orchestrator.loop: CYCLE 2
+2026-04-19 06:17:32,220 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:17:32,220 [INFO] src.orchestrator.loop: [Cycle 2] Phase 1: DIAGNOSE
+2026-04-19 06:17:50,758 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:17:50,758 [INFO] src.orchestrator.loop:   Found 3 weaknesses across 1 domains | Overall score: 0.375
+2026-04-19 06:17:50,758 [INFO] src.orchestrator.loop:     - code/implementation: severity 1.00
+2026-04-19 06:17:50,758 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.56
+2026-04-19 06:17:50,758 [INFO] src.orchestrator.loop:     - code/debugging: severity 0.32
+2026-04-19 06:17:50,758 [INFO] src.orchestrator.loop:   Injecting 1 regression weaknesses from prior cycle
+2026-04-19 06:17:50,758 [INFO] src.orchestrator.loop: [Cycle 2] Phase 2: GENERATE (4 weaknesses)
+2026-04-19 06:19:58,672 [INFO] src.generator.data_generator:   STaR consistency filter: dropped 1 samples below threshold 0.34
+2026-04-19 06:21:01,488 [INFO] src.generator.data_generator:   Rebalance(domain): skipped — only 1 domain(s) in play; cap has no diversity effect
+2026-04-19 06:21:01,489 [INFO] src.generator.data_generator:   Rebalance(subdomain): capped code/implementation to 4 samples
+2026-04-19 06:21:01,489 [INFO] src.generator.data_generator: STaR: kept=19, rejected=117, rationalized=1, final=7 samples, 20 DPO pairs across 3 weakness buckets (34 failed diagnostic items processed)
+2026-04-19 06:21:01,490 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:21:01,490 [INFO] src.orchestrator.loop:   Generated 7 training samples
+2026-04-19 06:21:01,490 [INFO] src.orchestrator.loop: [Cycle 2] Phase 3: VERIFY
+2026-04-19 06:21:02,232 [INFO] src.orchestrator.loop:   1/7 passed verification (14%)
+2026-04-19 06:21:02,233 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:21:02,549 [INFO] src.orchestrator.loop: [Cycle 2] Phase 4: TRAIN on 1 verified samples
+2026-04-19 06:21:02,550 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-19 06:21:04,084 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_1
+2026-04-19 06:21:10,386 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-19 06:21:25,772 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=28.62GB, current=15.44GB, reserved=18.96GB
+2026-04-19 06:21:25,773 [INFO] src.orchestrator.loop:   Training done: 1 steps, final loss: 0.6223
+2026-04-19 06:21:25,773 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5: EVALUATE
+2026-04-19 06:21:33,251 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-19 06:22:04,599 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-19 06:22:04,998 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_2
+2026-04-19 06:22:48,016 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-19 06:23:07,798 [INFO] src.orchestrator.loop:   Score: 0.375 -> 0.537 (+0.162)
+2026-04-19 06:23:07,799 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: HELD-OUT EVAL (x3)
+2026-04-19 06:23:58,771 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.363 scores=['0.378', '0.356', '0.356'] spread=0.022
+2026-04-19 06:23:58,771 [INFO] src.orchestrator.loop:     (prev 0.089, +0.274)
+2026-04-19 06:23:58,776 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.82e-05 (from 1.4e-05), bounded to ±30%; tracker=insufficient_data (n=1)
+2026-04-19 06:23:58,776 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-19 06:23:58,776 [INFO] src.orchestrator.loop: CYCLE 3
+2026-04-19 06:23:58,776 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:23:58,776 [INFO] src.orchestrator.loop: [Cycle 3] Phase 1: DIAGNOSE
+2026-04-19 06:24:18,221 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:24:18,221 [INFO] src.orchestrator.loop:   Found 5 weaknesses across 1 domains | Overall score: 0.450
+2026-04-19 06:24:18,221 [INFO] src.orchestrator.loop:     - code/implementation: severity 0.73
+2026-04-19 06:24:18,221 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.52
+2026-04-19 06:24:18,222 [INFO] src.orchestrator.loop:     - code/debugging: severity 0.40
+2026-04-19 06:24:18,222 [INFO] src.orchestrator.loop:     - code/computing: severity 0.38
+2026-04-19 06:24:18,222 [INFO] src.orchestrator.loop:     - code/bit_manipulation: severity 0.15
+2026-04-19 06:24:18,222 [INFO] src.orchestrator.loop: [Cycle 3] Phase 2: GENERATE (5 weaknesses)
+2026-04-19 06:25:17,623 [INFO] src.generator.data_generator:   STaR consistency filter: dropped 4 samples below threshold 0.34
+2026-04-19 06:26:43,735 [INFO] src.generator.data_generator:   STaR consistency filter: dropped 1 samples below threshold 0.34
+2026-04-19 06:27:13,349 [INFO] src.generator.data_generator:   Rebalance(domain): skipped — only 1 domain(s) in play; cap has no diversity effect
+2026-04-19 06:27:13,350 [INFO] src.generator.data_generator: STaR: kept=46, rejected=114, rationalized=3, final=11 samples, 25 DPO pairs across 5 weakness buckets (40 failed diagnostic items processed)
+2026-04-19 06:27:13,350 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:27:13,351 [INFO] src.orchestrator.loop:   Generated 11 training samples
+2026-04-19 06:27:13,351 [INFO] src.orchestrator.loop: [Cycle 3] Phase 3: VERIFY
+2026-04-19 06:27:14,112 [INFO] src.orchestrator.loop:   5/11 passed verification (45%)
+2026-04-19 06:27:14,112 [INFO] src.orchestrator.loop:   [GPU Memory] after verify: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:27:14,449 [INFO] src.orchestrator.loop: [Cycle 3] Phase 4: TRAIN on 5 verified samples
+2026-04-19 06:27:14,449 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-19 06:27:16,000 [INFO] src.utils.vllm_backend: Loading HF model for training: outputs/checkpoints/cycle_2
+2026-04-19 06:27:22,710 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-19 06:28:29,792 [INFO] src.orchestrator.loop:   [GPU Memory] after train: peak=41.49GB, current=15.44GB, reserved=24.75GB
+2026-04-19 06:28:29,793 [INFO] src.orchestrator.loop:   Training done: 2 steps, final loss: 0.6627
+2026-04-19 06:28:29,793 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5: EVALUATE
+2026-04-19 06:28:37,089 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-19 06:29:13,510 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-19 06:29:13,918 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_3
+2026-04-19 06:29:58,758 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-19 06:30:16,573 [INFO] src.orchestrator.loop:   Score: 0.450 -> 0.750 (+0.300)
+2026-04-19 06:30:16,574 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: HELD-OUT EVAL (x3)
+2026-04-19 06:31:07,666 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.867 scores=['0.867', '0.867', '0.867'] spread=0.000
+2026-04-19 06:31:07,666 [INFO] src.orchestrator.loop:     (prev 0.363, +0.504)
+2026-04-19 06:31:08,853 [INFO] src.orchestrator.loop:   Pruned old checkpoint: cycle_1
+2026-04-19 06:31:08,856 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.27e-05 (from 1.8200000000000002e-05), bounded to ±30%; tracker=insufficient_data (n=2)
+2026-04-19 06:31:08,856 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-19 06:31:08,856 [INFO] src.orchestrator.loop: CYCLE 4
+2026-04-19 06:31:08,856 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:31:08,856 [INFO] src.orchestrator.loop: [Cycle 4] Phase 1: DIAGNOSE
+2026-04-19 06:31:26,937 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:31:26,937 [INFO] src.orchestrator.loop:   Found 1 weaknesses across 1 domains | Overall score: 0.662
+2026-04-19 06:31:26,937 [INFO] src.orchestrator.loop:     - code/prediction: severity 0.56
+2026-04-19 06:31:26,937 [INFO] src.orchestrator.loop: [Cycle 4] Phase 2: GENERATE (1 weaknesses)
+2026-04-19 06:31:35,865 [INFO] src.generator.data_generator:   STaR consistency filter: dropped 2 samples below threshold 0.34
+2026-04-19 06:31:40,975 [INFO] src.generator.data_generator:   Rebalance(domain): skipped — only 1 domain(s) in play; cap has no diversity effect
+2026-04-19 06:31:40,975 [INFO] src.generator.data_generator:   Rebalance(subdomain): skipped — only 1 subdomain(s) in play
+2026-04-19 06:31:40,975 [INFO] src.generator.data_generator: STaR: kept=0, rejected=72, rationalized=4, final=4 samples, 6 DPO pairs across 1 weakness buckets (18 failed diagnostic items processed)
+2026-04-19 06:31:40,976 [INFO] src.orchestrator.loop:   [GPU Memory] after generate: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:31:40,976 [INFO] src.orchestrator.loop:   Generated 4 training samples
+2026-04-19 06:31:40,976 [INFO] src.orchestrator.loop: [Cycle 4] Phase 3: VERIFY
+2026-04-19 06:31:40,982 [INFO] src.orchestrator.loop:   0/4 passed verification (0%)
+2026-04-19 06:31:40,982 [WARNING] src.orchestrator.loop:   No samples passed verification — all reasoning chains rejected
+2026-04-19 06:31:40,982 [INFO] src.orchestrator.loop: [Cycle 4] Phase 5b: HELD-OUT EVAL (x3)
+2026-04-19 06:32:31,450 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.859 scores=['0.844', '0.867', '0.867'] spread=0.022
+2026-04-19 06:32:31,450 [INFO] src.orchestrator.loop:     (prev 0.867, -0.007)
+2026-04-19 06:32:31,453 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-19 06:32:31,456 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=8.92e-06 (from 1.274e-05), bounded to ±30%; tracker=insufficient_data (n=3)
+2026-04-19 06:32:31,456 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-19 06:32:31,456 [INFO] src.orchestrator.loop: CYCLE 5
+2026-04-19 06:32:31,456 [INFO] src.orchestrator.loop: ============================================================
+2026-04-19 06:32:31,456 [INFO] src.orchestrator.loop: [Cycle 5] Phase 1: DIAGNOSE
+2026-04-19 06:32:48,932 [INFO] src.orchestrator.loop:   [GPU Memory] after diagnose: peak=0.02GB, current=0.02GB, reserved=0.03GB
+2026-04-19 06:32:48,932 [INFO] src.orchestrator.loop:   Found 0 weaknesses across 1 domains | Overall score: 0.700
+2026-04-19 06:32:48,932 [INFO] src.orchestrator.loop:   No weaknesses found — all domains above threshold
+2026-04-19 06:32:48,932 [INFO] src.orchestrator.loop: [Cycle 5] Phase 5b: HELD-OUT EVAL (x3)
+2026-04-19 06:33:39,501 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.859 scores=['0.867', '0.867', '0.844'] spread=0.022
+2026-04-19 06:33:39,501 [INFO] src.orchestrator.loop:     (prev 0.859, 0.000)
+2026-04-19 06:33:39,503 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-19 06:33:39,506 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.16e-05 (from 8.918e-06), bounded to ±30%; tracker=insufficient_data (n=4)
+2026-04-19 06:33:39,506 [INFO] src.orchestrator.loop: Stopping at cycle 5: all domains above threshold — nothing left to improve
+2026-04-19 06:33:39,506 [INFO] src.orchestrator.loop: Final report saved to outputs/final_report.json
+2026-04-19 06:33:39,506 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-19 06:33:39,506 [INFO] src.orchestrator.loop: IMPROVEMENT LOOP COMPLETE
+2026-04-19 06:33:39,506 [INFO] src.orchestrator.loop: Total improvement: 0.412 -> 0.700 (+0.287)
+2026-04-19 06:33:39,506 [INFO] src.orchestrator.loop: ============================================================

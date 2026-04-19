@@ -1,45 +1,48 @@
 {
   "cycle": 4,
-  "pre_score": 0.3625,
-  "post_score": 0.4,
-  "improvement": 0.03750000000000003,
-  "eval_score": null,
-  "eval_domain_scores": {},
-  "samples_generated": 9,
-  "samples_verified": 4,
-  "weaknesses_found": 5,
+  "pre_score": 0.6625,
+  "post_score": 0.6625,
+  "improvement": 0.0,
+  "eval_score": 0.8592592592592593,
+  "eval_domain_scores": {
+    "code": 0.8666666666666667
+  },
+  "eval_subdomain_scores": {
+    "code/computing": 1.0,
+    "code/implementation": 0.8536585365853658
+  },
+  "samples_generated": 4,
+  "samples_verified": 0,
+  "weaknesses_found": 1,
   "had_diagnostics": true,
   "escalation_events": [],
-  "post_diag_domain_scores": {
-    "code": 0.4
-  },
+  "post_diag_domain_scores": {},
   "diversity_stats": {
     "topic_coverage": 0.125,
     "unique_domains": 1,
-    "unique_subdomains": 3,
+    "unique_subdomains": 1,
     "chain_length_spread": 0.0,
     "avg_chain_length": 3.0,
     "samples_per_domain": {
-      "code": 9
+      "code": 4
     }
   },
   "phase_times": {
-    "diagnose": 18.65886425971985,
-    "generate": 41.675413846969604,
-    "verify": 0.27224254608154297,
-    "train": 5.460083484649658
+    "diagnose": 18.080019235610962,
+    "generate": 14.038117408752441,
+    "eval": 50.46794104576111
   },
-  "timestamp": 1776514213.091013,
-  "duration_seconds": 124.2940080165863,
+  "timestamp": 1776580268.8567696,
+  "duration_seconds": 32.12601137161255,
   "errors": [],
   "training": {
-    "avg_loss": 0.23405835032463074,
-    "final_loss": 0.23405835032463074,
+    "avg_loss": null,
+    "final_loss": null,
     "steps": 0,
-    "lora_layers": 252,
-    "avg_rank": 16.0,
-    "samples_used": 4,
+    "lora_layers": 0,
+    "avg_rank": 0,
+    "samples_used": 0,
     "samples_rejected": 0,
-    "learning_rate": 1.274e-05
+    "learning_rate": 0
   }
 }

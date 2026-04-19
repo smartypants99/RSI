@@ -202,9 +202,12 @@ class Verifier:
         expected = getattr(sample, "expected_answer", "") or ""
         if not expected:
             return None
-        # If the producer already verified against ground truth, trust it.
-        if getattr(sample, "ground_truth_verified", False):
-            return True
+        # Previously we trusted a producer-set ground_truth_verified flag and
+        # returned True without re-grading. hot_spots H4 showed this amplifies
+        # any generator-time grader bug: e.g. H1's hollow name-check let
+        # `def mergesorted` pass as `merge_sorted` at generation time, and the
+        # verifier then rubber-stamped it. Now we ALWAYS re-grade at verify
+        # time; generator-side grading is treated as a hint, never as truth.
         response = sample.response or ""
         if not response and sample.reasoning_chain:
             response = sample.reasoning_chain[-1].content or ""

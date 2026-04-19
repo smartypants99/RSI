@@ -90,15 +90,24 @@ COUNTEREXAMPLE_SEARCH — bounded search finds no counterexample within budget
 
 Adding a kind requires consensus among `property_verifier` + `architect`.
 
-### 1.3 Validity gates — a property is *admissible* only if
+### 1.3 Per-property admission gates (owned by `property_verifier` in `src/verifier/property_engine.py`)
 
-1. **Self-test passes.** `run(property, confirmer_example) == PASS` and `run(property, falsifier_example) == FAIL`. Enforced at registration; any property that fails its own self-test is discarded, never stored.
-2. **Determinism matches declared value.** If `deterministic=True`, two runs on the same input yield the same verdict. Verified by two-shot re-execution at admission.
-3. **Non-triviality.** The property rejects the `falsifier_example` AND rejects at least one of three *automatically-generated* perturbations of the `confirmer_example` (fuzzed by harness). A property that accepts everything is useless.
-4. **Bounded cost.** `timeout_ms ≤ 10000`, `source ≤ 4 kB`, no I/O, no network, no imports outside an allow-list owned by `tester`.
-5. **Sandbox-clean.** Executed under `utils/sandbox.py`; any escape attempt = permanent blacklist of author-run.
+Run in order on EACH candidate property in isolation. Failure at any step → Property is NEVER registered, never returned from `admit()`.
+
+1. **Bounded cost.** `timeout_ms ≤ 10000`, `source ≤ 4 kB`, `language` in allow-list, no I/O, no network, no imports outside the allow-list owned by `tester`.
+2. **Sandbox-materialize.** Compile `source` to a callable via `utils/sandbox.py` (tester's hardened sandbox). Any escape attempt = permanent blacklist of author-run.
+3. **Self-test.** `callable(confirmer_example) == PASS` AND `callable(falsifier_example) == FAIL`. Either mismatch discards the property.
+4. **Determinism matches declared value.** If `deterministic=True`, the verdict on `confirmer_example` is stable across two-shot re-execution.
 
 A property that fails any gate is **never** usable for verification and never counted in quorum.
+
+### 1.4 Per-bundle admission gate (owned by `task_synthesizer` at task emission)
+
+After §1.3 admits individual properties, the whole `(problem, reference_solution, properties)` bundle must pass VoV:
+
+5. **`verify_properties_trustworthy(task_id, reference_solution, properties, problem_ctx, domain)`** — see `src/verifier/verifier_of_verifiers.py`. Runs the 8-strategy corruption sweep and returns `VerifierTrustReport`. If `report.passed == False`, the entire SynthesizedTask is rejected and NONE of its properties enter `PropertyRegistry` — even if each individually passed §1.3.
+
+Only bundles where both §1.3 and §1.4 pass may emit a SynthesizedTask. This guarantees no toothless property reaches the candidate-evaluation path to contaminate quorum (§2.1).
 
 ---
 

@@ -2001,6 +2001,7 @@ class DiagnosticsEngine:
             source=q.get("source", "curated"),
             unit_tests=q.get("unit_tests") or None,
             entry_point=q.get("entry_point", ""),
+            forbidden_symbols=q.get("forbidden_symbols") or None,
         )
         try:
             return grade_ground_truth(

@@ -44,6 +44,13 @@ class GroundTruthQuestion:
     entry_point: str = ""
     # Optional numeric tolerance for numeric_exact.
     tol: float = 1e-6
+    # H2 (hot_spots): AST-level forbidden symbols for code_unit_tests problems
+    # whose prompt imposes an algorithmic constraint the I/O tests can't
+    # enforce (e.g. "without built-in sort", "binary search in O(log n)").
+    # Each entry is a dotted name or bare name: "sorted", "list.sort",
+    # "list.index". Presence of a matching Call or Attribute anywhere in the
+    # response AST fails the grader.
+    forbidden_symbols: list[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +270,7 @@ _HUMANEVAL_STYLE = [
             "assert merge_sorted([1, 1, 1], [1, 1]) == [1, 1, 1, 1, 1]",
         ],
         "difficulty": "medium",
+        "forbidden_symbols": ["sorted", "list.sort"],
     },
     {
         "prompt": ("Write a Python function `binary_search(arr: list, target) -> int` that returns the "
@@ -276,6 +284,7 @@ _HUMANEVAL_STYLE = [
             "assert binary_search([1, 3, 5, 7, 9, 11], 11) == 5",
         ],
         "difficulty": "medium",
+        "forbidden_symbols": ["list.index"],
     },
     {
         "prompt": ("Write a Python function `flatten(nested: list) -> list` that flattens a nested list "
@@ -890,6 +899,8 @@ def _humaneval_to_questions() -> list[GroundTruthQuestion]:
             source="humaneval_style",
             unit_tests=list(item["tests"]),
             entry_point=item["entry_point"],
+            forbidden_symbols=(list(item["forbidden_symbols"])
+                               if item.get("forbidden_symbols") else None),
         ))
     return out
 
@@ -1227,8 +1238,38 @@ def _extract_code_block(response: str) -> str:
     return ""
 
 
+def _has_forbidden_symbol(code: str, forbidden: list[str]) -> str:
+    """Return the first matching forbidden symbol found in code's AST, or ''.
+
+    Handles bare names ("sorted") as ast.Call on ast.Name, and dotted names
+    ("list.sort", "list.index") as any ast.Attribute whose attr matches the
+    suffix. The type prefix ("list.") is informational — we check the attribute
+    name anywhere it's used as a method call, since the receiver type is not
+    statically known.
+    """
+    import ast
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return ""
+    bare = {f for f in forbidden if "." not in f}
+    attrs = {f.split(".", 1)[1] for f in forbidden if "." in f}
+    for node in ast.walk(tree):
+        # sorted(...) / any bare call
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id in bare:
+                return node.func.id
+            if isinstance(node.func, ast.Attribute) and node.func.attr in attrs:
+                return f".{node.func.attr}"
+        # Also catch bare Name references even outside Call (e.g., sorted passed as arg).
+        if isinstance(node, ast.Name) and node.id in bare:
+            return node.id
+    return ""
+
+
 def _check_code_unit_tests(response: str, tests: list[str], entry_point: str,
-                            timeout_s: int = 8) -> bool:
+                            timeout_s: int = 8,
+                            forbidden_symbols: list[str] = None) -> bool:
     """Run unit tests against the model's code in the shared sandbox."""
     from ..utils.sandbox import run_python_sandboxed
     code = _extract_code_block(response)
@@ -1244,6 +1285,14 @@ def _check_code_unit_tests(response: str, tests: list[str], entry_point: str,
         # Allow class methods: `class X: def entry(...)` is not acceptable — model was
         # asked for a free function. Reject.
         return False
+    # H2: prompt-level algorithmic constraints that unit tests can't enforce
+    # (e.g., "without built-in sort", "binary search in O(log n)"). Reject the
+    # response at AST level if it calls any forbidden symbol — faster and safer
+    # than trying to infer complexity from execution traces.
+    if forbidden_symbols:
+        hit = _has_forbidden_symbol(code, forbidden_symbols)
+        if hit:
+            return False
     test_block = "\n".join(tests)
     full = code + "\n\n# unit tests\n" + test_block + "\n"
     ok, _ = run_python_sandboxed(full, timeout_s=timeout_s, memory_mb=256)
@@ -1266,6 +1315,7 @@ def grade_ground_truth(question: GroundTruthQuestion, response: str,
         return _check_code_unit_tests(
             response, question.unit_tests or [], question.entry_point,
             timeout_s=code_timeout,
+            forbidden_symbols=question.forbidden_symbols or None,
         )
     return False
 
@@ -1291,4 +1341,5 @@ def question_to_dict(q: GroundTruthQuestion) -> dict:
         "source": q.source,
         "unit_tests": list(q.unit_tests) if q.unit_tests else [],
         "entry_point": q.entry_point,
+        "forbidden_symbols": list(q.forbidden_symbols) if q.forbidden_symbols else [],
     }

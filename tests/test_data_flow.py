@@ -222,3 +222,61 @@ def test_code_executes_rejects_wrong_function_name():
     # otherwise-runnable code.
     any_code = "```python\ndef foo(x): return x\n```"
     assert eng._check_answer(any_code, "def", "code_executes") is True
+
+
+def test_forbidden_symbols_rejects_sorted_in_merge_sorted():
+    """H2 (hot_spots): prompts with algorithmic constraints ('without sort',
+    'O(log n)') must be enforced when forbidden_symbols is declared."""
+    from src.diagnostics.ground_truth import _check_code_unit_tests
+
+    # Correct merge without sort — accept.
+    merge_ok = (
+        "```python\n"
+        "def merge_sorted(a, b):\n"
+        "    out = []\n"
+        "    i = j = 0\n"
+        "    while i < len(a) and j < len(b):\n"
+        "        if a[i] <= b[j]:\n"
+        "            out.append(a[i]); i += 1\n"
+        "        else:\n"
+        "            out.append(b[j]); j += 1\n"
+        "    out.extend(a[i:]); out.extend(b[j:])\n"
+        "    return out\n"
+        "```"
+    )
+    tests = [
+        "assert merge_sorted([1, 3, 5], [2, 4, 6]) == [1, 2, 3, 4, 5, 6]",
+        "assert merge_sorted([], [1, 2]) == [1, 2]",
+    ]
+    assert _check_code_unit_tests(
+        merge_ok, tests, "merge_sorted",
+        forbidden_symbols=["sorted", "list.sort"],
+    ) is True
+
+    # Cheater: uses sorted(). Unit tests pass but constraint violated → reject.
+    merge_cheat = (
+        "```python\n"
+        "def merge_sorted(a, b):\n"
+        "    return sorted(a + b)\n"
+        "```"
+    )
+    assert _check_code_unit_tests(
+        merge_cheat, tests, "merge_sorted",
+        forbidden_symbols=["sorted", "list.sort"],
+    ) is False
+
+    # binary_search cheater: uses .index() (matches list.index via attr suffix).
+    bsearch_cheat = (
+        "```python\n"
+        "def binary_search(arr, target):\n"
+        "    return arr.index(target) if target in arr else -1\n"
+        "```"
+    )
+    bstests = [
+        "assert binary_search([1, 2, 3, 4, 5], 3) == 2",
+        "assert binary_search([1, 2, 3, 4, 5], 6) == -1",
+    ]
+    assert _check_code_unit_tests(
+        bsearch_cheat, bstests, "binary_search",
+        forbidden_symbols=["list.index"],
+    ) is False

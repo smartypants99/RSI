@@ -2,7 +2,15 @@
 
 Author: `architect` (team actual-rsi)
 Date: 2026-04-17
-Status: v0.2 — two-gate architecture; VoV adopted as admission backend.
+Status: v0.2.1 — clarifications: DIMENSIONAL class, bundle-time confirmer/falsifier stamping, trusted-builtin shortcut.
+
+## Changelog v0.2 → v0.2.1
+
+- **§2.2 adds a 10th independence class `dimensional.physical`** covering units/dimensional-consistency properties. Closes a gap where `PropertyKind.DIMENSIONAL` (§1.2) had no matching class.
+- **§1.3 clarified:** `confirmer_example` / `falsifier_example` are filled at BUNDLE-EMIT time by task_synthesizer per-problem, not at library-registration time. Builtins may carry empty placeholders until pinned to a concrete problem; admission runs against the concrete (Property, problem) pairing.
+- **§1.3 trusted-builtin shortcut documented:** registry-level (NOT schema-level) `trusted: bool` flag. Trusted builtins bypass gates 1 (bounded cost) and 2 (sandbox-materialize); they still run gates 3 (self-test) and 4 (determinism). Model-authored properties (the default, trusted=False) run all four gates.
+- **Registry write ordering:** a Property that passes §1.3 but whose bundle fails §1.4 must NOT be written to `outputs/properties/<sid>.jsonl`. Integrator is responsible for staged write-on-bundle-pass.
+- **Builtin reshuffle:** `contrapositive_holds` moves from `transform.semantic` to `smt.logical` to avoid collision with `premise_reformulation_preserves_conclusion`.
 
 ## Changelog v0.1 → v0.2
 
@@ -140,6 +148,7 @@ Independence is the critical axis — three properties that all reduce to "did s
 | `perturbation.local`   | Small input change → predicted output change           | monotonicity, continuity         |
 | `conservation.global`  | A quantity stays invariant                             | energy, probability mass         |
 | `search.bounded`       | Enumerative counterexample hunt                        | random/QuickCheck-style fuzzing  |
+| `dimensional.physical` | Units/dimensions consistent across the solution        | kg·m/s² vs N, degree vs radian   |
 
 A property must declare exactly one class. Two properties in the same class vote as one (min-confidence of the pair) when computing quorum size.
 

@@ -1069,6 +1069,24 @@ class DataGenerator:
                 )
                 kept.append(sample)
             rejected += (k - len(correct_indices))
+
+        # H5 (hot_spots): STaR samples bypassed _apply_self_consistency, which
+        # only runs on the legacy path. Evidence: cycles 1/3/4/7/8 kept samples
+        # with consistency_score=0.25 (1/4 agreement) even with a 0.34 threshold.
+        # Apply the same threshold here — the agreement fraction is already
+        # computed as `k_correct/K` above and stored in consistency_score, so
+        # this is a cheap local filter, not a re-sample.
+        threshold = float(getattr(self.config, "consistency_threshold", 0.0) or 0.0)
+        if threshold > 0.0:
+            before = len(kept)
+            kept = [s for s in kept if (s.consistency_score or 0.0) >= threshold]
+            dropped = before - len(kept)
+            if dropped:
+                rejected += dropped
+                logger.info(
+                    f"  STaR consistency filter: dropped {dropped} samples "
+                    f"below threshold {threshold:.2f}"
+                )
         return kept, rejected, zero_correct, pairs
 
     def _rationalize_batch(

@@ -76,6 +76,12 @@ class CycleResult:
         self.had_diagnostics: bool = False
         self.eval_score: float | None = None
         self.eval_domain_scores: dict[str, float] = {}
+        # meta_analyst ASK 1: per-subdomain breakdown of the held-out eval,
+        # keyed "domain/subdomain". The overall eval_score is one number;
+        # this is the per-bucket view needed to tell whether a subdomain-
+        # targeted fix (e.g. bit_manipulation rebalance) actually moved that
+        # subdomain versus just raising the aggregate.
+        self.eval_subdomain_scores: dict[str, float] = {}
         # All per-repetition held-out eval scores (length == heldout_repetitions).
         # When repetitions==1, this is [eval_score]. The spread across
         # repetitions is a direct measurement-noise estimate.
@@ -105,6 +111,7 @@ class CycleResult:
             "improvement": self.improvement,
             "eval_score": self.eval_score,
             "eval_domain_scores": self.eval_domain_scores,
+            "eval_subdomain_scores": self.eval_subdomain_scores,
             "samples_generated": self.samples_generated,
             "samples_verified": self.samples_verified,
             "weaknesses_found": len(self.diagnostics.weaknesses) if self.diagnostics else 0,
@@ -549,6 +556,7 @@ class ImprovementLoop:
                 # (1, 1) after 3 cycles because of this.
                 stub.eval_score = cycle_data.get("eval_score")
                 stub.eval_domain_scores = cycle_data.get("eval_domain_scores", {}) or {}
+                stub.eval_subdomain_scores = cycle_data.get("eval_subdomain_scores", {}) or {}
                 self.history.append(stub)
 
             num_cycles = len(self.history)
@@ -877,6 +885,14 @@ class ImprovementLoop:
         result.eval_score = mean_score
         result.eval_scores_all = scores
         result.eval_domain_scores = dict(eval_diag.domain_scores) if eval_diag else {}
+        # meta_analyst ASK 1: surface the per-subdomain breakdown that run()
+        # now populates. Mean across repetitions is not meaningful here since
+        # we only keep the last successful DiagnosticResult; per-rep subdomain
+        # dicts would drift if the question set is reseeded, but frozen-eval
+        # mode uses a stable seed so the last rep's partition is authoritative.
+        result.eval_subdomain_scores = (
+            dict(eval_diag.subdomain_scores) if eval_diag else {}
+        )
         # Cache per-rep observability data for cycle_metrics dump.
         result._eval_per_rep_domain_scores = per_rep_domain_scores
         result._eval_per_rep_per_question = per_rep_per_question
@@ -1027,6 +1043,16 @@ class ImprovementLoop:
                 "post": result.post_diag.domain_scores if result.post_diag else {},
                 "eval": result.eval_domain_scores,
             },
+            # meta_analyst ASK 1: per-"domain/subdomain" breakdown. Pre and
+            # post come from the existing DiagnosticResult.subdomain_scores
+            # (populated by engine.run); eval comes from the held-out pass.
+            "subdomain_scores": {
+                "pre": (result.diagnostics.subdomain_scores
+                        if result.diagnostics else {}),
+                "post": (result.post_diag.subdomain_scores
+                         if result.post_diag else {}),
+                "eval": result.eval_subdomain_scores,
+            },
             "samples": {
                 "generated": result.samples_generated,
                 "verified": result.samples_verified,
@@ -1071,6 +1097,7 @@ class ImprovementLoop:
             "history_summary": [
                 {"cycle": r.cycle, "pre": r.pre_score, "post": r.post_score,
                  "improvement": r.improvement, "eval": r.eval_score,
+                 "eval_subdomain": r.eval_subdomain_scores,
                  "pass_rate": (r.samples_verified / r.samples_generated
                                if r.samples_generated else None),
                  "had_errors": bool(r.errors)}

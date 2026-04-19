@@ -58,6 +58,11 @@ class DiagnosticResult:
     timestamp: float
     weaknesses: list[WeaknessReport] = field(default_factory=list)
     domain_scores: dict[str, float] = field(default_factory=dict)
+    # meta_analyst ASK 1: per-subdomain scores keyed "domain/subdomain"
+    # (e.g. "code/implementation") so we can tell which subdomain moved
+    # between cycles. Derived from per_question at the end of run().
+    subdomain_scores: dict[str, float] = field(default_factory=dict)
+    subdomain_question_counts: dict[str, int] = field(default_factory=dict)
     domain_question_counts: dict[str, int] = field(default_factory=dict)
     layer_health: dict[str, float] = field(default_factory=dict)
     total_questions: int = 0
@@ -1192,6 +1197,23 @@ class DiagnosticsEngine:
             self._correlate_weak_layers(result)
 
         result.weaknesses.sort(key=lambda w: w.severity, reverse=True)
+
+        # meta_analyst ASK 1: compute per-subdomain scores from per_question.
+        # Key is "domain/subdomain" (e.g. "code/implementation") to match the
+        # weakness / target_weakness convention used elsewhere. Only emit
+        # buckets with ≥1 question so consumers can treat missing keys as
+        # "no signal" rather than "zero".
+        sub_correct: dict[str, int] = {}
+        sub_total: dict[str, int] = {}
+        for e in result.per_question:
+            key = f"{e.get('domain', '')}/{e.get('subdomain', 'general')}"
+            sub_total[key] = sub_total.get(key, 0) + 1
+            if e.get("correct", False):
+                sub_correct[key] = sub_correct.get(key, 0) + 1
+        for key, total in sub_total.items():
+            result.subdomain_scores[key] = (sub_correct.get(key, 0) / total) if total else 0.0
+            result.subdomain_question_counts[key] = total
+
         # Free VRAM from diagnostic inferences (200+ generate calls across all
         # domains + activation probes). Without this, the CUDA allocator is
         # heavily fragmented when generation/training phases need large contiguous

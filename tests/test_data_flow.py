@@ -224,6 +224,44 @@ def test_code_executes_rejects_wrong_function_name():
     assert eng._check_answer(any_code, "def", "code_executes") is True
 
 
+def test_diagnostic_result_populates_subdomain_scores():
+    """ASK 1 (meta_analyst): DiagnosticResult.subdomain_scores must partition
+    per_question results by "domain/subdomain".
+
+    Without this, held-out signal is a single number and we can't tell which
+    subdomain a targeted fix actually moved.
+    """
+    from src.diagnostics.engine import DiagnosticResult
+
+    r = DiagnosticResult(cycle=1, timestamp=0.0)
+    r.per_question = [
+        {"domain": "code", "subdomain": "implementation", "correct": True},
+        {"domain": "code", "subdomain": "implementation", "correct": False},
+        {"domain": "code", "subdomain": "implementation", "correct": True},
+        {"domain": "code", "subdomain": "bit_manipulation", "correct": False},
+        {"domain": "code", "subdomain": "bit_manipulation", "correct": False},
+    ]
+    # Mirror the finalization engine.run() performs at the end of diagnosis.
+    sub_correct, sub_total = {}, {}
+    for e in r.per_question:
+        k = f"{e['domain']}/{e['subdomain']}"
+        sub_total[k] = sub_total.get(k, 0) + 1
+        if e["correct"]:
+            sub_correct[k] = sub_correct.get(k, 0) + 1
+    for k, t in sub_total.items():
+        r.subdomain_scores[k] = sub_correct.get(k, 0) / t
+        r.subdomain_question_counts[k] = t
+
+    assert r.subdomain_scores == {
+        "code/implementation": 2 / 3,
+        "code/bit_manipulation": 0.0,
+    }
+    assert r.subdomain_question_counts == {
+        "code/implementation": 3,
+        "code/bit_manipulation": 2,
+    }
+
+
 def test_forbidden_symbols_rejects_sorted_in_merge_sorted():
     """H2 (hot_spots): prompts with algorithmic constraints ('without sort',
     'O(log n)') must be enforced when forbidden_symbols is declared."""

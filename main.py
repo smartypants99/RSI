@@ -4,7 +4,7 @@ import argparse
 import logging
 from pathlib import Path
 
-from src.utils.config import SystemConfig, ModelConfig, VLLMConfig
+from src.utils.config import SystemConfig, ModelConfig, VLLMConfig, SynthesisConfig
 from src.orchestrator.loop import ImprovementLoop
 
 
@@ -150,6 +150,17 @@ def main():
                         help="Weight training loss by per-step Brier score (rewards calibrated confidences)")
     parser.add_argument("--calibration-loss-weight", type=float, default=None,
                         help="Lambda on the calibration auxiliary term (default: 0.1)")
+
+    # Task synthesis (opt-in)
+    parser.add_argument("--enable-task-synthesis", action="store_true",
+                        help="Enable synthesis mode: generate novel tasks via task_synthesizer "
+                             "between diagnose and generate phases, filter by property consensus")
+    parser.add_argument("--synthesis-tasks-per-cycle", type=int, default=None,
+                        help="Novel tasks to synthesize per cycle when --enable-task-synthesis "
+                             "is active (default: 20)")
+    parser.add_argument("--property-consensus-threshold", type=float, default=None,
+                        help="Minimum fraction of property checks a synthesized task must pass "
+                             "to enter training (default: 0.7)")
 
     # vLLM
     parser.add_argument("--use-vllm", action="store_true",
@@ -301,6 +312,15 @@ def main():
     if args.lora_plus_ratio is not None:
         config.trainer.lora_plus_ratio = args.lora_plus_ratio
     config.trainer.__post_init__()
+
+    # Synthesis config
+    if args.enable_task_synthesis:
+        synthesis_kwargs = {"enable_task_synthesis": True}
+        if args.synthesis_tasks_per_cycle is not None:
+            synthesis_kwargs["tasks_per_cycle"] = args.synthesis_tasks_per_cycle
+        if args.property_consensus_threshold is not None:
+            synthesis_kwargs["property_consensus_threshold"] = args.property_consensus_threshold
+        config.synthesis = SynthesisConfig(**synthesis_kwargs)
 
     # vLLM mode
     if args.use_vllm:

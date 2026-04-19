@@ -174,6 +174,25 @@ class ImprovementLoop:
         # orchestrator is asked to (e.g. for cycle_metrics dumps).
         if getattr(config.orchestrator, "collect_training_loss_trajectory", False):
             self.trainer.set_collect_loss_trajectory(True)
+
+        # Synthesis-mode components — instantiated only when the flag is on so
+        # the classic path has zero overhead.
+        self._synthesis_enabled = getattr(
+            getattr(config, "synthesis", None), "enable_task_synthesis", False
+        )
+        self._task_synthesizer = None
+        if self._synthesis_enabled:
+            try:
+                from ..generator.task_synthesizer import TaskSynthesizer
+                self._task_synthesizer = TaskSynthesizer(config.synthesis, self.model_loader)
+                logger.info("Synthesis mode enabled (tasks_per_cycle=%d, consensus_threshold=%.2f)",
+                            config.synthesis.tasks_per_cycle,
+                            config.synthesis.property_consensus_threshold)
+            except Exception as e:
+                logger.warning("Synthesis mode requested but TaskSynthesizer failed to load (%s: %s) — disabled",
+                               type(e).__name__, e)
+                self._synthesis_enabled = False
+
         self.history: list[CycleResult] = []
         self._plateau_count = 0
         self._escalation_state = {
@@ -651,6 +670,36 @@ class ImprovementLoop:
             result.post_score = result.pre_score
             return result
 
+        # 1b. Synthesis mode (opt-in) — produce novel tasks + properties between
+        #     diagnose and generate, then filter by property consensus.
+        synthesis_samples: list = []
+        if self._synthesis_enabled and self._task_synthesizer is not None:
+            logger.info(f"[Cycle {cycle}] Phase 1b: SYNTHESIZE")
+            phase_start = time.time()
+            try:
+                from ..verifier.property_engine import verify_by_consensus
+                synth_cfg = self.config.synthesis
+                synth_result = self._task_synthesizer.synthesize(diag)
+                if synth_result.tasks:
+                    synthesis_samples = verify_by_consensus(
+                        synth_result.tasks,
+                        threshold=synth_cfg.property_consensus_threshold,
+                    )
+                    logger.info(
+                        "  Synthesis: %d tasks produced, %d passed consensus",
+                        len(synth_result.tasks), len(synthesis_samples),
+                    )
+                else:
+                    logger.info("  Synthesis: no tasks produced this cycle")
+            except Exception as e:
+                tb = traceback.format_exc()
+                logger.warning(f"  Synthesis phase failed ({type(e).__name__}): {e} — continuing without synthesized tasks")
+                result.errors.append({
+                    "phase": "synthesis", "type": type(e).__name__,
+                    "message": str(e), "traceback": tb,
+                })
+            result.phase_times["synthesis"] = time.time() - phase_start
+
         # 2. Generate training data
         logger.info(f"[Cycle {cycle}] Phase 2: GENERATE ({len(diag.weaknesses)} weaknesses)")
         phase_start = time.time()
@@ -672,7 +721,7 @@ class ImprovementLoop:
         result.diversity_stats = self.generator.get_diversity_stats()
         logger.info(f"  Generated {len(samples)} training samples")
 
-        if not samples:
+        if not samples and not synthesis_samples:
             logger.warning(f"  No samples generated — model couldn't produce valid problems")
             self._pending_regression_weaknesses.extend(injected_regressions)
             result.post_score = result.pre_score
@@ -681,7 +730,12 @@ class ImprovementLoop:
         # 3. Verify
         logger.info(f"[Cycle {cycle}] Phase 3: VERIFY")
         phase_start = time.time()
-        verified = self.verifier.verify_batch(samples)
+        verified = self.verifier.verify_batch(samples) if samples else []
+        # Synthesis-mode: consensus-passed samples bypass the classic verifier
+        # (they already cleared property checks) and are merged directly.
+        if synthesis_samples:
+            logger.info(f"  Merging {len(synthesis_samples)} consensus-passed synthesis samples")
+            verified = list(verified) + list(synthesis_samples)
         verified = self._apply_quality_top_k(verified)
         result.samples_verified = len(verified)
         # Observability: stash the verified samples + STaR internals for the

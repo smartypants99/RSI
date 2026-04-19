@@ -415,6 +415,23 @@ class VLLMConfig:
 
 
 @dataclass
+class SynthesisConfig:
+    """Configuration for the task-synthesis pipeline (opt-in, default-off)."""
+    enable_task_synthesis: bool = False
+    tasks_per_cycle: int = 20
+    property_consensus_threshold: float = 0.7
+
+    def __post_init__(self):
+        if self.tasks_per_cycle < 1:
+            raise ValueError(f"tasks_per_cycle must be >= 1, got {self.tasks_per_cycle}")
+        if not (0.0 < self.property_consensus_threshold <= 1.0):
+            raise ValueError(
+                f"property_consensus_threshold must be in (0, 1], "
+                f"got {self.property_consensus_threshold}"
+            )
+
+
+@dataclass
 class SystemConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     diagnostics: DiagnosticsConfig = field(default_factory=DiagnosticsConfig)
@@ -422,5 +439,6 @@ class SystemConfig:
     verifier: VerifierConfig = field(default_factory=VerifierConfig)
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
+    synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
     use_vllm: bool = False
     vllm: Optional[VLLMConfig] = None

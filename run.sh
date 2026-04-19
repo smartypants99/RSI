@@ -12,6 +12,9 @@ if [ "$#" -ge 1 ]; then
     RESUME_ARG="$*"
 fi
 
+# To opt in to synthesis mode (task_synthesizer + property_engine pipeline), add:
+#   --enable-task-synthesis --synthesis-tasks-per-cycle 20 --property-consensus-threshold 0.7
+
 exec python main.py \
     --model Qwen/Qwen3-8B \
     --use-vllm \

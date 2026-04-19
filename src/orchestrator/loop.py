@@ -1351,6 +1351,46 @@ class ImprovementLoop:
         result.phase_times["rsi_step7_calibration"] = time.time() - phase_start
 
         # ── STEP 8: train if ready ────────────────────────────────────────────
+        # Fallback: if the RSI path produced no usable training data (common
+        # on early cycles before the model can reliably emit the co-gen
+        # format, or when the 8B base model's proposals are too simple for
+        # VoV to pass), fall back to the classic STaR path so the cycle
+        # still trains. Without this, a bad batch of proposals means the
+        # model just re-evaluates against the same baseline each cycle with
+        # zero gradient updates — "actual RSI" that never learns anything.
+        if len(training_samples) == 0 and result.diagnostics is not None:
+            logger.info(
+                "[RSI tick %d] Step 8: no RSI training samples — "
+                "falling back to STaR generation on diagnostic weaknesses",
+                cycle,
+            )
+            try:
+                classic_samples = self.generator.generate_from_diagnostic_result(
+                    result.diagnostics
+                )
+                verified = (
+                    self.verifier.verify_batch(classic_samples)
+                    if classic_samples else []
+                )
+                if verified:
+                    logger.info(
+                        "[RSI tick %d] fallback: %d/%d STaR samples passed verification",
+                        cycle, len(verified), len(classic_samples),
+                    )
+                    training_samples = list(verified)
+                    result.samples_generated = len(classic_samples)
+                    result.samples_verified = len(verified)
+                else:
+                    logger.info(
+                        "[RSI tick %d] fallback: 0/%d STaR samples passed verification",
+                        cycle, len(classic_samples),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[RSI tick %d] STaR fallback failed (%s): %s",
+                    cycle, type(exc).__name__, exc,
+                )
+
         logger.info("[RSI tick %d] Step 8: TRAIN (pool has %d samples)", cycle, len(training_samples))
         phase_start = time.time()
         min_batch = getattr(self.config.trainer, "min_train_batch", 1)

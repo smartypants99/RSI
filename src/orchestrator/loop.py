@@ -1393,32 +1393,88 @@ class ImprovementLoop:
 
         logger.info("[RSI tick %d] Step 8: TRAIN (pool has %d samples)", cycle, len(training_samples))
         phase_start = time.time()
-        min_batch = getattr(self.config.trainer, "min_train_batch", 1)
+        # min_train_batch kept for back-compat (legacy field, default 1).
+        # min_train_samples is the stability floor — below this, a training
+        # step is basically random noise on 8B weights and corrupts the base
+        # model. Observed regression: 4 samples / 1 step dropped held-out by
+        # 0.244 and broke subsequent cycles. Enforce the higher of the two.
+        min_batch = max(
+            getattr(self.config.trainer, "min_train_batch", 1),
+            getattr(self.config.trainer, "min_train_samples", 16),
+        )
         if len(training_samples) >= min_batch:
             try:
                 if self._use_vllm:
                     self.model_loader.swap_to_hf_for_training()
-                diag = self.diagnostics.run(cycle)
-                self.trainer.inject_lora(weak_layers=diag.layer_health)
+                # Reuse the Step-0 diagnostic instead of running a second full
+                # diagnose pass here — that was burning ~1 minute of GPU per
+                # cycle on redundant inference and was also a prime suspect
+                # for the VRAM fragmentation that led to OOM in cycle 2. The
+                # Step-0 diag is still current: we haven't trained yet.
+                diag = result.diagnostics
+                if diag is None:
+                    # Fallback if Step 0 was skipped — diagnose now.
+                    diag = self.diagnostics.run(cycle)
+                    result.diagnostics = diag
+                result.pre_score = diag.overall_score
+                self.trainer.inject_lora(weak_layers=getattr(diag, "layer_health", {}) or {})
                 metrics = self.trainer.train(training_samples, cycle)
                 result.training_metrics = metrics
-                result.pre_score = diag.overall_score
-                self.trainer.save_lora_weights(
-                    self.config.orchestrator.output_dir / "lora_weights", cycle
-                )
-                self.trainer.merge_lora()
-                if self._use_vllm:
-                    ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
-                    self.model_loader.save_checkpoint(ckpt_root, cycle)
-                    tmp_ckpt = ckpt_root / f"cycle_{cycle}"
-                    self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
-                post_diag = self.diagnostics.run(cycle)
-                result.post_score = post_diag.overall_score
-                result.improvement = result.post_score - result.pre_score
-                logger.info(
-                    "[RSI tick %d] training done: %d steps, score %+.3f",
-                    cycle, metrics.steps, result.improvement,
-                )
+
+                # Guard: if training produced no effective optimizer steps
+                # (pre-training probe tripped, dataset empty, etc.), there's
+                # nothing to merge. Strip and bail WITHOUT writing a checkpoint
+                # so the next cycle starts from the same weights.
+                if not metrics or getattr(metrics, "steps", 0) == 0:
+                    logger.info(
+                        "[RSI tick %d] training skipped by trainer guard (0 steps) "
+                        "— not merging, not checkpointing",
+                        cycle,
+                    )
+                    self.trainer.strip_lora()
+                else:
+                    self.trainer.save_lora_weights(
+                        self.config.orchestrator.output_dir / "lora_weights", cycle
+                    )
+                    self.trainer.merge_lora()
+
+                    # Regression-revert guard: run held-out eval in HF mode
+                    # before swapping vLLM over. If training made the model
+                    # meaningfully worse, DON'T swap — keep using the prior
+                    # weights so a bad cycle doesn't cascade. The merged LoRA
+                    # weights are written to disk either way for forensics.
+                    revert_threshold = float(getattr(
+                        self.config.trainer, "regression_revert_threshold", 0.10,
+                    ))
+                    post_diag = self.diagnostics.run(cycle)
+                    result.post_score = post_diag.overall_score
+                    result.improvement = result.post_score - result.pre_score
+
+                    regressed = (
+                        revert_threshold > 0
+                        and result.improvement < -revert_threshold
+                    )
+                    if regressed:
+                        logger.warning(
+                            "[RSI tick %d] REGRESSION detected (%+.3f < -%.2f) — "
+                            "NOT writing checkpoint and NOT swapping vLLM. "
+                            "The in-memory HF model is corrupted by this cycle's "
+                            "merge, but vLLM keeps pointing at the previous "
+                            "cycle's known-good checkpoint; the next "
+                            "swap_to_hf_for_training will reload clean weights "
+                            "from that path.",
+                            cycle, result.improvement, revert_threshold,
+                        )
+                    else:
+                        if self._use_vllm:
+                            ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
+                            self.model_loader.save_checkpoint(ckpt_root, cycle)
+                            tmp_ckpt = ckpt_root / f"cycle_{cycle}"
+                            self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
+                        logger.info(
+                            "[RSI tick %d] training done: %d steps, score %+.3f",
+                            cycle, metrics.steps, result.improvement,
+                        )
             except Exception as exc:
                 tb = traceback.format_exc()
                 logger.warning("Step 8 (train) failed (%s): %s", type(exc).__name__, exc)
@@ -1432,7 +1488,8 @@ class ImprovementLoop:
                     pass
         else:
             logger.info(
-                "[RSI tick %d] pool size %d < min_batch %d — skipping training",
+                "[RSI tick %d] pool size %d < min_batch %d — skipping training "
+                "(prevents corrupting base weights with tiny-batch gradient noise)",
                 cycle, len(training_samples), min_batch,
             )
         result.phase_times["rsi_step8_train"] = time.time() - phase_start

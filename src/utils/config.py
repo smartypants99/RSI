@@ -195,6 +195,22 @@ class TrainerConfig:
     early_stop_loss: float = 0.15
     max_steps_per_cycle: int = 8
     min_steps_per_cycle: int = 1
+    # min_train_samples: minimum training-pool size before we actually train.
+    # Observed failure: cycle-1 trained on 4 STaR-fallback samples (1 optimizer
+    # step), which added enough gradient noise to an 8B model that held-out
+    # eval dropped 0.244 and parse-format output collapsed, cascading every
+    # subsequent cycle into worse proposals and worse fallbacks. The spec's
+    # `min_steps_per_cycle` only gates on STEPS — not samples — so 1 sample ×
+    # 1 epoch still qualifies. Require at least this many verified samples
+    # before training; below this, skip the cycle's training (the fallback
+    # pool will accumulate across cycles if populated-across-cycles is on).
+    min_train_samples: int = 16
+    # regression_revert_threshold: if post-training held-out drops by more
+    # than this vs pre-training, revert the checkpoint to pre-training
+    # weights. Trainers that blow up the base model shouldn't get to keep
+    # their corruption in the next cycle's starting state. Set to a large
+    # value (e.g. 1.0) to disable.
+    regression_revert_threshold: float = 0.10
     # skip_if_initial_loss_below: pre-training loss probe. Before the first
     # backward step, we forward a single batch under no_grad and check the
     # loss. If it's already below this threshold, the model has effectively

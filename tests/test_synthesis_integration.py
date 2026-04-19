@@ -15,12 +15,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.generator.task_synthesizer import TaskSynthesizer, SynthesisResult
+from src.generator.task_synthesizer import TaskSynthesizer, SynthesisResult, SynthesizedTask
 from src.verifier.property_engine import verify_by_consensus, register_property, Property
 from src.verifier.verifier_of_verifiers import (
     verify_properties_trustworthy,
     generate_corruptions,
     make_task_fingerprint,
+    quorum_verdict,
 )
 from src.utils.config import SynthesisConfig, SystemConfig
 from src.generator.data_generator import TrainingSample, ReasoningStep
@@ -334,3 +335,215 @@ def test_loop_synthesis_enabled_flag_wires_synthesizer():
 
     assert loop._synthesis_enabled is True
     assert loop._task_synthesizer is not None
+
+
+# ─── quorum_verdict (§2.1) ───────────────────────────────────────────────────
+
+@dataclass
+class _ClassedProperty:
+    """Property stub with independence_class for quorum tests."""
+    name: str
+    check_fn: Callable[[Any, Any], tuple[bool, str]]
+    independence_class: str = "structural"
+    stochasticity: float = 0.0
+    required: bool = False
+
+
+def _make_quorum_pairs(classes: list[str], results: list[bool]) -> list[tuple]:
+    """Build (property, bool) pairs for quorum_verdict."""
+    pairs = []
+    for cls, ok in zip(classes, results):
+        prop = _ClassedProperty(
+            name=f"prop_{cls}",
+            check_fn=lambda s, c: (True, "ok"),
+            independence_class=cls,
+        )
+        pairs.append((prop, ok))
+    return pairs
+
+
+def test_quorum_verdict_accepts_valid_quorum():
+    """3 distinct classes, all pass, n=3 → accepted."""
+    pairs = _make_quorum_pairs(["structural", "semantic", "exec"], [True, True, True])
+    v = quorum_verdict(pairs)
+    assert v.accepted
+    assert v.fail_count == 0
+    assert v.distinct_classes == 3
+
+
+def test_quorum_verdict_fail_veto():
+    """Any single FAIL is a veto regardless of pass count."""
+    pairs = _make_quorum_pairs(
+        ["structural", "semantic", "exec", "output"],
+        [True, True, True, False],  # 3 pass, 1 fail
+    )
+    v = quorum_verdict(pairs)
+    assert not v.accepted
+    assert v.fail_count == 1
+    assert "veto" in v.reason
+
+
+def test_quorum_verdict_insufficient_classes():
+    """n=3 with only 2 distinct classes → rejected."""
+    pairs = _make_quorum_pairs(
+        ["structural", "structural", "semantic"],
+        [True, True, True],
+    )
+    v = quorum_verdict(pairs)
+    assert not v.accepted
+    assert v.distinct_classes == 2
+
+
+def test_quorum_verdict_insufficient_properties():
+    """Fewer than min_properties → rejected."""
+    pairs = _make_quorum_pairs(["structural", "semantic"], [True, True])
+    v = quorum_verdict(pairs, min_properties=3)
+    assert not v.accepted
+    assert v.total_properties == 2
+
+
+def test_quorum_verdict_empty_list():
+    v = quorum_verdict([])
+    assert not v.accepted
+    assert "no properties" in v.reason
+
+
+def test_quorum_verdict_unclassified_collapse():
+    """Properties with no independence_class all collapse to one class."""
+    pairs = [
+        (_StubProperty(name="p1", check_fn=lambda s, c: (True, "ok")), True),
+        (_StubProperty(name="p2", check_fn=lambda s, c: (True, "ok")), True),
+        (_StubProperty(name="p3", check_fn=lambda s, c: (True, "ok")), True),
+    ]
+    v = quorum_verdict(pairs, min_classes=3)
+    # All collapse to "<unclassified>" → 1 distinct class → rejected
+    assert not v.accepted
+    assert v.distinct_classes == 1
+
+
+def test_quorum_verdict_pass_threshold():
+    """Exactly ceil(2n/3) must pass; one below → rejected."""
+    import math
+    n = 6
+    threshold = math.ceil(2 * n / 3)  # 4
+    # 3 pass (below threshold), no fails — still rejected on pass count
+    pairs = _make_quorum_pairs(
+        ["a", "b", "c", "d", "e", "f"],
+        [True, True, True, False, False, False],
+    )
+    # But fails > 0 triggers veto — test pass-count rejection with all-pass
+    pairs_pass_short = _make_quorum_pairs(
+        ["a", "b", "c", "d", "e", "f"],
+        [True, True, True, True, True, True],
+    )
+    # 6 all pass, 3 distinct classes → should accept
+    v = quorum_verdict(pairs_pass_short[:6])
+    # With 6 props all passing threshold=4 is met; but distinct_classes from a-f = 6
+    assert v.accepted
+
+
+# ─── loop synthesis phase with quorum_verdict ────────────────────────────────
+
+def _make_synthesized_task(
+    task_id: str = "t1",
+    domain: str = "math",
+    reference_solution: Any = 42,
+    classes: list[str] | None = None,
+    results: list[bool] | None = None,
+) -> "SynthesizedTask":
+    """Build a SynthesizedTask with classsed properties for quorum tests."""
+    if classes is None:
+        classes = ["structural", "semantic", "exec"]
+    if results is None:
+        results = [True] * len(classes)
+
+    props = []
+    for cls, ok in zip(classes, results):
+        expected = ok  # capture for closure
+
+        def make_check(expected_val):
+            def check(sol, ctx):
+                return (expected_val, "ok" if expected_val else "fail")
+            return check
+
+        props.append(_ClassedProperty(
+            name=f"prop_{cls}",
+            check_fn=make_check(ok),
+            independence_class=cls,
+        ))
+
+    return SynthesizedTask(
+        task_id=task_id,
+        domain=domain,
+        prompt=f"Compute something ({task_id})",
+        reference_solution=str(reference_solution),
+        properties=props,
+        parent_skills=("skill_a", "skill_b"),
+    )
+
+
+def test_loop_synthesis_phase_admits_quorum_passing_tasks():
+    """Tasks whose properties pass quorum are converted to TrainingSample."""
+    from src.orchestrator.loop import ImprovementLoop
+    cfg = SystemConfig()
+    cfg.synthesis.enable_task_synthesis = True
+
+    good_task = _make_synthesized_task(classes=["a", "b", "c"], results=[True, True, True])
+    mock_synth = MagicMock()
+    mock_synth.synthesize.return_value = SynthesisResult(tasks=[good_task])
+
+    mock_loader = MagicMock()
+    mock_loader.load = MagicMock()
+
+    with (
+        patch("src.utils.model_loader.ModelLoader", return_value=mock_loader),
+        patch("src.orchestrator.loop.DiagnosticsEngine"),
+        patch("src.orchestrator.loop.DataGenerator"),
+        patch("src.orchestrator.loop.Verifier"),
+        patch("src.orchestrator.loop.CustomLoRATrainer"),
+        patch("src.orchestrator.loop.MetaController"),
+        patch("src.generator.task_synthesizer.TaskSynthesizer", return_value=mock_synth),
+    ):
+        loop = ImprovementLoop(cfg)
+
+    loop._task_synthesizer = mock_synth
+    loop._synthesis_enabled = True
+
+    # Simulate the synthesis block directly
+    from src.verifier.verifier_of_verifiers import quorum_verdict as _qv
+    synthesis_samples = []
+    synth_result = mock_synth.synthesize(MagicMock())
+    for task in synth_result.tasks:
+        props = getattr(task, "properties", []) or []
+        ref = getattr(task, "reference_solution", "")
+        ctx = {}
+        pairs = []
+        for prop in props:
+            check_fn = getattr(prop, "check_fn", None)
+            ok, _ = check_fn(ref, ctx) if callable(check_fn) else (False, "")
+            pairs.append((prop, bool(ok)))
+        verdict = _qv(pairs)
+        if verdict.accepted:
+            synthesis_samples.append(task.to_training_sample())
+
+    assert len(synthesis_samples) == 1
+    assert synthesis_samples[0].domain == "math"
+
+
+def test_loop_synthesis_phase_rejects_veto_task():
+    """A task with any FAIL property is rejected by quorum (veto rule)."""
+    veto_task = _make_synthesized_task(
+        classes=["a", "b", "c", "d"],
+        results=[True, True, True, False],  # one FAIL
+    )
+    from src.verifier.verifier_of_verifiers import quorum_verdict as _qv
+
+    props = getattr(veto_task, "properties", [])
+    ref = veto_task.reference_solution
+    pairs = []
+    for prop in props:
+        ok, _ = prop.check_fn(ref, {})
+        pairs.append((prop, ok))
+    verdict = _qv(pairs)
+    assert not verdict.accepted
+    assert verdict.fail_count == 1

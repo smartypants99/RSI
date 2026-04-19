@@ -671,23 +671,49 @@ class ImprovementLoop:
             return result
 
         # 1b. Synthesis mode (opt-in) — produce novel tasks + properties between
-        #     diagnose and generate, then filter by property consensus.
+        #     diagnose and generate. Each SynthesizedTask carries trusted
+        #     properties; quorum_verdict (§2.1) is the accept/reject gate per
+        #     the spec. Passing tasks are converted to TrainingSample and merged
+        #     into the verify output, bypassing the classic grader (they already
+        #     cleared property-based checks upstream).
         synthesis_samples: list = []
         if self._synthesis_enabled and self._task_synthesizer is not None:
             logger.info(f"[Cycle {cycle}] Phase 1b: SYNTHESIZE")
             phase_start = time.time()
             try:
-                from ..verifier.property_engine import verify_by_consensus
-                synth_cfg = self.config.synthesis
+                from ..verifier.verifier_of_verifiers import quorum_verdict
                 synth_result = self._task_synthesizer.synthesize(diag)
                 if synth_result.tasks:
-                    synthesis_samples = verify_by_consensus(
-                        synth_result.tasks,
-                        threshold=synth_cfg.property_consensus_threshold,
-                    )
+                    n_admitted = 0
+                    n_quorum_fail = 0
+                    for task in synth_result.tasks:
+                        props = getattr(task, "properties", []) or []
+                        ref = getattr(task, "reference_solution", "")
+                        ctx = {"domain": getattr(task, "domain", ""), "prompt": getattr(task, "prompt", "")}
+                        # Evaluate each trusted property against the reference solution.
+                        pairs = []
+                        for prop in props:
+                            try:
+                                check_fn = getattr(prop, "check_fn", None)
+                                if callable(check_fn):
+                                    ok, _ = check_fn(ref, ctx)
+                                else:
+                                    ok = bool(getattr(prop, "check", lambda s: False)(ref))
+                                pairs.append((prop, bool(ok)))
+                            except Exception:
+                                pairs.append((prop, False))
+                        verdict = quorum_verdict(pairs)
+                        if verdict.accepted:
+                            training_sample = task.to_training_sample()
+                            synthesis_samples.append(training_sample)
+                            n_admitted += 1
+                        else:
+                            n_quorum_fail += 1
+                            logger.debug("  Quorum rejected task %s: %s",
+                                         getattr(task, "task_id", "?"), verdict.reason)
                     logger.info(
-                        "  Synthesis: %d tasks produced, %d passed consensus",
-                        len(synth_result.tasks), len(synthesis_samples),
+                        "  Synthesis: %d tasks produced, %d admitted by quorum, %d rejected",
+                        len(synth_result.tasks), n_admitted, n_quorum_fail,
                     )
                 else:
                     logger.info("  Synthesis: no tasks produced this cycle")

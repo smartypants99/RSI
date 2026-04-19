@@ -210,3 +210,15 @@ def test_code_executes_rejects_wrong_function_name():
     assert eng._check_answer(right, "merge_sorted", "code_executes") is True
     # Non-identifier expected (e.g. "any") → falls back to execution-only check.
     assert eng._check_answer(right, "any valid sort", "code_executes") is True
+
+    # hot_spots H3: lastelem/last_elem case surfaced in cycle 1.
+    wrong_last = "```python\ndef lastelem(lst): return lst[-1]\n```"
+    right_last = "```python\ndef last_elem(lst): return lst[-1]\n```"
+    assert eng._check_answer(wrong_last, "last_elem", "code_executes") is False
+    assert eng._check_answer(right_last, "last_elem", "code_executes") is True
+
+    # hot_spots H1: Python keywords must never activate the name-gate — they can
+    # never match a real def, so a "def" expected should NOT force rejection of
+    # otherwise-runnable code.
+    any_code = "```python\ndef foo(x): return x\n```"
+    assert eng._check_answer(any_code, "def", "code_executes") is True

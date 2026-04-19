@@ -2,7 +2,17 @@
 
 Author: `architect` (team actual-rsi)
 Date: 2026-04-17
-Status: v0.1 — baseline for teammate implementation.
+Status: v0.2 — two-gate architecture; VoV adopted as admission backend.
+
+## Changelog v0.1 → v0.2
+
+- **Two-gate architecture ratified.** VoV (`verify_properties_trustworthy` in `src/verifier/verifier_of_verifiers.py`) is the ADMISSION gate run at task-synthesis time on the reference_solution. `quorum_verdict` (same module) is the ACCEPTANCE gate run at candidate-verification time on live generator candidates. Both must pass for a sample to reach the training pool.
+- **§1.3 non-triviality backend changed.** The 3-fuzzed-perturbations check is superseded by VoV's 8-strategy corruption sweep at admission.
+- **§3.2.3 "adversarial property author" demoted to future-extension.** VoV's mechanical corruption sweep covers the same threat model concretely. Model-vs-model adversarial author remains a valid distinct signal and is deferred to a later milestone.
+- **Property schema:** `stochasticity: float` dropped in favor of `deterministic: bool`; `required: bool` dropped (quorum handles acceptance). `check_fn` is NOT a Property schema field; property_verifier materializes it lazily from `source/language/entry_point` after sandbox admission and passes it into VoV as a trusted callable.
+- **Canonical homes:** §2.1 quorum rule → `quorum_verdict` in VoV module. Property dataclass + admission gates → `src/verifier/property_engine.py` (new, owned by property_verifier).
+- **Stricter quorum than v0.1:** current `quorum_verdict` treats every non-PASS as FAIL (effective rule: unanimous-PASS + class-diversity ≥ 3). The ⌈2n/3⌉ ratio in v0.1 is therefore a non-binding upper bound. Intentional — if empirical false-accept rates stay acceptable we keep it; if they're too high we revisit with a tri-state PASS/FAIL/ERROR.
+- **§7 decisions ratified:** K=5 adversarial rollouts default. Old-problem retirement: on first training-pool acceptance, retire parent problem from novelty checks; property record keeps parent_problem_hash for traceability.
 
 ---
 

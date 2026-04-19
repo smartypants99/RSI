@@ -993,12 +993,27 @@ class CustomLoRATrainer:
                     # that single-step corruption. Also gates when grad_accum>1:
                     # refuse to accumulate more grads that will eventually be
                     # applied.
-                    if unweighted_loss < self.config.early_stop_loss:
+                    #
+                    # H9 (hot_spots): single-batch loss can be noisily low
+                    # (e.g. a short sample with high prior-mass tokens) and
+                    # fire the guard before ANY optimizer step, leaving the
+                    # cycle with steps=0. Evidence: cycles 4/7/8 showed that
+                    # failure mode in 8 cycles of data. Require a minimum
+                    # patience of 2 × effective_accum forward passes before
+                    # the guard may fire — that's one full accumulation group
+                    # finalized into an optimizer step, plus a second group
+                    # worth of evidence. Preserves cycle-5's protection (the
+                    # memorization run would still trip it after ~1 full group)
+                    # while tolerating single-batch noise.
+                    min_patience_batches = 2 * max(1, effective_accum)
+                    if (unweighted_loss < self.config.early_stop_loss
+                            and batch_count + 1 >= min_patience_batches):
                         logger.warning(
                             f"  Early stop (pre-backward): loss {unweighted_loss:.4f}"
                             f" < early_stop_loss {self.config.early_stop_loss}"
                             f" at batch {batch_count + 1}"
-                            f" (step_count={step_count}, accum={accum_count})"
+                            f" (step_count={step_count}, accum={accum_count},"
+                            f" patience={min_patience_batches})"
                         )
                         # If there are pending accumulated grads from earlier
                         # batches, flush them before exiting — but only when

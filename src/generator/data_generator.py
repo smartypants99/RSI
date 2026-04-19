@@ -1253,12 +1253,23 @@ class DataGenerator:
         if not samples:
             return samples
 
-        # Pass 1: domain-level cap
-        max_per_domain = max(2, int(len(samples) * self.MAX_DOMAIN_FRACTION))
+        # Pass 1: domain-level cap — skip when fewer than 2 domains are in play.
+        # H6 (hot_spots): with only "code" configured, a 0.40 domain cap threw
+        # away 60-75% of verified STaR samples every cycle (cycle 1 kept=21→4,
+        # cycle 3 kept=42→10) for no diversity benefit. Capping any domain at
+        # 40% is only meaningful when there are ≥2 domains to balance against.
         domain_buckets: dict[str, list[TrainingSample]] = {}
         for s in samples:
             domain_buckets.setdefault(s.domain, []).append(s)
-        over_d = {d for d, ss in domain_buckets.items() if len(ss) > max_per_domain}
+        if len(domain_buckets) < 2:
+            logger.info(
+                f"  Rebalance(domain): skipped — only {len(domain_buckets)} "
+                f"domain(s) in play; cap has no diversity effect"
+            )
+            over_d = set()
+        else:
+            max_per_domain = max(2, int(len(samples) * self.MAX_DOMAIN_FRACTION))
+            over_d = {d for d, ss in domain_buckets.items() if len(ss) > max_per_domain}
         if over_d:
             kept: list[TrainingSample] = []
             for domain, ds in domain_buckets.items():
@@ -1271,12 +1282,21 @@ class DataGenerator:
                 kept.extend(ds)
             samples = kept
 
-        # Pass 2: subdomain-level cap — target_weakness is "domain/subdomain"
-        max_per_sub = max(2, int(len(samples) * self.MAX_SUBDOMAIN_FRACTION))
+        # Pass 2: subdomain-level cap — target_weakness is "domain/subdomain".
+        # H6: likewise gate on ≥2 distinct subdomains; a 50% cap on a single
+        # subdomain is a pure throughput cut with no diversity signal.
         sub_buckets: dict[str, list[TrainingSample]] = {}
         for s in samples:
             sub_buckets.setdefault(s.target_weakness or s.domain, []).append(s)
-        over_s = {sd for sd, ss in sub_buckets.items() if len(ss) > max_per_sub}
+        if len(sub_buckets) < 2:
+            logger.info(
+                f"  Rebalance(subdomain): skipped — only {len(sub_buckets)} "
+                f"subdomain(s) in play"
+            )
+            over_s = set()
+        else:
+            max_per_sub = max(2, int(len(samples) * self.MAX_SUBDOMAIN_FRACTION))
+            over_s = {sd for sd, ss in sub_buckets.items() if len(ss) > max_per_sub}
         if over_s:
             kept = []
             for sub, ss in sub_buckets.items():

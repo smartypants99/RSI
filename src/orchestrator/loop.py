@@ -193,6 +193,22 @@ class ImprovementLoop:
                                type(e).__name__, e)
                 self._synthesis_enabled = False
 
+        # RSI registries — open only when synthesis is active so classic mode
+        # has zero overhead. Spec §5.3: conditional on mode, no existing call
+        # sites need to change.
+        self._registries = None
+        if self._synthesis_enabled:
+            try:
+                from .registries import RSIRegistries
+                sid = getattr(config.orchestrator, "run_id", None) or None
+                self._registries = RSIRegistries.open(
+                    config.orchestrator.output_dir, sid=sid
+                )
+                logger.info("RSI registries opened (sid=%s)", self._registries.sid)
+            except Exception as e:
+                logger.warning("RSI registries failed to open (%s: %s) — artifact logging disabled",
+                               type(e).__name__, e)
+
         self.history: list[CycleResult] = []
         self._plateau_count = 0
         self._escalation_state = {
@@ -686,31 +702,90 @@ class ImprovementLoop:
                 if synth_result.tasks:
                     n_admitted = 0
                     n_quorum_fail = 0
+                    # Registry helpers — import lazily, fail softly.
+                    try:
+                        from .registries import VerificationRecord, TrainingPoolRecord
+                        import uuid as _uuid
+                        _reg = self._registries
+                    except Exception:
+                        _reg = None
+                        VerificationRecord = None  # type: ignore[assignment]
+                        TrainingPoolRecord = None  # type: ignore[assignment]
+
                     for task in synth_result.tasks:
                         props = getattr(task, "properties", []) or []
                         ref = getattr(task, "reference_solution", "")
                         ctx = {"domain": getattr(task, "domain", ""), "prompt": getattr(task, "prompt", "")}
                         # Evaluate each trusted property against the reference solution.
                         pairs = []
+                        per_prop_verdicts = []
                         for prop in props:
+                            prop_id = getattr(prop, "property_id", getattr(prop, "name", "?"))
                             try:
                                 check_fn = getattr(prop, "check_fn", None)
                                 if callable(check_fn):
-                                    ok, _ = check_fn(ref, ctx)
+                                    ok, reason = check_fn(ref, ctx)
                                 else:
                                     ok = bool(getattr(prop, "check", lambda s: False)(ref))
+                                    reason = "ok" if ok else "fail"
                                 pairs.append((prop, bool(ok)))
-                            except Exception:
+                                per_prop_verdicts.append({
+                                    "property_id": prop_id,
+                                    "passed": bool(ok),
+                                    "reason": reason,
+                                    "independence_class": getattr(prop, "independence_class", ""),
+                                })
+                            except Exception as exc:
                                 pairs.append((prop, False))
+                                per_prop_verdicts.append({
+                                    "property_id": prop_id,
+                                    "passed": False,
+                                    "reason": f"exception: {exc}",
+                                    "independence_class": getattr(prop, "independence_class", ""),
+                                })
                         verdict = quorum_verdict(pairs)
+                        task_id = getattr(task, "task_id", "?")
+
+                        # Write VerificationRecord regardless of outcome (spec §4).
+                        if _reg is not None and VerificationRecord is not None:
+                            try:
+                                vr_id = _uuid.uuid4().hex
+                                _reg.verification_log.append_verification(VerificationRecord(
+                                    record_id=vr_id,
+                                    problem_id=task_id,
+                                    candidate_id=f"{task_id}:reference",
+                                    property_ids=[pv["property_id"] for pv in per_prop_verdicts],
+                                    per_property_verdicts=per_prop_verdicts,
+                                    quorum_accepted=verdict.accepted,
+                                    quorum_reason=verdict.reason,
+                                    adversarial=False,
+                                    session_id=_reg.sid,
+                                ))
+                            except Exception as exc:
+                                logger.debug("registry write failed (VerificationRecord): %s", exc)
+
                         if verdict.accepted:
                             training_sample = task.to_training_sample()
                             synthesis_samples.append(training_sample)
                             n_admitted += 1
+                            # Write TrainingPoolRecord for accepted samples.
+                            if _reg is not None and TrainingPoolRecord is not None:
+                                try:
+                                    _reg.training_pool.append_sample(TrainingPoolRecord(
+                                        pool_record_id=_uuid.uuid4().hex,
+                                        problem_id=task_id,
+                                        candidate_id=f"{task_id}:reference",
+                                        verification_record_id=vr_id,
+                                        domain=getattr(task, "domain", ""),
+                                        prompt=getattr(task, "prompt", ""),
+                                        response=ref,
+                                        session_id=_reg.sid,
+                                    ))
+                                except Exception as exc:
+                                    logger.debug("registry write failed (TrainingPoolRecord): %s", exc)
                         else:
                             n_quorum_fail += 1
-                            logger.debug("  Quorum rejected task %s: %s",
-                                         getattr(task, "task_id", "?"), verdict.reason)
+                            logger.debug("  Quorum rejected task %s: %s", task_id, verdict.reason)
                     logger.info(
                         "  Synthesis: %d tasks produced, %d admitted by quorum, %d rejected",
                         len(synth_result.tasks), n_admitted, n_quorum_fail,

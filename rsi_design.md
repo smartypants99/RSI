@@ -2,7 +2,11 @@
 
 Author: `architect` (team actual-rsi)
 Date: 2026-04-17
-Status: v0.2.1 — clarifications: DIMENSIONAL class, bundle-time confirmer/falsifier stamping, trusted-builtin shortcut.
+Status: v0.2.2 — field-count correction (19, not 18); prior text unchanged.
+
+## Changelog v0.2.1 → v0.2.2
+
+- **Field count corrected: 19 fields in §1.1 Property**, not 18. Prior narrative in spec and architect's messages said 18; the dataclass code block in §1.1 and the landed property_engine.Property both enumerate 19 fields. No semantic change — just counting. The 19 fields: property_id, problem_id, author, name, kind, description, language, source, entry_point, timeout_ms, deterministic, inputs, returns, independence_class, difficulty_floor, falsifier_example, confirmer_example, created_at, parent_problem_hash.
 
 ## Changelog v0.2 → v0.2.1
 

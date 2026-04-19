@@ -1586,6 +1586,20 @@ class DataGenerator:
     @staticmethod
     def _postprocess_conclusion(conclusion: str, domain: str, chain: list[ReasoningStep]) -> str:
         """Domain-specific cleanup so the verifier can extract+execute `response`."""
+        # H7 (hot_spots): cycles 3/5/6/8 had responses ending in "</think>" and
+        # cycle 1 had assumptions lists containing "</think>". The ResponseParser
+        # strips at parse time, but downstream passes (code-fence extraction,
+        # trailing-step fallback) can re-introduce stray tokens from unprocessed
+        # sub-strings. Defense-in-depth: also strip here, and prune think
+        # fragments from every step's assumptions, content, and justification.
+        conclusion = _strip_think_tokens(conclusion or "")
+        for step in chain or []:
+            step.content = _strip_think_tokens(step.content or "").strip()
+            step.justification = _strip_think_tokens(step.justification or "").strip() or "implicit"
+            step.assumptions = [
+                a2 for a2 in (_strip_think_tokens(a or "").strip() for a in (step.assumptions or []))
+                if a2
+            ]
         if domain == "code":
             # Strip markdown code fences; keep the code body verbatim.
             m = re.search(r'```(?:python|py)?\s*\n?(.*?)```', conclusion, re.DOTALL)

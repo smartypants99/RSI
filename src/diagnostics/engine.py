@@ -734,9 +734,17 @@ def _gen_code_implementation(rng: random.Random, difficulty: str) -> dict:
         "Write a Python function `dijkstra(graph, start)` returning shortest distances (graph=dict of dicts).",
     ]
     prompt = rng.choice({"easy": easy, "medium": medium, "hard": hard, "expert": expert}[difficulty])
+    # Parse the backticked function name from the prompt (e.g. `reverse_string(s)` → reverse_string).
+    # Previously this was hard-coded to "def", which is a Python keyword; the name-gate in
+    # _check_code_executes then searched for `def def(` and silently no-oped, letting every
+    # code/implementation sample through the name check. Evidence: hot_spots H1 report
+    # citing cycles 1/3/4/7/8 where `last_elem`/`merge_sorted` etc. were accepted as
+    # `lastelem`/`mergesorted`.
+    name_match = re.search(r"`([a-zA-Z_]\w*)\s*\(", prompt)
+    expected = name_match.group(1) if name_match else ""
     return {
         "prompt": prompt,
-        "expected": "def",
+        "expected": expected,
         "check_type": "code_executes",
         "subdomain": "implementation",
         "difficulty": difficulty,
@@ -2251,8 +2259,14 @@ class DiagnosticsEngine:
         except SyntaxError:
             return False
 
-        if expected and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expected.strip()):
-            if not re.search(r'(?m)^\s*def\s+' + re.escape(expected.strip()) + r'\s*\(', code):
+        # Exclude Python keywords from the identifier-gate: a caller that passed
+        # "def"/"class"/etc. would previously produce a regex like `^\s*def\s+def\s*\(`
+        # that can never match a real function, silently disabling the name check.
+        # See hot_spots H1 report.
+        import keyword as _kw
+        expected_name = expected.strip() if expected else ""
+        if expected_name and not _kw.iskeyword(expected_name) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", expected_name):
+            if not re.search(r'(?m)^\s*def\s+' + re.escape(expected_name) + r'\s*\(', code):
                 return False
 
         # Append a basic smoke-test call. Use the LAST top-level function defined,

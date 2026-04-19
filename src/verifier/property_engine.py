@@ -417,16 +417,29 @@ def _invoke_callable(
     prop: Property,
     candidate: Any,
     executor: SandboxExecutor,
+    *,
+    runtime_problem_id: Optional[str] = None,
 ) -> tuple[Verdict, str]:
-    """Adapt a materialized callable to the tri-state Verdict output."""
-    inputs_kwargs = {"problem": prop.problem_id, "candidate": candidate}
+    """Adapt a materialized callable to the tri-state Verdict output.
+
+    `runtime_problem_id`: the problem_id being CURRENTLY verified (from the
+    verify() caller). Trusted builtin check_fns need this to look up the
+    problem's runtime context (tests, reference, etc.) from stash_problem_ctx.
+    The legacy behavior passed prop.problem_id — fine for model-authored
+    properties bound to a specific problem, but broken for builtin templates
+    whose problem_id is a constant like "builtin:template".
+    """
+    # Pass the runtime problem id when available; fall back to the property's
+    # bound problem_id for older model-authored paths.
+    pid_for_call = runtime_problem_id or prop.problem_id
+    inputs_kwargs = {"problem": pid_for_call, "candidate": candidate}
     inputs_kwargs = {k: v for k, v in inputs_kwargs.items() if k in prop.inputs}
     if is_trusted(prop):
         # Trusted callables are our own Python — we pass positional args in the
         # order declared by Property.inputs. Kwargs-style for model-authored.
         args = tuple(inputs_kwargs.get(name) for name in prop.inputs)
         try:
-            result = callable_(*args) if args else callable_(prop.problem_id, candidate)
+            result = callable_(*args) if args else callable_(pid_for_call, candidate)
             return _coerce_verdict(result)
         except Exception as e:
             return "ERROR", f"{type(e).__name__}: {e}"
@@ -651,7 +664,10 @@ def verify(
             ))
             continue
         v_start = time.time()
-        verdict, reason = _invoke_callable(callable_, prop, candidate, executor)
+        verdict, reason = _invoke_callable(
+            callable_, prop, candidate, executor,
+            runtime_problem_id=problem_id,
+        )
         verdicts.append(PropertyVerdict(
             property_id=prop.property_id, verdict=verdict,
             independence_class=prop.independence_class,
@@ -665,7 +681,15 @@ def verify(
     error_count = sum(1 for v in verdicts if v.verdict == "ERROR")
     distinct_classes = tuple(sorted({v.independence_class for v in verdicts if v.verdict == "PASS"}))
 
-    pass_authors = [v.author for v in verdicts if v.verdict == "PASS"]
+    # Duplicate-author rule (§2.1 rule 4): exists to prevent a single model
+    # run from "voting" for a candidate via 3 properties it authored. Trusted
+    # builtins aren't model-authored — they're a shared immutable library —
+    # so their shared author string is not a conflict of interest. Only
+    # apply the rule to model-authored pass authors.
+    pass_authors = [
+        v.author for v in verdicts
+        if v.verdict == "PASS" and not str(v.author).startswith("builtin:")
+    ]
     dup_author = len(pass_authors) != len(set(pass_authors))
 
     reject_reason = ""
@@ -955,6 +979,48 @@ def _extract_code(solution: Any) -> Optional[str]:
     return None
 
 
+# Per-problem context registry. task_synthesizer stashes (tests, reference,
+# entry_point, etc.) for each ProposedProblem BEFORE verify() runs, and
+# trusted builtin check_fns look up their context by the runtime problem_id
+# that verify() threads through _invoke_callable. This replaces the stubs
+# that always returned True — which silently collapsed §2.1 quorum to
+# "everything passes, quorum accepted, garbage into training data".
+_PROBLEM_CTX: dict[str, dict] = {}
+
+
+def stash_problem_ctx(problem_id: str, ctx: dict) -> None:
+    """Register per-problem runtime context for builtin check_fns.
+
+    Called by task_synthesizer (or any other proposer) before verify() so
+    the trusted builtins have the specific data they need — unit tests for
+    passes_provided_tests, reference solution for passes_generated_edge_cases,
+    equations for substitute_back, etc.
+
+    Context keys (all optional):
+      tests          list[str]  — assert statements like "assert solve(5)==10"
+      entry_point    str        — function name, e.g. "solve"
+      reference      str        — reference implementation source code
+      expected_type  str        — type name the return value should match
+      equations      list[str]  — for math problems, equations to check
+      bounds         tuple      — (lo, hi) plausibility range for numerics
+      empty_input    str        — repr of an empty-container input for the fn
+    """
+    _PROBLEM_CTX[problem_id] = dict(ctx or {})
+
+
+def get_problem_ctx(problem_id: str) -> dict:
+    return _PROBLEM_CTX.get(problem_id, {})
+
+
+def clear_problem_ctx(problem_id: Optional[str] = None) -> None:
+    """Drop one or all cached problem contexts. Called between cycles to
+    prevent unbounded growth across long runs."""
+    if problem_id is None:
+        _PROBLEM_CTX.clear()
+    else:
+        _PROBLEM_CTX.pop(problem_id, None)
+
+
 def _b_executes(problem, candidate):
     code = _extract_code(candidate)
     if not code:
@@ -964,51 +1030,287 @@ def _b_executes(problem, candidate):
 
 
 def _b_passes_provided_tests(problem, candidate):
-    return True, "stub: provided_tests requires per-problem ctx"
+    """Run the problem's assert-statement tests against candidate code.
+
+    Context keys used: `tests` (list[str] of assert statements).
+    If no tests are registered, returns ERROR (not silent PASS) so the
+    caller knows the property needs per-problem ctx to discriminate.
+    """
+    ctx = get_problem_ctx(problem)
+    tests = ctx.get("tests") or []
+    if not tests:
+        return "ERROR", "no tests in problem ctx"
+    code = _extract_code(candidate)
+    if not code:
+        return False, "no extractable Python code"
+    test_block = "\n".join(
+        t if t.strip().startswith(("assert ", "assert(")) else f"assert ({t})"
+        for t in tests if t.strip()
+    )
+    if not test_block:
+        return "ERROR", "no non-empty tests"
+    full = code + "\n\n# --- provided tests ---\n" + test_block + "\n"
+    ok, detail = run_python_sandboxed(full, _CODE_TIMEOUT, _CODE_MEM_MB)
+    return (True, "") if ok else (False, f"failed: {detail[:160]}")
 
 
 def _b_passes_generated_edge_cases(problem, candidate):
-    return True, "stub: reference_fn/edge_case_gen requires per-problem ctx"
+    """Differential test: candidate vs reference on a few random inputs.
+
+    Context keys: `reference` (source of a function named `entry_point`),
+    `entry_point` (function name), `edge_inputs` (list of repr-inputs to try).
+    Probe is bounded (≤5 inputs, 3s total) so verification stays fast.
+    """
+    ctx = get_problem_ctx(problem)
+    reference = ctx.get("reference") or ""
+    entry = ctx.get("entry_point") or "solve"
+    edges_raw = ctx.get("edge_inputs") or []
+    if not reference or not edges_raw:
+        return "ERROR", "no reference or edge_inputs in ctx"
+    code = _extract_code(candidate)
+    if not code:
+        return False, "no extractable Python code"
+    # Parse edge inputs in the HOST via ast.literal_eval (no eval() needed in
+    # the sandbox, which blocks eval anyway). Only well-formed Python
+    # literals survive; malformed strings are skipped.
+    import ast as _ast
+    edges: list = []
+    for raw in edges_raw[:5]:
+        try:
+            edges.append(_ast.literal_eval(raw) if isinstance(raw, str) else raw)
+        except (ValueError, SyntaxError):
+            continue
+    if not edges:
+        return "ERROR", "no parseable edge inputs"
+    # Redefine entry twice would collide; rename via function alias.
+    harness = (
+        f"{reference}\n"
+        f"_ref = {entry}\n"
+        f"{code}\n"
+        f"_cand = {entry}\n"
+        f"_edges = {edges!r}\n"
+        "_fail = None\n"
+        "for _arg in _edges:\n"
+        "    try:\n"
+        "        _r = _ref(_arg); _c = _cand(_arg)\n"
+        "    except Exception as _e:\n"
+        "        _fail = f'raised on {_arg!r}: {type(_e).__name__}'\n"
+        "        break\n"
+        "    if _r != _c:\n"
+        "        _fail = f'differs on {_arg!r}: ref={_r!r} cand={_c!r}'\n"
+        "        break\n"
+        "print('FAIL:', _fail) if _fail else print('OK')\n"
+    )
+    ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
+    if not ok:
+        return False, f"harness crashed: {detail[:160]}"
+    if "FAIL:" in (detail or ""):
+        return False, detail[detail.index("FAIL:"):][:160]
+    return True, ""
 
 
 def _b_output_type_matches_signature(problem, candidate):
-    return True, "stub: entrypoint/expected_type requires per-problem ctx"
+    """Check candidate returns the expected type on a sample input.
+
+    Context keys: `entry_point`, `expected_type` (Python type name), `sample_input`.
+    """
+    ctx = get_problem_ctx(problem)
+    entry = ctx.get("entry_point") or "solve"
+    expected_type = (ctx.get("expected_type") or "").strip()
+    sample = ctx.get("sample_input")
+    if not expected_type or sample is None:
+        return "ERROR", "no expected_type or sample_input in ctx"
+    code = _extract_code(candidate)
+    if not code:
+        return False, "no extractable Python code"
+    harness = (
+        f"{code}\n"
+        f"_r = {entry}({sample!r})\n"
+        f"import sys\n"
+        f"_expected = {expected_type!r}\n"
+        "_actual = type(_r).__name__\n"
+        "print(('OK' if _actual == _expected else f'FAIL: expected {_expected}, got {_actual}'))\n"
+    )
+    ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
+    if not ok:
+        return False, f"harness crashed: {detail[:160]}"
+    if "FAIL:" in (detail or ""):
+        return False, detail[detail.index("FAIL:"):][:160]
+    return True, ""
 
 
 def _b_no_exceptions_on_empty_input(problem, candidate):
-    return True, "stub: entrypoint/empty_input requires per-problem ctx"
+    """Candidate tolerates an empty input without raising.
+
+    Context keys: `entry_point`, `empty_input` (repr of the empty container).
+    """
+    ctx = get_problem_ctx(problem)
+    entry = ctx.get("entry_point") or "solve"
+    empty = ctx.get("empty_input")
+    if empty is None:
+        return "ERROR", "no empty_input in ctx"
+    code = _extract_code(candidate)
+    if not code:
+        return False, "no extractable Python code"
+    harness = (
+        f"{code}\n"
+        f"try:\n"
+        f"    {entry}({empty!r}); print('OK')\n"
+        f"except Exception as _e:\n"
+        f"    print('FAIL:', type(_e).__name__, str(_e)[:80])\n"
+    )
+    ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
+    if not ok:
+        return False, f"harness crashed: {detail[:160]}"
+    if "FAIL:" in (detail or ""):
+        return False, detail[detail.index("FAIL:"):][:160]
+    return True, ""
 
 
 def _b_idempotent_where_applicable(problem, candidate):
-    return True, "stub: idempotent flag requires per-problem ctx"
+    """f(f(x)) == f(x) on a sample input, if the problem declares idempotence."""
+    ctx = get_problem_ctx(problem)
+    if not ctx.get("idempotent"):
+        return "ERROR", "problem does not declare idempotence"
+    entry = ctx.get("entry_point") or "solve"
+    sample = ctx.get("sample_input")
+    if sample is None:
+        return "ERROR", "no sample_input for idempotence check"
+    code = _extract_code(candidate)
+    if not code:
+        return False, "no extractable Python code"
+    harness = (
+        f"{code}\n"
+        f"_once = {entry}({sample!r}); _twice = {entry}(_once)\n"
+        "print('OK' if _once == _twice else f'FAIL: f(x)={_once!r} f(f(x))={_twice!r}')\n"
+    )
+    ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
+    if not ok:
+        return False, f"harness crashed: {detail[:160]}"
+    if "FAIL:" in (detail or ""):
+        return False, detail[detail.index("FAIL:"):][:160]
+    return True, ""
 
 
 def _b_substitute_back(problem, candidate):
-    return True, "stub: equations require per-problem ctx"
+    """Plug candidate answer into the problem's equations via sympy."""
+    ctx = get_problem_ctx(problem)
+    equations = ctx.get("equations") or []
+    var = ctx.get("variable") or "x"
+    if not equations:
+        return "ERROR", "no equations in ctx"
+    # candidate is a numeric or expression string
+    cand_str = candidate if isinstance(candidate, str) else getattr(candidate, "response", str(candidate))
+    try:
+        from sympy import symbols, sympify, simplify
+    except ImportError:
+        return "ERROR", "sympy unavailable"
+    try:
+        sym = symbols(var)
+        val = sympify(cand_str.strip())
+    except Exception as e:
+        return False, f"can't parse candidate as number/expr: {e}"
+    for eq in equations:
+        if "=" in eq:
+            lhs, rhs = eq.split("=", 1)
+        else:
+            lhs, rhs = eq, "0"
+        try:
+            diff = simplify(sympify(lhs).subs(sym, val) - sympify(rhs).subs(sym, val))
+            if diff != 0:
+                return False, f"equation fails: {eq} at {var}={val}"
+        except Exception as e:
+            return "ERROR", f"simplify raised on {eq}: {e}"
+    return True, ""
 
 
 def _b_dimensional_consistency(problem, candidate):
-    return True, "stub: expected_units requires per-problem ctx"
+    ctx = get_problem_ctx(problem)
+    expected_units = ctx.get("expected_units") or ""
+    if not expected_units:
+        return "ERROR", "no expected_units in ctx"
+    text = candidate if isinstance(candidate, str) else str(candidate)
+    # Minimal check: expected unit token appears in the candidate text.
+    ok = expected_units.lower() in text.lower()
+    return (True, "") if ok else (False, f"missing unit: expected '{expected_units}'")
 
 
 def _b_alternative_derivation_agrees(problem, candidate):
-    return True, "stub: alternative_answer requires per-problem ctx"
+    """Candidate matches an independently-derived reference numerically."""
+    ctx = get_problem_ctx(problem)
+    alt = ctx.get("alternative_answer")
+    if alt is None:
+        return "ERROR", "no alternative_answer in ctx"
+    cand = candidate if isinstance(candidate, str) else getattr(candidate, "response", str(candidate))
+    try:
+        from sympy import sympify, simplify
+        diff = simplify(sympify(str(cand).strip()) - sympify(str(alt).strip()))
+        return (True, "") if diff == 0 else (False, f"diff = {diff}")
+    except Exception as e:
+        return "ERROR", f"sympy: {e}"
 
 
 def _b_numerical_plausibility(problem, candidate):
-    return True, "stub: plausible_range requires per-problem ctx"
+    ctx = get_problem_ctx(problem)
+    bounds = ctx.get("bounds")
+    if not bounds or len(bounds) != 2:
+        return "ERROR", "no bounds in ctx"
+    lo, hi = bounds
+    cand = candidate if isinstance(candidate, str) else str(candidate)
+    import re as _re
+    m = _re.search(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?", cand)
+    if not m:
+        return False, "no number in candidate"
+    try:
+        v = float(m.group(0))
+    except ValueError:
+        return False, "unparseable number"
+    return (True, "") if lo <= v <= hi else (False, f"{v} outside [{lo}, {hi}]")
 
 
 def _b_contrapositive_holds(problem, candidate):
-    return True, "stub: implication requires per-problem ctx"
+    ctx = get_problem_ctx(problem)
+    antecedent = (ctx.get("antecedent") or "").lower()
+    consequent = (ctx.get("consequent") or "").lower()
+    if not antecedent or not consequent:
+        return "ERROR", "no antecedent/consequent in ctx"
+    text = (candidate if isinstance(candidate, str) else str(candidate)).lower()
+    ok = (antecedent in text) and (consequent in text)
+    return (True, "") if ok else (False, "missing antecedent or consequent reference")
 
 
 def _b_premise_reformulation_preserves_conclusion(problem, candidate):
-    return True, "stub: premise reformulation requires per-problem ctx"
+    ctx = get_problem_ctx(problem)
+    conclusion = (ctx.get("conclusion") or "").lower()
+    if not conclusion:
+        return "ERROR", "no conclusion in ctx"
+    text = (candidate if isinstance(candidate, str) else str(candidate)).lower()
+    return (True, "") if conclusion in text else (False, "conclusion not present")
 
 
 def _b_trivial_case_correct(problem, candidate):
-    return True, "stub: trivial_case requires per-problem ctx"
+    """Candidate gives the correct answer on a declared trivial case."""
+    ctx = get_problem_ctx(problem)
+    trivial = ctx.get("trivial_case")  # {"input": ..., "expected": ...}
+    if not trivial or "input" not in trivial or "expected" not in trivial:
+        return "ERROR", "no trivial_case in ctx"
+    entry = ctx.get("entry_point") or "solve"
+    code = _extract_code(candidate)
+    if not code:
+        return False, "no extractable Python code"
+    inp = trivial["input"]
+    exp = trivial["expected"]
+    harness = (
+        f"{code}\n"
+        f"_r = {entry}({inp!r})\n"
+        f"print('OK' if _r == {exp!r} else f'FAIL: got {{_r!r}}, expected {{{exp!r}!r}}')\n"
+    )
+    ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
+    if not ok:
+        return False, f"harness crashed: {detail[:160]}"
+    if "FAIL:" in (detail or ""):
+        return False, detail[detail.index("FAIL:"):][:160]
+    return True, ""
 
 
 # Register 13 builtins under v0.2.1-canonical independence_class values.
@@ -1101,6 +1403,7 @@ __all__ = [
     "verify", "VerificationRecord", "PropertyVerdict", "CalibrationView",
     "property_to_payload", "write_admitted_bundle",
     "builtin_properties", "get_property",
+    "stash_problem_ctx", "get_problem_ctx", "clear_problem_ctx",
     # legacy shim (to remove in Phase E)
     "PropertyFn", "register_property", "verify_by_consensus",
 ]

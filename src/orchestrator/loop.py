@@ -1084,11 +1084,27 @@ class ImprovementLoop:
                            cycle, type(exc).__name__, exc)
 
         # ── STEP 1: propose problems ─────────────────────────────────────────
-        logger.info("[RSI tick %d] Step 1: PROPOSE %d problems", cycle, ts)
+        # Use the builtin-based code-proposal path by default — it asks the
+        # model for a much simpler format (PROBLEM + ENTRY + REFERENCE +
+        # TESTS) that an 8B base can emit reliably, and wires the model's
+        # own tests as the §1.4 ground truth via property_engine's trusted
+        # builtins. The legacy co-gen propose_batch (full property source
+        # per property) is kept for stronger models; switch via
+        # config.synthesis.use_builtin_code_path=False.
+        use_code_builtins = getattr(
+            self.config.synthesis, "use_builtin_code_path", True,
+        )
+        logger.info(
+            "[RSI tick %d] Step 1: PROPOSE %d problems (path=%s)",
+            cycle, ts, "code_builtins" if use_code_builtins else "legacy_cogen",
+        )
         phase_start = time.time()
         proposed_problems: list = []
         try:
-            proposed_problems = synth.propose_batch(ts)
+            if use_code_builtins and hasattr(synth, "propose_batch_code"):
+                proposed_problems = synth.propose_batch_code(ts)
+            else:
+                proposed_problems = synth.propose_batch(ts)
         except Exception as exc:
             tb = traceback.format_exc()
             logger.warning("Step 1 (propose_batch) failed (%s): %s", type(exc).__name__, exc)
@@ -1122,10 +1138,18 @@ class ImprovementLoop:
             pid = getattr(problem, "problem_id", None)
             if pid is None:
                 continue
+            # Builtin path: problem carries problem_ctx; use the trusted
+            # builtin Property templates with runtime ctx stashed. This is
+            # the only path that actually produces discriminating property
+            # verdicts with an 8B base model — the alternative is to ask
+            # the model to write property source code, which it can't.
             try:
-                raw_props = synth.propose_properties(problem)
+                if getattr(problem, "problem_ctx", None) and hasattr(synth, "materialize_builtin_properties"):
+                    raw_props = synth.materialize_builtin_properties(problem)
+                else:
+                    raw_props = synth.propose_properties(problem)
             except Exception as exc:
-                logger.debug("propose_properties(%s) failed: %s", pid, exc)
+                logger.debug("materialize properties(%s) failed: %s", pid, exc)
                 raw_props = []
 
             admitted: list = []
@@ -1351,45 +1375,19 @@ class ImprovementLoop:
         result.phase_times["rsi_step7_calibration"] = time.time() - phase_start
 
         # ── STEP 8: train if ready ────────────────────────────────────────────
-        # Fallback: if the RSI path produced no usable training data (common
-        # on early cycles before the model can reliably emit the co-gen
-        # format, or when the 8B base model's proposals are too simple for
-        # VoV to pass), fall back to the classic STaR path so the cycle
-        # still trains. Without this, a bad batch of proposals means the
-        # model just re-evaluates against the same baseline each cycle with
-        # zero gradient updates — "actual RSI" that never learns anything.
-        if len(training_samples) == 0 and result.diagnostics is not None:
-            logger.info(
-                "[RSI tick %d] Step 8: no RSI training samples — "
-                "falling back to STaR generation on diagnostic weaknesses",
-                cycle,
-            )
-            try:
-                classic_samples = self.generator.generate_from_diagnostic_result(
-                    result.diagnostics
-                )
-                verified = (
-                    self.verifier.verify_batch(classic_samples)
-                    if classic_samples else []
-                )
-                if verified:
-                    logger.info(
-                        "[RSI tick %d] fallback: %d/%d STaR samples passed verification",
-                        cycle, len(verified), len(classic_samples),
-                    )
-                    training_samples = list(verified)
-                    result.samples_generated = len(classic_samples)
-                    result.samples_verified = len(verified)
-                else:
-                    logger.info(
-                        "[RSI tick %d] fallback: 0/%d STaR samples passed verification",
-                        cycle, len(classic_samples),
-                    )
-            except Exception as exc:
-                logger.warning(
-                    "[RSI tick %d] STaR fallback failed (%s): %s",
-                    cycle, type(exc).__name__, exc,
-                )
+        # Pure RSI: NO STaR fallback. If this cycle's property-based path
+        # produced zero training samples, the cycle does NOT train on
+        # anything else — the whole point is that training data has to
+        # come from candidates that cleared §1.3 admission + §1.4 verify
+        # quorum. Falling back to weakness-patching would make the pipeline
+        # behaviorally identical to classic STaR, which is the failure mode
+        # this rebuild exists to eliminate. Next cycle retries; property_ctx
+        # is cleared between cycles so stale state doesn't leak.
+        try:
+            from ..verifier.property_engine import clear_problem_ctx as _clear_ctx
+            _clear_ctx()
+        except Exception:
+            pass
 
         logger.info("[RSI tick %d] Step 8: TRAIN (pool has %d samples)", cycle, len(training_samples))
         phase_start = time.time()

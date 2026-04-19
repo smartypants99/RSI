@@ -441,6 +441,16 @@ class SynthesisConfig:
     enable_task_synthesis: bool = False
     tasks_per_cycle: int = 20
     property_consensus_threshold: float = 0.7
+    # Candidates to sample per proposed problem in rsi_tick Step 3 (SOLVE).
+    # Must be ≥1. Larger k gives the quorum more candidates to accept from.
+    candidates_per_problem: int = 3
+    # If True, rsi_tick uses the builtin-based code-proposal path
+    # (PROBLEM + ENTRY + REFERENCE + TESTS → trusted builtin checks).
+    # This is the only path that actually produces training samples with
+    # an 8B base model — the legacy §3.1 co-gen format requires the model
+    # to emit property source code, which it can't do reliably. Set False
+    # to force the legacy path on stronger models.
+    use_builtin_code_path: bool = True
 
     def __post_init__(self):
         if self.tasks_per_cycle < 1:

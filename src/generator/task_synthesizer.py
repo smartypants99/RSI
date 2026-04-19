@@ -1142,6 +1142,114 @@ class TaskSynthesizer:
                 out.append(prop)
         return out
 
+    def propose_batch_code(self, n: int) -> list[ProposedProblem]:
+        """Simplified code-proposal path using trusted builtins.
+
+        Replaces the strict §3.1 co-gen parser that was failing 65–95% of
+        the time on Qwen3-8B. Asks the model for PROBLEM + ENTRY + REFERENCE
+        + TESTS (which it CAN produce reliably) and hands verification off
+        to property_engine's 13 trusted builtins with per-problem ctx.
+
+        Returns ProposedProblems with `problem_ctx` populated. The caller
+        (rsi_tick) then: stashes the ctx via property_engine.stash_problem_ctx,
+        picks 3 builtin Property objects spanning distinct classes, runs
+        solve+verify normally.
+        """
+        prompts = [CODE_PROPOSAL_TEMPLATE] * max(0, n)
+        if not prompts:
+            return []
+        raws = self._generate_many(prompts)
+        if len(raws) < len(prompts):
+            raws = list(raws) + [""] * (len(prompts) - len(raws))
+
+        from collections import Counter
+        issue_tally: Counter = Counter()
+        accepted: list[ProposedProblem] = []
+
+        for i, raw in enumerate(raws):
+            parse = parse_code_proposal(raw)
+            if not parse.ok:
+                for iss in parse.issues:
+                    issue_tally[iss] += 1
+                continue
+            problem_hash = hashlib.sha256(parse.problem_text.encode("utf-8")).hexdigest()
+            ctx = {
+                "tests": parse.tests,
+                "entry_point": parse.entry_point,
+                "reference": parse.reference,
+            }
+            if parse.empty_input:
+                ctx["empty_input"] = parse.empty_input
+            if parse.sample_input:
+                ctx["sample_input"] = parse.sample_input
+                # derive a few edge inputs (random-ish; cheap heuristic)
+                ctx["edge_inputs"] = [parse.sample_input]
+            if parse.expected_type:
+                ctx["expected_type"] = parse.expected_type
+            pp = ProposedProblem(
+                problem_id=str(uuid.uuid4()),
+                problem_text=parse.problem_text,
+                declared_difficulty=0.5,
+                declared_difficulty_reason="",
+                nearest_neighbor_problem="",
+                nearest_neighbor_dist=1.0,
+                axis_of_extension="",
+                parent_skills=("code/implementation", "code/implementation"),
+                problem_hash=problem_hash,
+                author=f"model:{self._run_id or 'code'}#{i}",
+                created_at=time.time(),
+                session_id=self._session_id,
+                property_descriptors=[],
+                problem_ctx=ctx,
+                domain="code",
+            )
+            accepted.append(pp)
+            self._prior_prompts.append(pp.problem_text)
+            self._prior_sigs.append(_normalize_for_dedup(pp.problem_text))
+
+        total_failed = len(raws) - len(accepted)
+        if total_failed:
+            top = ", ".join(f"{k}={v}" for k, v in issue_tally.most_common(5))
+            logger.info(
+                "propose_batch_code: %d/%d proposals failed — top issues: %s",
+                total_failed, len(raws), top or "(none)",
+            )
+        else:
+            logger.info("propose_batch_code: %d/%d proposals accepted", len(accepted), len(raws))
+        return accepted
+
+    def materialize_builtin_properties(
+        self, problem: ProposedProblem,
+    ) -> list[Any]:
+        """Return the trusted builtin Property objects for this problem's domain.
+
+        Stashes the problem's ctx in property_engine's runtime ctx store so
+        each builtin check_fn can look up tests/reference/entry_point at
+        verify time. Picks 3 builtins spanning ≥3 distinct independence
+        classes so §2.1 quorum can actually accept a passing candidate.
+        """
+        from ..verifier.property_engine import (
+            get_property, stash_problem_ctx,
+        )
+        stash_problem_ctx(problem.problem_id, problem.problem_ctx or {})
+
+        # Pick 3 builtins spanning distinct classes for the code domain.
+        # passes_provided_tests  → exec.behavioral  (ground-truth tests)
+        # passes_generated_edge_cases → search.bounded (vs reference oracle)
+        # output_type_matches_signature → structural.static (type check)
+        # Three distinct classes satisfies §2.1's quorum floor.
+        names = [
+            "passes_provided_tests",
+            "passes_generated_edge_cases",
+            "output_type_matches_signature",
+        ]
+        out: list[Any] = []
+        for name in names:
+            p = get_property(name)
+            if p is not None:
+                out.append(p)
+        return out
+
     def solve(self, problem: ProposedProblem, *, k: int = 3) -> list[str]:
         """§4 step 3: generate K candidate solutions for a ProposedProblem.
 
@@ -1506,6 +1614,14 @@ class ProposedProblem:
     # them here so the proposal artifact is a complete record of what the
     # proposer emitted (source-of-truth for audit).
     property_descriptors: list["PropertyDescriptor"] = field(default_factory=list)
+    # Per-problem runtime context for trusted builtin check_fns (tests,
+    # reference, entry_point, etc.). property_engine.stash_problem_ctx
+    # reads this before verify() so builtins can actually discriminate.
+    # Added in the builtin-based RSI path so an 8B model doesn't have to
+    # write its own property source code — we supply the check_fns and
+    # the model supplies the ground-truth ctx (assert tests + reference).
+    problem_ctx: dict = field(default_factory=dict)
+    domain: str = ""
 
     def to_jsonl(self) -> str:
         """Serialize to one jsonl line. Dataclasses in descriptors become dicts."""
@@ -2185,6 +2301,152 @@ def propose_one(
 # ...); it replaces the old propose_one's ad-hoc two-skill signature for the
 # rsi_tick path. propose_one stays as a lower-level helper.
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Builtin-based proposal path (code domain).
+#
+# Rationale: the spec's §3.1 co-gen format requires the model to emit full
+# property source code for each property — 7 named fields × ≥4 properties in
+# a strict layout. An 8B base model can't hit that reliably (GPU run-3:
+# 13–18/20 failures, top issue "missing_block"). Without admitted properties
+# that actually run, §1.4 verify has nothing to discriminate against and
+# every cycle produces zero training samples.
+#
+# This path trades spec fidelity for actual signal: we use the 13 trusted
+# builtin Property templates from property_engine (which already have real
+# executable check_fns) and only ask the model for what it CAN produce:
+#
+#   - PROBLEM   <one-line task description>
+#   - ENTRY     <function name, e.g. solve>
+#   - REFERENCE <Python def ...> (so differential tests have an oracle)
+#   - TESTS     list of assert statements
+#
+# task_synthesizer picks 3 builtins spanning distinct independence_classes,
+# stashes the problem's ctx (tests, reference, entry) via
+# property_engine.stash_problem_ctx, and hands the builtin Property list to
+# rsi_tick. verify() then runs actual discriminating checks — a wrong
+# candidate now produces real FAIL verdicts instead of stub PASS.
+# ---------------------------------------------------------------------------
+
+
+CODE_PROPOSAL_TEMPLATE = """\
+Propose a novel Python coding problem with concrete tests.
+
+REQUIRED FORMAT (return EXACTLY this, each label on its own line):
+
+PROBLEM: <one-sentence description of what the function should compute>
+ENTRY: <function name, e.g. solve>
+REFERENCE:
+```python
+def <ENTRY>(...):
+    ...
+```
+TESTS:
+- assert <ENTRY>(<input1>) == <output1>
+- assert <ENTRY>(<input2>) == <output2>
+- assert <ENTRY>(<input3>) == <output3>
+EMPTY_INPUT: <repr of an empty-container input for ENTRY, e.g. [] or "" or ()>
+SAMPLE_INPUT: <repr of one valid non-empty input>
+EXPECTED_TYPE: <type name the function returns, e.g. int, list, str, bool>
+
+Rules:
+- The problem must be solvable in 5–30 lines of Python.
+- The reference MUST be correct — your own tests will run against it.
+- Tests MUST be runnable as-is (use real function calls, not "example:").
+- Do NOT include markdown headers, prose, or additional blocks.
+"""
+
+
+_CODE_BLOCK_LABELS = (
+    "PROBLEM:", "ENTRY:", "REFERENCE:", "TESTS:",
+    "EMPTY_INPUT:", "SAMPLE_INPUT:", "EXPECTED_TYPE:",
+)
+
+
+@dataclass
+class _CodeProposalParse:
+    problem_text: str = ""
+    entry_point: str = ""
+    reference: str = ""
+    tests: list[str] = field(default_factory=list)
+    empty_input: str = ""
+    sample_input: str = ""
+    expected_type: str = ""
+    issues: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return (
+            bool(self.problem_text)
+            and bool(self.entry_point)
+            and bool(self.reference)
+            and len(self.tests) >= 2
+            and not self.issues
+        )
+
+
+def parse_code_proposal(raw: str) -> _CodeProposalParse:
+    """Parse the simplified code-proposal format. Forgiving — only problem,
+    entry, reference, and ≥2 tests are hard-required; the rest default."""
+    out = _CodeProposalParse()
+    if not raw or not raw.strip():
+        out.issues.append("empty_response")
+        return out
+
+    # Locate each labeled block's start.
+    positions: dict[str, int] = {}
+    for label in _CODE_BLOCK_LABELS:
+        m = re.search(rf"(?im)^\s*{re.escape(label)}", raw)
+        if m:
+            positions[label] = m.start()
+    if "PROBLEM:" not in positions:
+        out.issues.append("missing_problem")
+        return out
+
+    ordered = sorted(positions.items(), key=lambda kv: kv[1])
+    blocks: dict[str, str] = {}
+    for i, (label, start) in enumerate(ordered):
+        end = ordered[i + 1][1] if i + 1 < len(ordered) else len(raw)
+        body = raw[start:end]
+        body = re.sub(rf"(?i)^\s*{re.escape(label)}\s*", "", body, count=1).strip()
+        blocks[label] = body
+
+    out.problem_text = blocks.get("PROBLEM:", "").strip()
+    out.entry_point = blocks.get("ENTRY:", "").strip().split()[0] if blocks.get("ENTRY:", "").strip() else ""
+
+    ref_block = blocks.get("REFERENCE:", "")
+    # Pull the python fence if present, else take the block as-is
+    m = re.search(r"```(?:python)?\s*\n(.*?)```", ref_block, re.DOTALL)
+    if m:
+        out.reference = m.group(1).strip()
+    else:
+        # Find the first `def ` and take everything from there
+        m = re.search(r"(?:^|\n)\s*(def\s+\w+.*)", ref_block, re.DOTALL)
+        out.reference = m.group(1).strip() if m else ref_block.strip()
+
+    tests_block = blocks.get("TESTS:", "")
+    for line in tests_block.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        # Strip leading bullet/hyphen if present
+        s = re.sub(r"^\s*[-*]\s+", "", s)
+        if s.startswith("assert ") or s.startswith("assert("):
+            out.tests.append(s)
+        elif "==" in s:
+            out.tests.append(f"assert ({s})")
+    out.empty_input = blocks.get("EMPTY_INPUT:", "").strip()
+    out.sample_input = blocks.get("SAMPLE_INPUT:", "").strip()
+    out.expected_type = blocks.get("EXPECTED_TYPE:", "").strip()
+
+    if not out.entry_point:
+        out.issues.append("missing_entry")
+    if not out.reference:
+        out.issues.append("missing_reference")
+    if len(out.tests) < 2:
+        out.issues.append("too_few_tests")
+    return out
 
 
 def _select_skills_for_proposal(

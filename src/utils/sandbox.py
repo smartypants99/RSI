@@ -198,7 +198,13 @@ _PRELUDE = textwrap.dedent(
     builtins.compile = _blocked_compile
 
     # ── Audit hook ──
-    def _audit(event, args):
+    # Bind _realpath into the closure so we can still resolve paths AFTER
+    # deleting _os_mod from the user namespace. Without this, every audit
+    # hook invocation after `del _os_mod` crashed with NameError on any
+    # `import` event from user code — silently poisoning every sandboxed
+    # harness that tried `import json` etc.
+    _realpath = _os_mod.path.realpath
+    def _audit(event, args, _realpath=_realpath):
         if event == "import":
             name = args[0] if args else ""
             if name in _BLOCKED_MODULES or name.split(".")[0] in _BLOCKED_MODULES:
@@ -218,7 +224,7 @@ _PRELUDE = textwrap.dedent(
                 mode = args[1] if len(args) > 1 else "r"
                 if isinstance(mode, str) and any(c in mode for c in "wxa+"):
                     raise PermissionError(f"open for writing blocked: {{path}}")
-                abs_p = _os_mod.path.realpath(path) if path else ""
+                abs_p = _realpath(path) if path else ""
                 if not abs_p.startswith(_WORKDIR_PREFIX):
                     raise PermissionError(f"open outside workdir: {{path}}")
             else:
@@ -231,7 +237,9 @@ _PRELUDE = textwrap.dedent(
         raise PermissionError("sys.exit() is blocked in sandbox")
     sys.exit = _blocked_exit
 
-    # Clean up os module from user namespace
+    # Clean up os module from user namespace — they'd otherwise get
+    # os.system etc. via the alias. The audit hook kept a private
+    # `_realpath` ref above, so deletion is safe now.
     del _os_mod
     """
 ).strip()

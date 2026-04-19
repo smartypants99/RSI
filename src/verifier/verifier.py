@@ -160,6 +160,47 @@ def _jaccard(a: set, b: set) -> float:
     return len(a & b) / len(a | b)
 
 
+# H8: phrases that flag a chain as admitting its own reasoning is wrong. We
+# want these OUT of training data even when the final answer is correct — the
+# chain teaches "it's fine to produce garbage then guess", which is precisely
+# the anti-pattern STaR is supposed to eliminate. Matched case-insensitively
+# against step content/justification and the final response. Keep the list
+# narrow so we don't reject legitimate "actually quite simple"-style prose;
+# each phrase is chosen because it occurred verbatim in cycle samples.
+_SELF_ADMISSION_PATTERNS = (
+    "which is incorrect",
+    "is incorrect but",
+    "miscalculation",
+    "wait this is wrong",
+    "wait, this is wrong",
+    "i made a mistake",
+    "let me reconsider",
+    "let me recompute",
+    "that was wrong",
+    "this is wrong,",
+    "scratch that",
+)
+
+
+def _self_admission_hit(sample) -> str:
+    """Return the offending phrase if any step or the response admits error,
+    else an empty string. Uses substring match for robustness to punctuation.
+    """
+    texts: list[str] = []
+    for st in getattr(sample, "reasoning_chain", None) or []:
+        if getattr(st, "content", None):
+            texts.append(st.content)
+        if getattr(st, "justification", None):
+            texts.append(st.justification)
+    if getattr(sample, "response", None):
+        texts.append(sample.response)
+    blob = "\n".join(t.lower() for t in texts if t)
+    for pat in _SELF_ADMISSION_PATTERNS:
+        if pat in blob:
+            return pat
+    return ""
+
+
 # ──────────────────────────── the verifier ────────────────────────────
 
 class Verifier:
@@ -295,6 +336,20 @@ class Verifier:
                     overall_confidence=0.0,
                     rejection_reasons=[f"[atomic] {m}" for m in atomic_issues],
                 )
+
+        # H8 (hot_spots): reject self-admitted-wrong chains. Evidence: cycle 5
+        # sample had reasoning step literally saying
+        # "-1 + (-2) + 7 = 4, which is incorrect, but the correct answer is 6
+        # due to a miscalculation in the steps" — response happened to match the
+        # canonical answer so the sample was kept, poisoning training data with
+        # a chain that contradicts its own conclusion.
+        sa_hit = _self_admission_hit(sample)
+        if sa_hit:
+            return VerificationResult(
+                accepted=False,
+                overall_confidence=0.0,
+                rejection_reasons=[f"[self_admission] {sa_hit}"],
+            )
 
         # Ground-truth gate: if a canonical answer and check_type are set,
         # enforce them as a hard pass/fail. Reject immediately on fail; accept

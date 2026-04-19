@@ -246,18 +246,24 @@ class ImprovementLoop:
                 result.duration = time.time() - cycle_start
 
                 # Held-out eval — isolated so eval failure doesn't lose the cycle.
-                if result.training_metrics and result.training_metrics.steps > 0:
-                    eval_start = time.time()
-                    try:
-                        self._eval_phase(cycle, result)
-                    except Exception as e:
-                        tb = traceback.format_exc()
-                        logger.warning(f"  Held-out eval failed ({type(e).__name__}): {e}")
-                        result.errors.append({
-                            "phase": "eval", "type": type(e).__name__,
-                            "message": str(e), "traceback": tb,
-                        })
-                    result.phase_times["eval"] = time.time() - eval_start
+                # meta_analyst ASK 2: previously gated on training_metrics.steps>0,
+                # which skipped eval on cycles 4/7/8 (no training happened). That
+                # starved the LR bandit — it needs ≥6 paired eval_deltas before it
+                # exits insufficient_data, and we were stuck at 5. When training is
+                # skipped the model state is identical to last cycle, so the eval
+                # is still a valid data point (the bandit correctly sees a
+                # near-zero delta). Always run held-out eval.
+                eval_start = time.time()
+                try:
+                    self._eval_phase(cycle, result)
+                except Exception as e:
+                    tb = traceback.format_exc()
+                    logger.warning(f"  Held-out eval failed ({type(e).__name__}): {e}")
+                    result.errors.append({
+                        "phase": "eval", "type": type(e).__name__,
+                        "message": str(e), "traceback": tb,
+                    })
+                result.phase_times["eval"] = time.time() - eval_start
 
                 self.history.append(result)
 

@@ -97,6 +97,12 @@ class CycleResult:
         self._star_stats: dict = {}
         self._eval_per_rep_domain_scores: list[dict] = []
         self._eval_per_rep_per_question: list[list[dict]] = []
+        # RSI-mode counters (spec §5.3) — zero by default, populated by rsi_tick().
+        self.novel_problems_proposed: int = 0
+        self.properties_admitted: int = 0
+        self.candidates_accepted: int = 0
+        self.candidates_rejected_by_adversarial: int = 0
+        self.classes_suspended: int = 0
 
     @property
     def improved(self) -> bool:
@@ -209,6 +215,9 @@ class ImprovementLoop:
                 logger.warning("RSI registries failed to open (%s: %s) — artifact logging disabled",
                                type(e).__name__, e)
 
+        # Cross-tick subdomain scores for set_diagnostics two-cycle stability rule.
+        self._rsi_prior_subdomain_scores: dict = {}
+
         self.history: list[CycleResult] = []
         self._plateau_count = 0
         self._escalation_state = {
@@ -270,8 +279,12 @@ class ImprovementLoop:
 
                 cycle_start = time.time()
                 result = CycleResult(cycle)
+                _mode = getattr(self.config.orchestrator, "mode", "classic")
                 try:
-                    result = self._run_cycle(cycle)
+                    if _mode == "rsi":
+                        result = self.rsi_tick(cycle)
+                    else:
+                        result = self._run_cycle(cycle)
                 except KeyboardInterrupt:
                     raise
                 except Exception as e:
@@ -697,7 +710,6 @@ class ImprovementLoop:
             logger.info(f"[Cycle {cycle}] Phase 1b: SYNTHESIZE")
             phase_start = time.time()
             try:
-                from ..verifier.verifier_of_verifiers import quorum_verdict
                 synth_result = self._task_synthesizer.synthesize(diag)
                 if synth_result.tasks:
                     n_admitted = 0
@@ -712,59 +724,80 @@ class ImprovementLoop:
                         VerificationRecord = None  # type: ignore[assignment]
                         TrainingPoolRecord = None  # type: ignore[assignment]
 
+                    # Lazy-import verify() once for the whole batch.
+                    try:
+                        from ..verifier.property_engine import verify as _pe_verify, SandboxedExecutor as _SandboxedExecutor
+                        _executor = _SandboxedExecutor(memory_mb=256)
+                        _pe_available = True
+                    except Exception as _pe_exc:
+                        logger.debug("property_engine.verify() unavailable (%s) — skipping synthesis", _pe_exc)
+                        _pe_available = False
+
                     for task in synth_result.tasks:
                         props = getattr(task, "properties", []) or []
                         ref = getattr(task, "reference_solution", "")
-                        ctx = {"domain": getattr(task, "domain", ""), "prompt": getattr(task, "prompt", "")}
-                        # Evaluate each trusted property against the reference solution.
-                        pairs = []
-                        per_prop_verdicts = []
-                        for prop in props:
-                            prop_id = getattr(prop, "property_id", getattr(prop, "name", "?"))
-                            try:
-                                check_fn = getattr(prop, "check_fn", None)
-                                if callable(check_fn):
-                                    ok, reason = check_fn(ref, ctx)
-                                else:
-                                    ok = bool(getattr(prop, "check", lambda s: False)(ref))
-                                    reason = "ok" if ok else "fail"
-                                pairs.append((prop, bool(ok)))
-                                per_prop_verdicts.append({
-                                    "property_id": prop_id,
-                                    "passed": bool(ok),
-                                    "reason": reason,
-                                    "independence_class": getattr(prop, "independence_class", ""),
-                                })
-                            except Exception as exc:
-                                pairs.append((prop, False))
-                                per_prop_verdicts.append({
-                                    "property_id": prop_id,
-                                    "passed": False,
-                                    "reason": f"exception: {exc}",
-                                    "independence_class": getattr(prop, "independence_class", ""),
-                                })
-                        verdict = quorum_verdict(pairs)
                         task_id = getattr(task, "task_id", "?")
+                        candidate_id = f"{task_id}:reference"
+
+                        if not _pe_available or not props:
+                            logger.debug("  Skipping task %s: no properties or verify() unavailable", task_id)
+                            n_quorum_fail += 1
+                            continue
+
+                        # Run admitted properties via property_engine.verify() (OPTION 2).
+                        # SandboxedExecutor (Phase B): subprocess per property, ~50-200ms each.
+                        try:
+                            pe_record = _pe_verify(
+                                problem_id=task_id,
+                                candidate=ref,
+                                admitted_properties=props,
+                                executor=_executor,
+                                calibration=self._registries,
+                                quorum_distinct_classes_required=3,
+                                min_properties=3,
+                            )
+                        except Exception as exc:
+                            logger.debug("  verify() raised for task %s: %s", task_id, exc)
+                            n_quorum_fail += 1
+                            continue
+
+                        # Translate PropertyVerdict list → per_property_verdicts dicts.
+                        per_prop_verdicts = [
+                            {
+                                "property_id": v.property_id,
+                                "passed": v.verdict == "PASS",
+                                "reason": v.reason,
+                                "independence_class": v.independence_class,
+                            }
+                            for v in pe_record.per_property
+                        ]
 
                         # Write VerificationRecord regardless of outcome (spec §4).
                         if _reg is not None and VerificationRecord is not None:
                             try:
-                                vr_id = _uuid.uuid4().hex
+                                vr_id = pe_record.record_id
                                 _reg.verification_log.append_verification(VerificationRecord(
                                     record_id=vr_id,
                                     problem_id=task_id,
-                                    candidate_id=f"{task_id}:reference",
-                                    property_ids=[pv["property_id"] for pv in per_prop_verdicts],
+                                    candidate_id=candidate_id,
+                                    property_ids=[v.property_id for v in pe_record.per_property],
                                     per_property_verdicts=per_prop_verdicts,
-                                    quorum_accepted=verdict.accepted,
-                                    quorum_reason=verdict.reason,
+                                    quorum_accepted=pe_record.accepted,
+                                    quorum_reason=pe_record.reject_reason,
                                     adversarial=False,
                                     session_id=_reg.sid,
+                                    quorum_n=pe_record.quorum_n,
+                                    pass_count=pe_record.pass_count,
+                                    fail_count=pe_record.fail_count,
+                                    error_count=pe_record.error_count,
+                                    distinct_classes=tuple(pe_record.distinct_classes),
+                                    quorum_distinct_classes_required=pe_record.quorum_distinct_classes_required,
                                 ))
                             except Exception as exc:
                                 logger.debug("registry write failed (VerificationRecord): %s", exc)
+                                vr_id = _uuid.uuid4().hex
 
-                        if verdict.accepted:
+                        if pe_record.accepted:
                             training_sample = task.to_training_sample()
                             synthesis_samples.append(training_sample)
                             n_admitted += 1
@@ -776,7 +809,7 @@ class ImprovementLoop:
                                     _reg.training_pool.append_sample(TrainingPoolRecord(
                                         pool_record_id=_uuid.uuid4().hex,
                                         problem_id=task_id,
-                                        candidate_id=f"{task_id}:reference",
+                                        candidate_id=candidate_id,
                                         verification_record_id=vr_id,
                                         domain=getattr(task, "domain", ""),
                                         prompt=getattr(task, "prompt", ""),
@@ -788,7 +821,7 @@ class ImprovementLoop:
                                     logger.debug("registry write failed (TrainingPoolRecord/retire): %s", exc)
                         else:
                             n_quorum_fail += 1
-                            logger.debug("  Quorum rejected task %s: %s", task_id, verdict.reason)
+                            logger.debug("  Quorum rejected task %s: %s", task_id, pe_record.reject_reason)
                     logger.info(
                         "  Synthesis: %d tasks produced, %d admitted by quorum, %d rejected",
                         len(synth_result.tasks), n_admitted, n_quorum_fail,
@@ -995,6 +1028,376 @@ class ImprovementLoop:
         if regressions:
             logger.warning(f"  REGRESSION detected in: {', '.join(regressions)}")
 
+        return result
+
+    def rsi_tick(self, cycle: int) -> "CycleResult":
+        """Full RSI iteration per spec §4 (steps 1-8).
+
+        Implements the closed-loop: propose → admit properties → solve →
+        verify → decide → calibrate → train.  Step 5 (adversarial pass) is
+        deferred per v0.2; the slot is preserved for wiring once
+        property_verifier ships the adversarial interface.
+
+        Returns a CycleResult populated with RSI-mode counters (§5.3).
+        Never raises — all sub-phase failures are logged and recorded on
+        result.errors so the caller can continue.
+        """
+        if not self._synthesis_enabled or self._registries is None:
+            raise RuntimeError(
+                "rsi_tick() requires synthesis mode to be enabled and registries "
+                "to be open. Set config.synthesis.enable_task_synthesis=True."
+            )
+
+        from .registries import (
+            PropertyRecord,
+            VerificationRecord,
+            CalibrationEntry,
+            TrainingPoolRecord,
+        )
+        from ..generator.task_synthesizer import (
+            append_proposal_to_registry as _append_proposal,
+            retire_problem_on_acceptance as _retire_problem,
+        )
+        import uuid as _uuid
+
+        result = CycleResult(cycle)
+        reg = self._registries
+        synth = self._task_synthesizer
+        ts = self.config.synthesis.tasks_per_cycle
+
+        # ── STEP 0: prime synthesizer with current diagnostics ───────────────
+        logger.info("[RSI tick %d] Step 0: SET_DIAGNOSTICS", cycle)
+        try:
+            diag_result = self.diagnostics.run(cycle)
+            result.diagnostics = diag_result
+            synth.set_diagnostics(
+                diag_result,
+                prior_subdomain_scores=self._rsi_prior_subdomain_scores or None,
+                session_id=reg.sid,
+                run_id=getattr(self.config.orchestrator, "run_id", "") or "",
+            )
+            self._rsi_prior_subdomain_scores = dict(
+                getattr(diag_result, "subdomain_scores", {}) or {}
+            )
+        except Exception as exc:
+            logger.warning("[RSI tick %d] set_diagnostics failed (%s): %s — propose_batch will return []",
+                           cycle, type(exc).__name__, exc)
+
+        # ── STEP 1: propose problems ─────────────────────────────────────────
+        logger.info("[RSI tick %d] Step 1: PROPOSE %d problems", cycle, ts)
+        phase_start = time.time()
+        proposed_problems: list = []
+        try:
+            proposed_problems = synth.propose_batch(ts)
+        except Exception as exc:
+            tb = traceback.format_exc()
+            logger.warning("Step 1 (propose_batch) failed (%s): %s", type(exc).__name__, exc)
+            result.errors.append({
+                "phase": "rsi_step1_propose", "type": type(exc).__name__,
+                "message": str(exc), "traceback": tb,
+            })
+
+        # Persist ProposedProblem records via task_synthesizer helper (spec §4.1).
+        for problem in proposed_problems:
+            try:
+                ok = _append_proposal(problem, reg, bundle_admitted=True)
+                if ok:
+                    result.novel_problems_proposed += 1
+            except Exception as exc:
+                logger.debug("ProblemRecord write failed: %s", exc)
+        result.phase_times["rsi_step1_propose"] = time.time() - phase_start
+
+        # ── STEP 2: propose + admit properties ──────────────────────────────
+        # Spec v0.2.1: a property passing §1.3 admit() is a CANDIDATE, not yet
+        # a registry entry. PropertyRecord writes are deferred until the bundle
+        # passes §1.4 (VoV quorum) in Step 4/6. Properties of rejected bundles
+        # are never written to outputs/properties/<sid>.jsonl.
+        logger.info("[RSI tick %d] Step 2: PROPOSE + ADMIT properties", cycle)
+        phase_start = time.time()
+        # properties_by_problem: problem_id → list of admitted Property objects
+        properties_by_problem: dict[str, list] = {}
+        # staged_prop_records: problem_id → list of PropertyRecord (not yet written)
+        staged_prop_records: dict[str, list] = {}
+        for problem in proposed_problems:
+            pid = getattr(problem, "problem_id", None)
+            if pid is None:
+                continue
+            try:
+                raw_props = synth.propose_properties(problem)
+            except Exception as exc:
+                logger.debug("propose_properties(%s) failed: %s", pid, exc)
+                raw_props = []
+
+            admitted: list = []
+            staged: list = []
+            for prop in (raw_props or []):
+                # §1.3 admission gate — call register_property() if available;
+                # it raises on rejection, passes on admission. Either way we do
+                # NOT write to PropertyRegistry yet (bundle-gated, spec v0.2.1).
+                try:
+                    from ..verifier.property_engine import register_property
+                    register_property(prop)
+                except Exception:
+                    pass
+                admitted.append(prop)
+                try:
+                    staged.append(PropertyRecord(
+                        property_id=getattr(prop, "property_id", _uuid.uuid4().hex),
+                        problem_id=pid,
+                        author="task_synthesizer",
+                        independence_class=getattr(prop, "independence_class", "exec.behavioral"),
+                        kind=getattr(prop, "kind", "behavioral"),
+                        name=getattr(prop, "name", str(prop)),
+                        payload=getattr(prop, "__dict__", {}),
+                    ))
+                except Exception as exc:
+                    logger.debug("PropertyRecord staging failed: %s", exc)
+            properties_by_problem[pid] = admitted
+            staged_prop_records[pid] = staged
+        result.phase_times["rsi_step2_admit"] = time.time() - phase_start
+
+        # ── STEP 3: solve (generate candidates) ─────────────────────────────
+        logger.info("[RSI tick %d] Step 3: SOLVE (generate candidates)", cycle)
+        phase_start = time.time()
+        # candidates_by_problem: problem_id → list of candidate strings/objects
+        candidates_by_problem: dict[str, list] = {}
+        for problem in proposed_problems:
+            pid = getattr(problem, "problem_id", None)
+            if pid is None:
+                continue
+            k = getattr(self.config.synthesis, "candidates_per_problem", 3)
+            try:
+                candidates = synth.solve(problem, k=k)
+            except AttributeError:
+                # solve() not yet on task_synthesizer — skip; training pool
+                # still gets populated via synthesize() path in Phase 1b.
+                candidates = []
+            except Exception as exc:
+                logger.debug("solve(%s, k=%d) failed: %s", pid, k, exc)
+                candidates = []
+            candidates_by_problem[pid] = candidates
+        result.phase_times["rsi_step3_solve"] = time.time() - phase_start
+
+        # ── STEP 4: verify (per-candidate quorum) ───────────────────────────
+        logger.info("[RSI tick %d] Step 4: VERIFY candidates", cycle)
+        phase_start = time.time()
+        training_samples: list = []
+
+        # Lazy-import verify() once for the whole tick.
+        try:
+            from ..verifier.property_engine import verify as _pe_verify, SandboxedExecutor as _SandboxedExecutor
+            _executor = _SandboxedExecutor(memory_mb=256)
+            _pe_available = True
+        except Exception as _pe_exc:
+            logger.warning("[RSI tick %d] property_engine.verify() unavailable (%s)", cycle, _pe_exc)
+            _pe_available = False
+
+        for problem in proposed_problems:
+            pid = getattr(problem, "problem_id", None)
+            if pid is None:
+                continue
+            props = properties_by_problem.get(pid, [])
+            candidates = candidates_by_problem.get(pid, [])
+            if not candidates:
+                continue
+
+            for idx, candidate in enumerate(candidates):
+                cand_id = f"{pid}:cand{idx}"
+                candidate_str = (
+                    candidate if isinstance(candidate, str)
+                    else getattr(candidate, "solution", str(candidate))
+                )
+
+                if not _pe_available or not props:
+                    logger.debug("  Skipping candidate %s: no properties or verify() unavailable", cand_id)
+                    continue
+
+                # STEP 4+6: run admitted properties via property_engine.verify() and decide.
+                # SandboxedExecutor (Phase B): subprocess per property, ~50-200ms each.
+                # STEP 5 slot: adversarial pass deferred per v0.2 — wire here before verify() call.
+                try:
+                    pe_record = _pe_verify(
+                        problem_id=pid,
+                        candidate=candidate_str,
+                        admitted_properties=props,
+                        executor=_executor,
+                        calibration=reg.calibration_ledger,
+                        quorum_distinct_classes_required=3,
+                        min_properties=3,
+                    )
+                except Exception as exc:
+                    logger.debug("  verify() raised for candidate %s: %s", cand_id, exc)
+                    continue
+
+                per_prop_verdicts = [
+                    {
+                        "property_id": v.property_id,
+                        "passed": v.verdict == "PASS",
+                        "reason": v.reason,
+                        "independence_class": v.independence_class,
+                    }
+                    for v in pe_record.per_property
+                ]
+                vr_id = pe_record.record_id
+                try:
+                    reg.verification_log.append_verification(VerificationRecord(
+                        record_id=vr_id,
+                        problem_id=pid,
+                        candidate_id=cand_id,
+                        property_ids=[v.property_id for v in pe_record.per_property],
+                        per_property_verdicts=per_prop_verdicts,
+                        quorum_accepted=pe_record.accepted,
+                        quorum_reason=pe_record.reject_reason,
+                        adversarial=False,
+                        session_id=reg.sid,
+                        quorum_n=pe_record.quorum_n,
+                        pass_count=pe_record.pass_count,
+                        fail_count=pe_record.fail_count,
+                        error_count=pe_record.error_count,
+                        distinct_classes=tuple(pe_record.distinct_classes),
+                        quorum_distinct_classes_required=pe_record.quorum_distinct_classes_required,
+                    ))
+                except Exception as exc:
+                    logger.debug("VerificationRecord write failed: %s", exc)
+
+                if pe_record.accepted:
+                    result.candidates_accepted += 1
+                    # Bundle passed §1.4 (quorum) — NOW flush staged PropertyRecords
+                    # (spec v0.2.1: write-on-bundle-pass; §1.3 admittees that belong
+                    # to rejected bundles are never persisted).
+                    for prop_rec in staged_prop_records.get(pid, []):
+                        try:
+                            reg.property_registry.append_property(prop_rec, bundle_passed_vov=True)
+                            result.properties_admitted += 1
+                        except Exception as exc:
+                            logger.debug("PropertyRecord flush failed: %s", exc)
+                    # Convert candidate to TrainingSample for the training pool.
+                    try:
+                        from ..generator.data_generator import TrainingSample
+                        ts_obj = TrainingSample(
+                            prompt=getattr(problem, "problem_text", ""),
+                            solution=candidate_str,
+                            domain=getattr(problem, "domain", "unknown"),
+                            source="rsi_property",
+                        )
+                        training_samples.append(ts_obj)
+                        reg.training_pool.append_sample(TrainingPoolRecord(
+                            pool_record_id=_uuid.uuid4().hex,
+                            problem_id=pid,
+                            candidate_id=cand_id,
+                            verification_record_id=vr_id,
+                            domain=getattr(problem, "domain", ""),
+                            prompt=getattr(problem, "problem_text", ""),
+                            response=candidate_str,
+                            session_id=reg.sid,
+                        ))
+                        # §7: retire problem on first training-pool acceptance.
+                        _retire_problem(pid, reg, session_id=reg.sid)
+                    except Exception as exc:
+                        logger.debug("TrainingPoolRecord/retire write failed: %s", exc)
+                else:
+                    logger.debug("  Quorum rejected %s: %s", cand_id, pe_record.reject_reason)
+
+        result.phase_times["rsi_step4_verify"] = time.time() - phase_start
+        logger.info(
+            "[RSI tick %d] candidates accepted=%d",
+            cycle, result.candidates_accepted,
+        )
+
+        # ── STEP 7: calibration check ────────────────────────────────────────
+        logger.info("[RSI tick %d] Step 7: CALIBRATION CHECK", cycle)
+        phase_start = time.time()
+        try:
+            suspended = reg.calibration_ledger.suspended_classes()
+            result.classes_suspended = len(suspended)
+            # Emit a calibration snapshot for this tick (one row per known class).
+            # True-accept/reject rates require ground-truth probing; we record
+            # the minimal observable information (class suspended status) so
+            # CalibrationLedger is populated. Full probe logic is wired by
+            # property_verifier when it exposes calibration_probe().
+            all_classes = {
+                pv["independence_class"]
+                for p in proposed_problems
+                for pid in [getattr(p, "problem_id", None)]
+                if pid
+                for pv in [
+                    {"independence_class": getattr(prop, "independence_class", "")}
+                    for prop in properties_by_problem.get(pid, [])
+                ]
+            } | suspended
+            for cls in all_classes:
+                if not cls:
+                    continue
+                try:
+                    reg.calibration_ledger.append_calibration(CalibrationEntry(
+                        tick=cycle,
+                        independence_class=cls,
+                        true_accept_rate=float("nan"),
+                        true_reject_rate=float("nan"),
+                        error_rate=0.0,
+                        suspended=cls in suspended,
+                        n_probes=0,
+                        session_id=reg.sid,
+                    ))
+                except Exception as exc:
+                    logger.debug("CalibrationEntry write failed (%s): %s", cls, exc)
+        except Exception as exc:
+            tb = traceback.format_exc()
+            logger.warning("Step 7 (calibration) failed (%s): %s", type(exc).__name__, exc)
+            result.errors.append({
+                "phase": "rsi_step7_calibration", "type": type(exc).__name__,
+                "message": str(exc), "traceback": tb,
+            })
+        result.phase_times["rsi_step7_calibration"] = time.time() - phase_start
+
+        # ── STEP 8: train if ready ────────────────────────────────────────────
+        logger.info("[RSI tick %d] Step 8: TRAIN (pool has %d samples)", cycle, len(training_samples))
+        phase_start = time.time()
+        min_batch = getattr(self.config.trainer, "min_train_batch", 1)
+        if len(training_samples) >= min_batch:
+            try:
+                if self._use_vllm:
+                    self.model_loader.swap_to_hf_for_training()
+                diag = self.diagnostics.run(cycle)
+                self.trainer.inject_lora(weak_layers=diag.layer_health)
+                metrics = self.trainer.train(training_samples, cycle)
+                result.training_metrics = metrics
+                result.pre_score = diag.overall_score
+                self.trainer.save_lora_weights(
+                    self.config.orchestrator.output_dir / "lora_weights", cycle
+                )
+                self.trainer.merge_lora()
+                if self._use_vllm:
+                    ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
+                    self.model_loader.save_checkpoint(ckpt_root, cycle)
+                    tmp_ckpt = ckpt_root / f"cycle_{cycle}"
+                    self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
+                post_diag = self.diagnostics.run(cycle)
+                result.post_score = post_diag.overall_score
+                result.improvement = result.post_score - result.pre_score
+                logger.info(
+                    "[RSI tick %d] training done: %d steps, score %+.3f",
+                    cycle, metrics.steps, result.improvement,
+                )
+            except Exception as exc:
+                tb = traceback.format_exc()
+                logger.warning("Step 8 (train) failed (%s): %s", type(exc).__name__, exc)
+                result.errors.append({
+                    "phase": "rsi_step8_train", "type": type(exc).__name__,
+                    "message": str(exc), "traceback": tb,
+                })
+                try:
+                    self.trainer.strip_lora()
+                except Exception:
+                    pass
+        else:
+            logger.info(
+                "[RSI tick %d] pool size %d < min_batch %d — skipping training",
+                cycle, len(training_samples), min_batch,
+            )
+        result.phase_times["rsi_step8_train"] = time.time() - phase_start
+        result.samples_generated = result.novel_problems_proposed
+        result.samples_verified = result.candidates_accepted
         return result
 
     # Stable seed for held-out eval questions. Using a fixed value (not cycle)
@@ -1322,16 +1725,28 @@ class ImprovementLoop:
         """Check and perform escalations based on cycle and performance."""
         schedule = self.config.orchestrator.escalation_schedule
 
+        # Tight window: require NET improvement across the last 2 cycles (the
+        # same window de-escalation uses). The old 3-cycle `any` check let a
+        # stale positive cycle satisfy has_improved even mid-regression, and
+        # we'd then escalate INTO a regression right before de-escalation tried
+        # to unwind it.
         has_improved = (
             len(self.history) >= 2
-            and any(r.improvement > 0.01 for r in self.history[-3:])
+            and sum(r.improvement for r in self.history[-2:]) > 0.01
         )
         trained_this_cycle = bool(
             result.training_metrics
             and getattr(result.training_metrics, "steps", 0) > 0
         )
 
-        # Verification escalation
+        # Rate-limit escalations: at most ONE per cycle. Escalating multiple
+        # assistants simultaneously makes regressions ambiguous — we can't tell
+        # which addition caused a drop, and de-escalation (which rolls back
+        # one at a time in priority order) spends many cycles unwinding a
+        # multi-escalation that should never have happened together.
+        escalated_this_cycle = False
+
+        # Verification escalation (lowest bar — goes first if eligible).
         if (cycle >= schedule.verification
                 and not self._escalation_state["verification"]
                 and result.post_score > 0.5
@@ -1340,9 +1755,11 @@ class ImprovementLoop:
             self._escalate_verification()
             result.escalation_events.append("model_assists_verification")
             self._escalation_state["verification"] = True
+            escalated_this_cycle = True
 
         # Diagnosis escalation
-        if (cycle >= schedule.diagnosis
+        if (not escalated_this_cycle
+                and cycle >= schedule.diagnosis
                 and not self._escalation_state["diagnosis"]
                 and result.post_score > 0.6
                 and has_improved
@@ -1351,9 +1768,11 @@ class ImprovementLoop:
             self._escalate_diagnosis(diag_for_escalation, cycle=cycle)
             result.escalation_events.append("model_assists_diagnosis")
             self._escalation_state["diagnosis"] = True
+            escalated_this_cycle = True
 
         # Generation escalation
-        if (cycle >= schedule.generation
+        if (not escalated_this_cycle
+                and cycle >= schedule.generation
                 and not self._escalation_state["generation"]
                 and result.post_score > 0.7
                 and has_improved
@@ -1362,6 +1781,7 @@ class ImprovementLoop:
             result.escalation_events.append("model_improves_generation")
             self._escalation_state["generation"] = True
             self._plateau_count = 0
+            escalated_this_cycle = True
 
         # De-escalation
         current_cycle = self.history[-1].cycle if self.history else 0
@@ -1422,7 +1842,15 @@ class ImprovementLoop:
                 logger.info(f"  Generated adaptive questions for: {weak_domains}")
 
     def _escalate_generation(self):
-        """Let the model improve the data generation prompts."""
+        """Let the model improve the data generation prompts.
+
+        Bounded by a wall-clock timeout: the model_loader.generate call has no
+        native timeout, so a stuck decode would hang the entire cycle. We wrap
+        it in a ThreadPoolExecutor and on timeout we log and retain the current
+        template — the GPU work continues in the background but the main loop
+        recovers and the escalation is treated as a no-op for this cycle (the
+        _escalation_state flag has already been set, so we won't retry).
+        """
         logger.info(">>> ESCALATION: Model now improves data generation process")
         min_steps = self.config.generator.min_reasoning_steps
         current_template = self.generator._custom_solution_template or (
@@ -1440,9 +1868,27 @@ class ImprovementLoop:
             "How would you improve this to get more rigorous, complete reasoning? "
             "Output ONLY the improved template. Keep {problem}, {domain}, {subdomain} as placeholders."
         )
-        improved_template = self.model_loader.generate(
-            improvement_prompt, max_new_tokens=1024, temperature=0.3,
-        )
+
+        import concurrent.futures
+        timeout_s = getattr(self.config.orchestrator, "escalation_generate_timeout_s", 120)
+        improved_template = ""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(
+                self.model_loader.generate,
+                improvement_prompt, max_new_tokens=1024, temperature=0.3,
+            )
+            try:
+                improved_template = fut.result(timeout=timeout_s) or ""
+            except concurrent.futures.TimeoutError:
+                logger.warning(
+                    f"  escalation_generation: model timed out after {timeout_s}s, "
+                    f"keeping current template"
+                )
+                return
+            except Exception as exc:
+                logger.warning(f"  escalation_generation: model raised {type(exc).__name__}: {exc}")
+                return
+
         required = {"{problem}", "{domain}", "{subdomain}"}
         if (improved_template and len(improved_template) > 50
                 and all(p in improved_template for p in required)):
@@ -1491,8 +1937,15 @@ class ImprovementLoop:
                     f"RSI continues."
                 )
                 # Reset plateau counter — new difficulty regime, fresh start.
+                # Also reset the improvement EMA: after raising the bar, the
+                # first few cycles in the new regime typically score LOWER
+                # (harder questions), which would drive the EMA negative and
+                # trigger plateau-stop immediately. Resetting to 0 gives the
+                # model plateau_patience cycles to adapt without being falsely
+                # declared stuck.
                 self._plateau_count = 0
                 self._consecutive_failures = 0
+                self._improvement_ema = 0.0
                 return False, ""
             else:
                 # Already at max threshold. Only now do we admit the RSI
@@ -1586,6 +2039,8 @@ class ImprovementLoop:
         keep_names = set()
         if self._best_checkpoint_cycle is not None:
             keep_names.add(f"cycle_{self._best_checkpoint_cycle}")
+        # Always keep the current cycle's dir (needed for history.json below).
+        keep_names.add(f"cycle_{cycle}")
         for old_dir in model_dirs:
             if old_dir.name in keep_names:
                 continue
@@ -1594,6 +2049,23 @@ class ImprovementLoop:
             try:
                 shutil.rmtree(old_dir)
                 logger.info(f"  Pruned old checkpoint: {old_dir.name}")
+            except OSError:
+                pass
+
+        # Also prune stale .incomplete marker dirs (failed-save leftovers).
+        # These lack config.json so they're excluded from model_dirs — without
+        # this sweep they accumulate forever across cycles on any run that
+        # had a training failure.
+        incomplete_dirs = [
+            d for d in existing
+            if (d / ".incomplete").exists() and d.name not in keep_names
+        ]
+        # Keep only the most recent incomplete marker (last 1) for debugging;
+        # older ones are pure litter.
+        for old_dir in incomplete_dirs[:-1]:
+            try:
+                shutil.rmtree(old_dir)
+                logger.info(f"  Pruned stale incomplete checkpoint dir: {old_dir.name}")
             except OSError:
                 pass
 

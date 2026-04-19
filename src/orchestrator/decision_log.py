@@ -263,10 +263,14 @@ class CausalTracker:
     def _permutation_p_value(
         cls, a: list[float], b: list[float], observed_diff: float,
     ) -> float:
-        """One-sided permutation test: P(random_diff >= observed_diff).
+        """Two-sided permutation test: P(|random_diff| >= |observed_diff|).
 
-        Shuffles group labels; asks how often the observed mean difference
-        would arise by chance under the null hypothesis of no effect.
+        The caller (paired_effect) interprets `p < alpha` as "significant"
+        and then decides direction from sign(observed_diff). That only works
+        with a TWO-sided p-value. A one-sided upper-tail p was returned
+        here previously, which made it impossible to ever detect a
+        significant DECREASE — the decision="decrease" branch was
+        unreachable because negative observed_diff always produced p≈1.0.
         """
         combined = list(a) + list(b)
         n_a = len(a)
@@ -275,6 +279,7 @@ class CausalTracker:
             return 1.0
 
         rng = random.Random(0xA1BAD0)  # deterministic for reproducibility
+        threshold = abs(observed_diff)
         extreme = 0
         iters = cls.PERMUTATION_ITERATIONS
         for _ in range(iters):
@@ -282,7 +287,7 @@ class CausalTracker:
             perm_a = combined[:n_a]
             perm_b = combined[n_a:]
             perm_diff = (sum(perm_a) / n_a) - (sum(perm_b) / (n_total - n_a))
-            if perm_diff >= observed_diff:
+            if abs(perm_diff) >= threshold:
                 extreme += 1
 
         # Add-one smoothing so p is never exactly 0 (which would falsely

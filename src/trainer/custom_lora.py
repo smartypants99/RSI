@@ -134,7 +134,14 @@ class LoRALayer(nn.Module):
             U_r = U[:, :r]
             S_r = S[:r]
             Vh_r = Vh[:r, :]
-            sqrt_S = S_r.sqrt()
+            # PiSSA's invariant is scaling·(B @ A) == top_r(W) at init — NOT
+            # B @ A == top_r. With rsLoRA the output scaling is alpha/sqrt(rank)
+            # (typically 4 for alpha=16, rank=16), so leaving it out of the init
+            # makes the layer compute W + (scaling-1)·top_r at step 0 — a
+            # substantial weight corruption that every cycle had to unlearn.
+            # Divide the SVD singular values by `scaling` so B @ A = top_r/scaling
+            # and scaling·(B @ A) = top_r as the math requires.
+            sqrt_S = (S_r / self.scaling).clamp_min(0.0).sqrt()
             lora_A_init = torch.zeros(rank, in_features, device=device, dtype=torch.float32)
             lora_B_init = torch.zeros(out_features, rank, device=device, dtype=torch.float32)
             lora_A_init[:r] = (sqrt_S.unsqueeze(1) * Vh_r).to(device=device)
@@ -203,6 +210,12 @@ class LoRALayer(nn.Module):
         if weakness_scale >= 1.05:
             self.lora_A.register_hook(lambda grad, s=weakness_scale: grad * s)
             self.lora_B.register_hook(lambda grad, s=weakness_scale: grad * s)
+            # DoRA: magnitude is also trainable and part of the adapter. Without
+            # the hook, A/B get the 1.5× boost but magnitude stays at 1×, so
+            # the adapter learns asymmetrically and the weakness-scale mechanism
+            # is only partially applied.
+            if self.use_dora and self.magnitude is not None:
+                self.magnitude.register_hook(lambda grad, s=weakness_scale: grad * s)
 
     def _dora_scale_factor(self) -> torch.Tensor:
         """Compute (magnitude / ‖V‖_c) — the per-input DoRA gate.

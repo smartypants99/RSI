@@ -382,6 +382,9 @@ class OrchestratorConfig:
     # When True, the trainer populates TrainingMetrics.loss_trajectory with
     # per-step losses. Small overhead; only collect when we plan to dump it.
     collect_training_loss_trajectory: bool = False
+    # Execution mode: "classic" = diagnose→generate→verify→train (default);
+    # "rsi" = full RSI tick per spec §4 (requires synthesis enabled).
+    mode: str = "classic"
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -392,6 +395,8 @@ class OrchestratorConfig:
             raise ValueError(f"plateau_patience must be >= 1, got {self.plateau_patience}")
         if self.heldout_repetitions < 1:
             raise ValueError(f"heldout_repetitions must be >= 1, got {self.heldout_repetitions}")
+        if self.mode not in ("classic", "rsi"):
+            raise ValueError(f"orchestrator.mode must be 'classic' or 'rsi', got {self.mode!r}")
 
 
 @dataclass

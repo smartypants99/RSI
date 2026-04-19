@@ -222,13 +222,22 @@ class PRMDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self._encoded: list[dict] = []
+        # Tracks which original label indices survived encoding. Callers use
+        # this to map dataset output back to original-index positions — the
+        # naive "pad at end" approach silently misaligned scores with steps
+        # when encoding dropped a middle entry.
+        self._kept_indices: list[int] = []
         self._encode(labels)
+
+    @property
+    def kept_indices(self) -> list[int]:
+        return list(self._kept_indices)
 
     def _encode(self, labels: list[PRMStepLabel]) -> None:
         eos_id = self.tokenizer.eos_token_id
         pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
 
-        for lab in labels:
+        for orig_idx, lab in enumerate(labels):
             prefix_parts = [lab.prompt, ""]
             for i, st in enumerate(lab.chain_so_far, 1):
                 prefix_parts.append(f"Step {i}: {st}")
@@ -278,6 +287,7 @@ class PRMDataset(Dataset):
                 "score_pos": torch.tensor(score_pos, dtype=torch.long),
                 "label": torch.tensor(lab.label, dtype=torch.float32),
             })
+            self._kept_indices.append(orig_idx)
 
     def __len__(self) -> int:
         return len(self._encoded)
@@ -388,7 +398,7 @@ class PRM:
         loader = DataLoader(ds, batch_size=max(1, self.trainer_config.batch_size),
                             shuffle=False)
         self.head.eval()
-        scores: list[float] = []
+        scored: list[float] = []
         for batch in loader:
             hidden = self._hidden_at(
                 batch["input_ids"].to(self._device),
@@ -396,11 +406,19 @@ class PRM:
                 batch["score_pos"].to(self._device),
             )
             logits = self.head(hidden)
-            scores.extend(torch.sigmoid(logits).detach().cpu().float().tolist())
-        # ds may have dropped items with score_pos<0; pad output to len(chain).
-        if len(scores) < len(chain):
-            scores.extend([0.5] * (len(chain) - len(scores)))
-        return scores[:len(chain)]
+            scored.extend(torch.sigmoid(logits).detach().cpu().float().tolist())
+        # Map dataset output back to original step indices. If _encode dropped
+        # any entries (score_pos < 0 after truncation), naive "pad at end"
+        # would misalign scores with steps — scores[i] would refer to a
+        # different chain position than chain[i]. Use kept_indices to fill
+        # only the positions that actually produced a score.
+        out: list[float] = [0.5] * len(chain)
+        for pos_in_scored, orig_idx in enumerate(ds.kept_indices):
+            if pos_in_scored >= len(scored):
+                break
+            if 0 <= orig_idx < len(out):
+                out[orig_idx] = scored[pos_in_scored]
+        return out
 
     # -------------------------- training --------------------------
 
@@ -459,8 +477,13 @@ class PRM:
         # Class imbalance: downstream labeling tends to produce many more
         # positives than negatives on early cycles (most steps in a verified
         # chain are labeled 1). Use pos_weight in BCE to rebalance.
-        n_pos = sum(1 for lab in labels if lab.label >= 0.5)
-        n_neg = len(labels) - n_pos
+        # Count only labels that survived encoding — PRMDataset drops items
+        # whose prompt+step tokenization yields score_pos<0, and using the
+        # pre-drop counts gave a biased pos_weight when long-step samples
+        # (often correct, hence positive) were disproportionately dropped.
+        kept_labels = [labels[i] for i in ds.kept_indices] if ds.kept_indices else labels
+        n_pos = sum(1 for lab in kept_labels if lab.label >= 0.5)
+        n_neg = len(kept_labels) - n_pos
         pos_weight = torch.tensor(
             max(n_neg, 1) / max(n_pos, 1), device=self._device, dtype=torch.float32,
         )

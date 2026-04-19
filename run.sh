@@ -14,6 +14,9 @@ fi
 
 # To opt in to synthesis mode (task_synthesizer + property_engine pipeline), add:
 #   --enable-task-synthesis --synthesis-tasks-per-cycle 20 --property-consensus-threshold 0.7
+#
+# To run the full RSI tick loop (spec §4, steps 1-8), add:
+#   --mode rsi --enable-task-synthesis --synthesis-tasks-per-cycle 20 --property-consensus-threshold 0.7
 
 exec python main.py \
     --model Qwen/Qwen3-8B \

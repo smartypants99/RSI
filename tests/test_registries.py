@@ -418,3 +418,129 @@ def test_training_pool_record_triggers_retirement_in_loop(tmp_path):
     assert regs.training_pool.count() == 1
     pool_rows = regs.training_pool.pending_samples()
     assert pool_rows[0]["problem_id"] == problem_id
+
+
+# ─── PropertyRegistry bundle-gate (spec v0.2.1) ──────────────────────────────
+
+def test_append_property_raises_when_vov_not_passed(tmp_path):
+    """Spec v0.2.1: append_property with bundle_passed_vov=False must raise ValueError."""
+    reg = PropertyRegistry(tmp_path / "outputs", "gate_fail")
+    with pytest.raises(ValueError, match="bundle_passed_vov=False"):
+        reg.append_property({"property_id": "p1", "name": "test"}, bundle_passed_vov=False)
+    # Nothing was written
+    assert reg.count() == 0
+
+
+def test_append_property_succeeds_when_vov_passed(tmp_path):
+    """append_property with bundle_passed_vov=True writes the record normally."""
+    reg = PropertyRegistry(tmp_path / "outputs", "gate_pass")
+    reg.append_property({"property_id": "p1", "name": "test"}, bundle_passed_vov=True)
+    assert reg.count() == 1
+    assert reg.get_by_id("p1")["name"] == "test"
+
+
+def test_append_property_dataclass_with_vov_true(tmp_path):
+    """PropertyRecord dataclass is accepted when bundle_passed_vov=True."""
+    reg = PropertyRegistry(tmp_path / "outputs", "gate_dc")
+    rec = PropertyRecord(
+        property_id="p_dc",
+        problem_id="prob_1",
+        author="task_synthesizer",
+        independence_class="exec.behavioral",
+        kind="BEHAVIORAL",
+        name="output_correct",
+    )
+    reg.append_property(rec, bundle_passed_vov=True)
+    rows = list(reg.iter_records())
+    assert len(rows) == 1
+    assert rows[0]["property_id"] == "p_dc"
+
+
+def test_append_property_vov_false_does_not_partially_write(tmp_path):
+    """Rejected call leaves the file untouched — no partial write on gate failure."""
+    reg = PropertyRegistry(tmp_path / "outputs", "no_partial")
+    reg.append_property({"property_id": "good"}, bundle_passed_vov=True)
+    with pytest.raises(ValueError):
+        reg.append_property({"property_id": "bad"}, bundle_passed_vov=False)
+    # Only the first record should be present
+    assert reg.count() == 1
+    assert reg.get_by_id("good") is not None
+    assert reg.get_by_id("bad") is None
+
+
+# ─── VerificationRecord v0.2.1 optional fields ───────────────────────────────
+
+def test_verification_record_default_quorum_fields(tmp_path):
+    """Old-style VerificationRecord (no v0.2.1 fields) round-trips with defaults."""
+    log = VerificationLog(tmp_path / "outputs", "vr_defaults")
+    rec = VerificationRecord(
+        record_id="vr1",
+        problem_id="p1",
+        candidate_id="c1",
+        property_ids=["px"],
+        per_property_verdicts=[],
+        quorum_accepted=True,
+        quorum_reason="all pass",
+    )
+    log.append_verification(rec)
+    row = list(log.iter_records())[0]
+    # v0.2.1 fields present with defaults
+    assert row["quorum_distinct_classes_required"] == 3
+    assert row["quorum_n"] == 0
+    assert row["pass_count"] == 0
+    assert row["fail_count"] == 0
+    assert row["error_count"] == 0
+    assert row["distinct_classes"] == []
+
+
+def test_verification_record_full_quorum_fields(tmp_path):
+    """VerificationRecord with all v0.2.1 quorum fields serializes correctly."""
+    log = VerificationLog(tmp_path / "outputs", "vr_full")
+    rec = VerificationRecord(
+        record_id="vr2",
+        problem_id="p2",
+        candidate_id="c2",
+        property_ids=["pa", "pb", "pc"],
+        per_property_verdicts=[
+            {"property_id": "pa", "passed": True},
+            {"property_id": "pb", "passed": True},
+            {"property_id": "pc", "passed": False},
+        ],
+        quorum_accepted=False,
+        quorum_reason="one FAIL veto",
+        quorum_distinct_classes_required=3,
+        quorum_n=3,
+        pass_count=2,
+        fail_count=1,
+        error_count=0,
+        distinct_classes=("arithmetic", "symbolic", "numeric"),
+    )
+    log.append_verification(rec)
+    row = list(log.iter_records())[0]
+    assert row["quorum_n"] == 3
+    assert row["pass_count"] == 2
+    assert row["fail_count"] == 1
+    assert row["error_count"] == 0
+    assert row["distinct_classes"] == ["arithmetic", "symbolic", "numeric"]
+    assert row["quorum_distinct_classes_required"] == 3
+
+
+# ─── ProblemRegistry patch-fold semantics (spec §7 / v0.2.1 note 3) ──────────
+
+def test_get_by_id_returns_patch_folded_view(tmp_path):
+    """get_by_id returns the last record, i.e. the patch-folded (retired) view."""
+    reg = ProblemRegistry(tmp_path / "outputs", "fold")
+    reg.append({"problem_id": "pf1", "domain": "math", "retired": False})
+    reg.mark_retired("pf1", session_id="s")
+    result = reg.get_by_id("pf1")
+    # The patch record is the latest; it carries retired=True
+    assert result["retired"] is True
+
+
+def test_get_by_id_original_returned_when_no_patch(tmp_path):
+    """get_by_id on an un-retired problem returns the original record."""
+    reg = ProblemRegistry(tmp_path / "outputs", "nopatch")
+    reg.append({"problem_id": "pnp", "domain": "code", "retired": False})
+    result = reg.get_by_id("pnp")
+    assert result is not None
+    assert result.get("retired") is False

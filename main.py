@@ -151,6 +151,12 @@ def main():
     parser.add_argument("--calibration-loss-weight", type=float, default=None,
                         help="Lambda on the calibration auxiliary term (default: 0.1)")
 
+    # Orchestration mode
+    parser.add_argument("--mode", default=None, choices=["classic", "rsi"],
+                        help="Execution mode: 'classic' = diagnose→generate→verify→train "
+                             "(default); 'rsi' = full RSI tick per spec §4 "
+                             "(requires --enable-task-synthesis)")
+
     # Task synthesis (opt-in)
     parser.add_argument("--enable-task-synthesis", action="store_true",
                         help="Enable synthesis mode: generate novel tasks via task_synthesizer "
@@ -229,6 +235,8 @@ def main():
         config.orchestrator.write_cycle_samples = True
     if args.collect_training_loss_trajectory:
         config.orchestrator.collect_training_loss_trajectory = True
+    if args.mode is not None:
+        config.orchestrator.mode = args.mode
 
     # Diagnostics config
     if args.questions_per_domain is not None:

@@ -168,17 +168,23 @@ def _jaccard(a: set, b: set) -> float:
 # narrow so we don't reject legitimate "actually quite simple"-style prose;
 # each phrase is chosen because it occurred verbatim in cycle samples.
 _SELF_ADMISSION_PATTERNS = (
+    # Explicit "this specific claim is wrong" admissions. These indicate the
+    # chain keeps producing reasoning after stating its own step is incorrect
+    # — the anti-pattern we want out of training.
     "which is incorrect",
     "is incorrect but",
     "miscalculation",
     "wait this is wrong",
     "wait, this is wrong",
     "i made a mistake",
-    "let me reconsider",
-    "let me recompute",
     "that was wrong",
     "this is wrong,",
     "scratch that",
+    # NOTE: "let me reconsider" and "let me recompute" were previously here,
+    # but they're productive self-correction markers — a chain that catches
+    # an error mid-reasoning and redoes the step is exactly the high-quality
+    # metacognitive pattern RSI should preserve. Rejecting them pushed the
+    # data distribution toward chains that never notice their own mistakes.
 )
 
 
@@ -281,6 +287,26 @@ class Verifier:
                 and self._model_verifier is not None):
             self._batch_model_escalation(results)
 
+        # Property-based consensus path. Additive: only tightens acceptance
+        # when the sample declares properties to check. Legacy path unchanged.
+        property_verdicts: dict[int, object] = {}
+        try:
+            from . import property_engine as _pe  # local import to avoid cycles
+            for sample, res in results:
+                if _pe.sample_has_properties(sample):
+                    verdict = _pe.verify_sample_by_properties(sample)
+                    property_verdicts[id(sample)] = verdict
+                    if not verdict.passed:
+                        res.accepted = False
+                        res.rejection_reasons.append(
+                            f"[properties] {verdict.summary()}"
+                        )
+        except Exception as e:  # pragma: no cover — defensive
+            logger.warning(
+                "property_engine hook failed (%s: %s); continuing with legacy path",
+                type(e).__name__, e,
+            )
+
         out: list[TrainingSample] = []
         for sample, res in results:
             sample.verified = res.accepted
@@ -303,6 +329,19 @@ class Verifier:
                 ],
                 "escalated_to_model": res.escalated_to_model,
             }
+            pv = property_verdicts.get(id(sample))
+            if pv is not None:
+                sample.verifier_meta["property_verdict"] = {
+                    "passed": pv.passed,
+                    "confidence": pv.confidence,
+                    "disagreement_flags": list(pv.disagreement_flags),
+                    "per_property": [
+                        {"name": r.name, "passed": r.passed, "reason": r.reason,
+                         "required": r.required, "disagreement": r.disagreement}
+                        for r in pv.per_property_results
+                    ],
+                    "notes": pv.notes,
+                }
             if res.accepted:
                 out.append(sample)
         return out

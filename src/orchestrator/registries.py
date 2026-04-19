@@ -156,7 +156,14 @@ class ProblemRecord:
 
 @dataclass
 class VerificationRecord:
-    """One candidate evaluation — primary or adversarial pass."""
+    """One candidate evaluation — primary or adversarial pass.
+
+    Required fields mirror the integrator's quorum decision.  Optional fields
+    (all v0.2.1) carry the numeric quorum components from property_verifier's
+    P7 shape so §6 health metrics can be computed without re-running
+    verification.  Old writers that omit them produce records with defaults;
+    new writers should populate them from QuorumVerdict fields.
+    """
     record_id: str
     problem_id: str
     candidate_id: str
@@ -167,6 +174,14 @@ class VerificationRecord:
     adversarial: bool = False           # True for §3.2.3 adversarial pass
     created_at: float = field(default_factory=_now)
     session_id: str = ""
+    # v0.2.1 — quorum audit trail (spec §2.1 / P7 QuorumVerdict shape).
+    # Defaults keep old writers compatible; populate from QuorumVerdict when available.
+    quorum_distinct_classes_required: int = 3   # threshold used at decision time
+    quorum_n: int = 0                           # total properties evaluated
+    pass_count: int = 0
+    fail_count: int = 0
+    error_count: int = 0
+    distinct_classes: tuple = field(default_factory=tuple)  # PASS-class names (§2.4 health reporting)
 
 
 @dataclass
@@ -207,8 +222,24 @@ class PropertyRegistry(_AppendOnlyStore):
     """Admissible properties (post §1.3 + §1.4 gates). Producer: property_verifier."""
     kind = "properties"
 
-    def append_property(self, prop: Any) -> None:
-        """Accept either a PropertyRecord, a full Property dataclass, or a dict."""
+    def append_property(self, prop: Any, *, bundle_passed_vov: bool) -> None:
+        """Write prop to the registry, enforcing the bundle-gate invariant.
+
+        Spec v0.2.1: a property that passed §1.3 (admit()) is still only a
+        candidate.  It must NOT be persisted until its bundle passes §1.4
+        (VoV quorum_verdict).  Callers must pass bundle_passed_vov=True;
+        passing False raises ValueError so an accidental pre-VoV write is
+        caught at call time, not silently corrupted into the registry.
+
+        Accepts a PropertyRecord dataclass, a full Property dataclass, or a
+        plain dict — all serialized identically.
+        """
+        if not bundle_passed_vov:
+            raise ValueError(
+                "PropertyRegistry.append_property called with bundle_passed_vov=False. "
+                "Properties may only be persisted after the bundle passes §1.4 VoV "
+                "(quorum_verdict). Run VoV first and pass bundle_passed_vov=True."
+            )
         if isinstance(prop, dict):
             self.append(prop)
         elif hasattr(prop, "__dataclass_fields__"):
@@ -241,7 +272,15 @@ class ProblemRegistry(_AppendOnlyStore):
             logger.warning("ProblemRegistry.append_problem: unknown type %s", type(problem))
 
     def get_by_id(self, problem_id: str) -> dict | None:
-        # Last-write-wins for updates (e.g. retired=True patch).
+        """Return the most-recent-patch-folded view of the problem record.
+
+        Because the file is append-only, mutations (e.g. retirement via
+        mark_retired) are stored as separate patch records tagged _patch=True.
+        This method returns the *last* record with the matching problem_id,
+        which is either the original record (if never patched) or the latest
+        patch (last-write-wins).  The `retired` field therefore reflects the
+        current known state; callers do not need to replay patch history.
+        """
         result = None
         for r in self.iter_records():
             if r.get("problem_id") == problem_id:

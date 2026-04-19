@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.generator.task_synthesizer import TaskSynthesizer, SynthesisResult, SynthesizedTask
-from src.verifier.property_engine import verify_by_consensus, register_property, Property
+from src.verifier.property_engine import verify_by_consensus, register_property, LegacyProperty as Property
 from src.verifier.verifier_of_verifiers import (
     verify_properties_trustworthy,
     generate_corruptions,

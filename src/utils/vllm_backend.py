@@ -268,11 +268,15 @@ class VLLMModelLoader:
                 gen_kwargs["top_p"] = top_p
             with torch.no_grad():
                 outputs = self._hf_model.generate(**inputs, **gen_kwargs)
+            # Left-padding: generated tokens start at input_ids.shape[1] for
+            # every sample. Using attention_mask.sum() (non-pad length) as the
+            # slice start was wrong — for padded samples it landed inside the
+            # padding, so the decoded "response" silently included the prompt.
+            input_len = inputs["input_ids"].shape[1]
             responses = []
-            for i, output in enumerate(outputs):
-                prompt_len = inputs["attention_mask"][i].sum()
+            for output in outputs:
                 responses.append(self._hf_tokenizer.decode(
-                    output[prompt_len:], skip_special_tokens=True))
+                    output[input_len:], skip_special_tokens=True))
             del inputs, outputs
             return responses
         finally:

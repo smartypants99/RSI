@@ -282,13 +282,18 @@ class ModelLoader:
             with torch.no_grad():
                 outputs = self._model.generate(**inputs, **gen_kwargs)
 
+            # With left-padding, every sample's generated tokens start at the
+            # same position: the full padded input length. Previously we used
+            # attention_mask.sum() as the slice start, which equals the NON-pad
+            # token count — so for padded samples the slice began INSIDE the
+            # padding and the decoded "response" silently included the prompt
+            # tokens. The fix: slice from the padded input length (same for
+            # all samples), which is where generated tokens actually begin.
+            input_len = inputs["input_ids"].shape[1]
             responses = []
-            for i, output in enumerate(outputs):
-                # Use attention_mask to count actual prompt tokens — more reliable
-                # than comparing to pad_token_id (which may equal eos_token_id).
-                prompt_len = inputs["attention_mask"][i].sum()
+            for output in outputs:
                 response = self._tokenizer.decode(
-                    output[prompt_len:],
+                    output[input_len:],
                     skip_special_tokens=True,
                 )
                 responses.append(response)

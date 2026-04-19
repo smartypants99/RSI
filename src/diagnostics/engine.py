@@ -1464,14 +1464,23 @@ class DiagnosticsEngine:
             return questions[:target]
 
         # --- Template-based questions (kept as fallback for domains without
-        #     full ground-truth coverage) ---
+        #     full ground-truth coverage). Templates MUST go through the
+        #     _seen_hashes dedup — otherwise a template variant can duplicate
+        #     a ground-truth question and inflate the count without adding
+        #     coverage (the domain pass-rate would then double-weight that one
+        #     question).
         for subdomain, template_list in templates.items():
             for template in template_list:
                 variants = self._create_variants(template, subdomain, cycle)
-                # Legacy templates are medium-difficulty by default
                 for v in variants:
                     v.setdefault("difficulty", "medium")
-                questions.extend(variants)
+                    h = hashlib.md5(
+                        (v["prompt"] + "|" + str(v.get("expected", ""))).encode()
+                    ).hexdigest()
+                    if h in self._seen_hashes:
+                        continue
+                    self._seen_hashes.add(h)
+                    questions.append(v)
 
         # --- Programmatic generators ---
         if self.config.use_programmatic_generators:
@@ -1507,14 +1516,18 @@ class DiagnosticsEngine:
                     if len(questions) >= target:
                         break
 
-        # --- Top-off from templates if still short ---
+        # --- Top-off from templates if still short.
+        # Also deduped — previous code could append the same template variant
+        # on successive attempts because variant seed collided with an earlier
+        # (cycle, subdomain) draw. Progress is now tracked by hash-set growth,
+        # not list length.
         if len(questions) < target and templates:
             attempts = 0
-            prev = -1
+            prev_hash_count = -1
             while len(questions) < target and attempts < target * 2:
-                if len(questions) == prev:
+                if len(self._seen_hashes) == prev_hash_count:
                     break
-                prev = len(questions)
+                prev_hash_count = len(self._seen_hashes)
                 attempts += 1
                 for subdomain, template_list in templates.items():
                     if len(questions) >= target:
@@ -1525,7 +1538,15 @@ class DiagnosticsEngine:
                     extra = self._create_variants(template, subdomain, cycle * 1000 + attempts)
                     for v in extra:
                         v.setdefault("difficulty", "medium")
-                    questions.extend(extra)
+                        h = hashlib.md5(
+                            (v["prompt"] + "|" + str(v.get("expected", ""))).encode()
+                        ).hexdigest()
+                        if h in self._seen_hashes:
+                            continue
+                        self._seen_hashes.add(h)
+                        questions.append(v)
+                        if len(questions) >= target:
+                            break
 
         # Nothing generated? Fall back to a single general question.
         if not questions:

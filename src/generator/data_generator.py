@@ -285,12 +285,19 @@ _REFUSAL_RE = re.compile(
 
 
 def _is_gibberish(text: str) -> bool:
-    """Detect gibberish: low alpha ratio, excessive repetition, or too short."""
+    """Detect gibberish: low signal-char ratio, excessive repetition, or too short.
+
+    Signal chars = letters OR digits. Math-heavy and code-heavy responses have
+    low ALPHA ratio but high signal ratio — previously they were flagged as
+    gibberish and silently dropped from training, which is catastrophic for a
+    code/math RSI system. The ratio threshold is on digits+letters combined,
+    with a separate guard for truly symbol-dominated noise.
+    """
     if not text or len(text.strip()) < 10:
         return True
     stripped = text.strip()
-    alpha_chars = sum(1 for c in stripped if c.isalpha())
-    if len(stripped) > 20 and alpha_chars / len(stripped) < 0.3:
+    signal_chars = sum(1 for c in stripped if c.isalpha() or c.isdigit())
+    if len(stripped) > 20 and signal_chars / len(stripped) < 0.3:
         return True
     tokens = _TOKEN_RE.findall(stripped.lower())
     if len(tokens) >= 5:
@@ -302,10 +309,26 @@ def _is_gibberish(text: str) -> bool:
 
 
 def _is_refusal(text: str) -> bool:
-    """Check if model output is a refusal to answer."""
+    """Check if model output is a refusal to answer.
+
+    A preamble like "I apologize" or "I'm sorry, let me redo step 2 — Step 1: ..."
+    is NOT a refusal — it's self-correction followed by an actual solution, which
+    is valuable RSI training signal. Only treat as refusal when the regex matches
+    AND no solution structure (Step N, Conclusion, or an equation sign) appears
+    anywhere in the text. Previously these legitimate self-corrections were
+    silently dropped from training.
+    """
     if not text:
         return False
-    return bool(_REFUSAL_RE.search(text[:300]))
+    if not _REFUSAL_RE.search(text[:300]):
+        return False
+    has_solution_structure = bool(
+        re.search(r'(?im)^\s*step\s*\d', text)
+        or re.search(r'(?im)^\s*conclusion\b', text)
+        or re.search(r'(?im)^\s*(?:therefore|thus|so)\b.*=', text)
+        or re.search(r'(?im)^\s*(?:final\s+)?answer\s*[:=]', text)
+    )
+    return not has_solution_structure
 
 
 def _strip_markdown_line(s: str) -> str:

@@ -4,10 +4,14 @@ Spawns an isolated `python -I` subprocess with tight RLIMITs, a wall-clock
 timeout, a scrubbed environment, an ephemeral cwd, and an audit-hook based
 import/syscall blocklist. Returns (ok, tail) where `tail` is stdout on
 success or stderr on failure (last ~500 chars).
+
+AST-level hardening blocks __builtins__, __globals__, __class__, __dict__
+attribute access to prevent runtime introspection escapes.
 """
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import shutil
@@ -42,6 +46,65 @@ def _scrub(s: str) -> str:
     for pat in _SECRET_PATTERNS:
         s = pat.sub("[REDACTED]", s)
     return s
+
+
+class _DangerousAST(ast.NodeVisitor):
+    """Detect dangerous attribute access patterns at parse time."""
+
+    DANGEROUS_ATTRS = {
+        "__builtins__", "__globals__", "__class__", "__dict__",
+        "__code__", "__func__", "__self__", "__closure__",
+        "func_globals", "func_code", "gi_frame", "gi_code",
+        "f_globals", "f_code", "f_locals",
+        # Metaclass traversal primitives — standard sandbox-escape vectors.
+        # Blocking __class__ closes most paths, but direct uses like
+        # `BaseException.__subclasses__()` or `type((),(),{}).__mro__` skip
+        # that hop and walk the class hierarchy to reach subprocess/file.
+        "__subclasses__", "__bases__", "__mro__",
+        # Pickle-based escapes — __reduce__ returns (callable, args) which
+        # can name arbitrary callables at unpickle time.
+        "__reduce__", "__reduce_ex__",
+        # Frame walking — ancestor frame gives access to outer locals/globals.
+        "__traceback__", "tb_frame", "tb_next",
+    }
+
+    def __init__(self):
+        self.violations: list[str] = []
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in self.DANGEROUS_ATTRS:
+            self.violations.append(
+                f"line {node.lineno}: dangerous attribute access: {node.attr}"
+            )
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id in self.DANGEROUS_ATTRS:
+            self.violations.append(
+                f"line {node.lineno}: dangerous name: {node.id}"
+            )
+        self.generic_visit(node)
+
+
+def _validate_ast(source: str) -> tuple[bool, str]:
+    """Parse source and check for dangerous patterns.
+
+    Returns (ok, error_msg). If any violation found, ok=False.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as e:
+        return False, f"syntax error at line {e.lineno}: {e.msg}"
+    except Exception as e:
+        return False, f"parse error: {type(e).__name__}: {e}"
+
+    checker = _DangerousAST()
+    checker.visit(tree)
+
+    if checker.violations:
+        return False, "; ".join(checker.violations[:3])
+
+    return True, ""
 
 
 _PRELUDE = textwrap.dedent(
@@ -93,29 +156,46 @@ _PRELUDE = textwrap.dedent(
     if not _WORKDIR_PREFIX.endswith(_os_mod.sep):
         _WORKDIR_PREFIX = _WORKDIR_PREFIX + _os_mod.sep
 
-    # ── Disable dangerous builtins ──
+    # ── Minimal builtin whitelist ──
+    _SAFE_BUILTINS = {{
+        'len', 'range', 'sum', 'sorted', 'min', 'max', 'abs', 'int', 'float',
+        'str', 'bool', 'list', 'tuple', 'dict', 'set', 'frozenset',
+        'enumerate', 'zip', 'map', 'filter', 'print', 'any', 'all',
+        'ValueError', 'TypeError', 'Exception', 'RuntimeError', 'KeyError',
+        'IndexError', 'AttributeError', 'NameError', 'NotImplementedError',
+        'StopIteration', 'round', 'pow', 'divmod', 'isinstance', 'issubclass',
+        'type', 'object', 'bytes', 'bytearray', 'memoryview', 'slice',
+        'property', 'classmethod', 'staticmethod', 'super', 'iter', 'next',
+        'reversed', 'format', 'ord', 'chr', 'hex', 'oct', 'bin',
+        'hash', 'id', 'callable',
+    }}
+
+    # Keep original import before we restrict it
     _real_import = builtins.__import__
 
     def _safe_import(name, *args, **kwargs):
         top = name.split(".")[0]
         if name in _BLOCKED_MODULES or top in _BLOCKED_MODULES:
             raise PermissionError(f"import blocked: {{name}}")
+        if _real_import is None:
+            raise PermissionError("import is disabled")
         return _real_import(name, *args, **kwargs)
 
     builtins.__import__ = _safe_import
 
-    # Neuter eval/exec/compile so even indirect calls fail
-    _orig_eval = builtins.eval
-    _orig_exec = builtins.exec
-
+    # Block eval/exec/compile explicitly
     def _blocked_eval(*a, **kw):
         raise PermissionError("eval() is blocked in sandbox")
 
     def _blocked_exec(*a, **kw):
         raise PermissionError("exec() is blocked in sandbox")
 
+    def _blocked_compile(*a, **kw):
+        raise PermissionError("compile() is blocked in sandbox")
+
     builtins.eval = _blocked_eval
     builtins.exec = _blocked_exec
+    builtins.compile = _blocked_compile
 
     # ── Audit hook ──
     def _audit(event, args):
@@ -173,7 +253,15 @@ def run_python_sandboxed(
     Returns (ok, tail). `ok` is True iff the subprocess exited 0.
     `tail` is the last ~500 characters of stdout (on success) or
     stderr/stdout (on failure), suitable for inclusion in diagnostics.
+
+    Performs AST-level validation before execution to block dangerous
+    attribute access patterns (__builtins__, __globals__, etc.).
     """
+    # First pass: AST validation (lightweight, blocks obvious escapes)
+    ast_ok, ast_err = _validate_ast(source)
+    if not ast_ok:
+        return False, f"unsafe code: {ast_err}"
+
     timeout_s = max(1, int(timeout_s))
     memory_mb = max(64, int(memory_mb))
     prelude = _PRELUDE.format(

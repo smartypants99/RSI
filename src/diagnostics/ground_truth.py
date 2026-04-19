@@ -1167,7 +1167,10 @@ def _check_sympy_equiv(response: str, canonical: str) -> bool:
         t = t.replace("^", "**").replace(" ", "")
         # Insert explicit '*' for implicit multiplication: "6x" -> "6*x",
         # ")x" -> ")*x", "x(" -> "x*(".  Models write "6x + 4" etc.
-        t = re.sub(r"(\d)([a-zA-Z(])", r"\1*\2", t)
+        # Negative lookahead preserves scientific notation — "6e5" must NOT
+        # become "6*e5" (which sympy parses as 6×variable_e5 and silently
+        # rejects numerically-correct answers like 6e5 == 600000).
+        t = re.sub(r"(\d)(?!e\d|e[+\-]\d|E\d|E[+\-]\d)([a-zA-Z(])", r"\1*\2", t)
         t = re.sub(r"(\))([a-zA-Z0-9(])", r"\1*\2", t)
         t = re.sub(r"\be\*\*\(([^)]+)\)", r"exp(\1)", t)
         t = re.sub(r"\be\*\*(\w+)", r"exp(\1)", t)

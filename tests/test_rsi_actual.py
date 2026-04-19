@@ -840,3 +840,260 @@ class TestIntegrationPoints:
         )
         assert rec.pool_record_id == "pool1"
         assert rec.source == "rsi_property"
+
+
+# ─── CHECKPOINT 3: Integration fixtures & scenarios (property_verifier) ─────
+
+
+class TestCheckpoint3IntegrationFixtures:
+    """Checkpoint 3: Confirmer/falsifier examples, bundle scenarios, VoV gate."""
+
+    def test_exact_match_property_with_confirmer_falsifier(self):
+        """property_verifier's exact_match_42 example property."""
+        source = '''
+def check(problem, candidate):
+    return (candidate == "42", "exact match" if candidate == "42" else "mismatch")
+'''
+        prop = build_property(
+            name="exact_match_42",
+            kind=PropertyKind.UNIT_TEST,
+            description="candidate must equal the string '42'",
+            independence_class="exec.behavioral",
+            language="python",
+            source=source,
+            entry_point="check",
+            timeout_ms=2000,
+            deterministic=True,
+            inputs=("problem", "candidate"),
+            returns="bool",
+            difficulty_floor=0.1,
+            confirmer_example="42",
+            falsifier_example="41",
+            author="test:integration_run",
+            problem_id="p_int_001",
+            parent_problem_hash="a" * 64,
+        )
+
+        res_mock = admit(prop, executor=MockExecutor())
+        assert res_mock.admitted is True
+        assert res_mock.gate_failed is None
+        assert res_mock.self_test_verdicts == ("PASS", "FAIL")
+        assert res_mock.determinism_observed is True
+
+    def test_exact_match_property_with_sandboxed_executor(self):
+        """SandboxedExecutor path for exact_match_42."""
+        source = '''
+def check(problem, candidate):
+    return candidate == "42"
+'''
+        prop = build_property(
+            name="exact_match_42_sbox",
+            kind=PropertyKind.UNIT_TEST,
+            description="candidate must equal '42'",
+            independence_class="exec.behavioral",
+            language="python",
+            source=source,
+            entry_point="check",
+            timeout_ms=2000,
+            deterministic=True,
+            inputs=("problem", "candidate"),
+            returns="bool",
+            difficulty_floor=0.1,
+            confirmer_example="42",
+            falsifier_example="41",
+            author="test:integration_sbox",
+            problem_id="p_int_001b",
+            parent_problem_hash="a" * 64,
+        )
+
+        res_sbox = admit(prop, executor=SandboxedExecutor(memory_mb=128))
+        assert res_sbox.admitted is True
+        assert res_sbox.determinism_observed is True
+
+    def test_3property_bundle_quorum_happy_path(self):
+        """3-property bundle across distinct classes passes quorum."""
+        from src.verifier.property_engine import verify
+
+        recipes = [
+            ("exec.behavioral", PropertyKind.UNIT_TEST,
+             "def check(problem, candidate): return candidate == '42'"),
+            ("algebra.symbolic", PropertyKind.ALGEBRAIC,
+             "def check(problem, candidate): return str(candidate).strip() == '42'"),
+            ("structural.static", PropertyKind.TYPE_INVARIANT,
+             "def check(problem, candidate): return isinstance(candidate, str) and candidate == '42'"),
+        ]
+        props = []
+        for i, (cls, kind, src) in enumerate(recipes):
+            p = build_property(
+                name=f"p{i}", kind=kind, description="t",
+                independence_class=cls, language="python",
+                source=src, entry_point="check",
+                timeout_ms=2000, deterministic=True,
+                inputs=("problem", "candidate"), returns="bool",
+                difficulty_floor=0.5,
+                confirmer_example="42", falsifier_example="99",
+                author=f"test:run_{i}",
+                problem_id="p_int_002",
+                parent_problem_hash="b" * 64,
+            )
+            result = admit(p, executor=MockExecutor())
+            assert result.admitted is True
+            props.append(p)
+
+        rec = verify(
+            problem_id="p_int_002", candidate="42", admitted_properties=props,
+            executor=MockExecutor(), min_properties=3, quorum_distinct_classes_required=3,
+        )
+        assert rec.accepted is True
+        assert rec.quorum_n == 3
+        assert len(rec.distinct_classes) == 3
+
+    def test_3property_bundle_any_fail_veto(self):
+        """Any-FAIL veto: single failing property rejects quorum."""
+        from src.verifier.property_engine import verify
+
+        recipes = [
+            ("exec.behavioral", PropertyKind.UNIT_TEST,
+             "def check(problem, candidate): return candidate == '42'"),
+            ("algebra.symbolic", PropertyKind.ALGEBRAIC,
+             "def check(problem, candidate): return candidate == '42'"),
+            ("structural.static", PropertyKind.TYPE_INVARIANT,
+             "def check(problem, candidate): return candidate == '42'"),
+        ]
+        props = []
+        for i, (cls, kind, src) in enumerate(recipes):
+            p = build_property(
+                name=f"pveto{i}", kind=kind, description="t",
+                independence_class=cls, language="python",
+                source=src, entry_point="check",
+                timeout_ms=2000, deterministic=True,
+                inputs=("problem", "candidate"), returns="bool",
+                difficulty_floor=0.5,
+                confirmer_example="42", falsifier_example="99",
+                author=f"test:veto_{i}",
+                problem_id="p_int_003",
+                parent_problem_hash="c" * 64,
+            )
+            result = admit(p, executor=MockExecutor())
+            assert result.admitted is True
+            props.append(p)
+
+        rec = verify(
+            problem_id="p_int_003", candidate="99", admitted_properties=props,
+            executor=MockExecutor(), min_properties=3, quorum_distinct_classes_required=3,
+        )
+        assert rec.accepted is False
+        assert rec.fail_count >= 1
+
+    def test_trusted_property_registration(self):
+        """Trusted builtin registration skips gates 1+2."""
+        from src.verifier.property_engine import _TRUSTED_CHECK_FNS
+
+        def my_trusted_check(problem, candidate):
+            return candidate == "ok", ""
+
+        prop = build_property(
+            name="my_trusted",
+            kind=PropertyKind.UNIT_TEST,
+            description="t",
+            independence_class="exec.behavioral",
+            language="python",
+            source="# trusted placeholder",
+            entry_point="_b_my_trusted",
+            author="test:trusted",
+            problem_id="p_trusted",
+            parent_problem_hash="d" * 64,
+            confirmer_example="ok",
+            falsifier_example="bad",
+            trusted=True,
+            trusted_check_fn=my_trusted_check,
+        )
+        assert prop.property_id in _TRUSTED_CHECK_FNS
+
+        result = admit(prop, executor=MockExecutor())
+        assert result.admitted is True
+
+    def test_property_to_payload_serialization(self):
+        """property_to_payload() enables JSONL registry storage."""
+        from src.verifier.property_engine import property_to_payload
+
+        prop = _make_prop(confirmer_example="c", falsifier_example="f")
+        payload = property_to_payload(prop)
+
+        assert isinstance(payload, dict)
+        assert payload["property_id"] == prop.property_id
+        assert payload["name"] == "test_prop"
+        assert payload["kind"] == "ALGEBRAIC"
+        assert isinstance(payload["inputs"], list)
+        assert "source" in payload
+
+    def test_vov_strong_bundle_admits_and_runs(self):
+        """VoV: strong property admits and runs through verify_properties_trustworthy."""
+        from src.verifier.verifier_of_verifiers import verify_properties_trustworthy
+
+        strong_props = [
+            _make_prop(
+                name="strong_discriminator",
+                source="def check(problem, candidate): return candidate == 'correct'",
+                confirmer_example="correct",
+                falsifier_example="wrong",
+            )
+        ]
+
+        result = admit(strong_props[0], executor=MockExecutor())
+        assert result.admitted is True
+
+        report = verify_properties_trustworthy(
+            task_id="t_strong",
+            reference_solution="correct",
+            properties=strong_props,
+            problem_ctx={},
+            domain="code",
+        )
+        assert report is not None
+
+    def test_vov_toothless_bundle_fails_corruption_sweep(self):
+        """VoV: toothless property fails corruption sweep."""
+        from src.verifier.verifier_of_verifiers import verify_properties_trustworthy
+
+        toothless_props = [
+            _make_prop(
+                name="toothless",
+                source="def check(problem, candidate): return True",
+                confirmer_example="anything",
+                falsifier_example="also_anything",
+            )
+        ]
+
+        result = admit(toothless_props[0], executor=MockExecutor())
+        assert result.admitted is False
+
+    def test_admission_gates_precedence_over_vov(self):
+        """Toothless property fails gate 3 (self_test), never reaches VoV."""
+        prop = _make_prop(
+            source="def check(problem, candidate): return True",
+            confirmer_example="c",
+            falsifier_example="f",
+        )
+        executor = MockExecutor()
+
+        result = admit(prop, executor=executor)
+        assert result.admitted is False
+        assert result.gate_failed == "self_test"
+
+    def test_determinism_check_confirms_deterministic_behavior(self):
+        """Gate 4 confirms deterministic property behavior is stable."""
+        source = '''
+def check(problem, candidate):
+    return candidate == "deterministic"
+'''
+        prop = _make_prop(
+            source=source,
+            confirmer_example="deterministic",
+            falsifier_example="nope",
+            deterministic=True,
+        )
+        executor = MockExecutor()
+        result = admit(prop, executor=executor)
+        assert result.admitted is True
+        assert result.determinism_observed is True

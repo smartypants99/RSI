@@ -998,10 +998,17 @@ def _extract_code(solution: Any) -> Optional[str]:
         if not t:
             continue
         # 1) All fenced blocks, prefer the largest valid one.
+        # Strip a leading bare "python" / "py" line — happens when the
+        # model emits ```\npython\n... instead of ```python\n...; the
+        # regex then captures "python" as the first body line, which
+        # runs as a NameError.
         candidates: list[str] = []
         for m in _RE_FENCE.finditer(t):
             body = m.group(1).strip()
             if body:
+                first, _, rest = body.partition("\n")
+                if first.strip().lower() in {"python", "py", "python3"} and rest:
+                    body = rest.lstrip()
                 candidates.append(body)
         # 2) Text from the first def/class/import onward.
         m2 = _RE_DEFCLASS.search(t)
@@ -1137,18 +1144,31 @@ def _b_passes_generated_edge_cases(problem, candidate):
     if not edges:
         return "ERROR", "no parseable edge inputs"
     # Redefine entry twice would collide; rename via function alias.
+    # _call() dispatches an edge input: tuple/list → positional unpack,
+    # dict → kwargs unpack, anything else → single arg. Without this,
+    # problems with multi-arg signatures (solve(s, k)) fail every edge
+    # with "missing 1 required positional argument".
     harness = (
         f"{reference}\n"
         f"_ref = {entry}\n"
         f"{code}\n"
         f"_cand = {entry}\n"
         f"_edges = {edges!r}\n"
+        "def _call(fn, arg):\n"
+        "    if isinstance(arg, tuple): return fn(*arg)\n"
+        "    if isinstance(arg, list):\n"
+        "        try: return fn(*arg)\n"
+        "        except TypeError: return fn(arg)\n"
+        "    if isinstance(arg, dict):\n"
+        "        try: return fn(**arg)\n"
+        "        except TypeError: return fn(arg)\n"
+        "    return fn(arg)\n"
         "_fail = None\n"
         "for _arg in _edges:\n"
         "    try:\n"
-        "        _r = _ref(_arg); _c = _cand(_arg)\n"
+        "        _r = _call(_ref, _arg); _c = _call(_cand, _arg)\n"
         "    except Exception as _e:\n"
-        "        _fail = f'raised on {_arg!r}: {type(_e).__name__}'\n"
+        "        _fail = f'raised on {_arg!r}: {type(_e).__name__}: {_e}'\n"
         "        break\n"
         "    if _r != _c:\n"
         "        _fail = f'differs on {_arg!r}: ref={_r!r} cand={_c!r}'\n"
@@ -1177,10 +1197,21 @@ def _b_output_type_matches_signature(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    # Same _call dispatch as _b_passes_generated_edge_cases: unpack
+    # list/tuple/dict inputs so multi-arg signatures work.
     harness = (
         f"{code}\n"
-        f"_r = {entry}({sample!r})\n"
-        f"import sys\n"
+        f"_arg = {sample!r}\n"
+        "def _call(fn, arg):\n"
+        "    if isinstance(arg, tuple): return fn(*arg)\n"
+        "    if isinstance(arg, list):\n"
+        "        try: return fn(*arg)\n"
+        "        except TypeError: return fn(arg)\n"
+        "    if isinstance(arg, dict):\n"
+        "        try: return fn(**arg)\n"
+        "        except TypeError: return fn(arg)\n"
+        "    return fn(arg)\n"
+        f"_r = _call({entry}, _arg)\n"
         f"_expected = {expected_type!r}\n"
         "_actual = type(_r).__name__\n"
         "print(('OK' if _actual == _expected else f'FAIL: expected {_expected}, got {_actual}'))\n"

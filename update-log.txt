@@ -833,3 +833,29 @@ run is the priority for overnight.
 Current state: restarted run at 13:54 UTC. Qwen3-8B via vLLM, 25 cycles
 max. Expect next-iteration cron to verify acceptance rate recovers
 toward the ~70%-of-candidates that the sandbox bug was masking.
+
+=== 2026-04-20 18:10 UTC — autonomous cron iteration ===
+Prior 25-cycle run (853be1b's harness-dispatch fix): pool=44, never hit
+min_batch=60, zero training. Harness dispatch fix lifted accept rate
+from 1.3% → ~3/cycle, not enough.
+
+Discovered ALL prior TDQ smoke tests and the Qwen run competing for
+the same 48 GB GPU — first run's vLLM EngineCore didn't release VRAM
+on exit (PID 12722 held 30 GB even after `pkill -9 -f main.py`).
+Had to `fuser -v /dev/nvidia*` to find it. Second run this iteration
+silently fell back to HF and OOM'd in diagnostics.
+
+Fixes this iteration:
+  - 772215f: _derive_ctx_from_tests() parses `assert solve(5,3)==8`
+    to pull edge_inputs/sample_input/expected_type when proposer omits
+    them. Eliminated ~200 ERROR verdicts/cycle that silently vetoed
+    distinct-classes quorum.
+  - 04f0486: bumped max_cycles 25→40 so the pool can accumulate to
+    min_batch=60 without cutting off the training phase.
+
+GPU cleanup: killed orphan vLLM worker PID 12722 via
+`fuser -v /dev/nvidia*` after normal pkill missed it. Future iters
+should do the fuser step automatically before starting a new run.
+
+New run at 17:57 UTC, cycle 6, pool=18. Projected hit min_batch at
+~cycle 20. Leaves ~20 training cycles in the 40-cycle budget.

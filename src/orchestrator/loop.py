@@ -1326,10 +1326,19 @@ class ImprovementLoop:
                     # Convert candidate to TrainingSample for the training pool.
                     try:
                         from ..generator.data_generator import TrainingSample
+                        # TrainingSample takes `response:` (kwarg), not
+                        # `solution:`. Previous `solution=` silently raised
+                        # TypeError which was swallowed at DEBUG level, so
+                        # every accepted candidate got silently dropped —
+                        # that's why run-5 cycles 1-5 showed
+                        # "candidates accepted=N > 0" but "pool has 0
+                        # samples" every cycle. The counter fired BEFORE
+                        # the silent TypeError.
                         ts_obj = TrainingSample(
                             prompt=getattr(problem, "problem_text", ""),
-                            solution=candidate_str,
+                            response=candidate_str,
                             domain=getattr(problem, "domain", "unknown"),
+                            verified=True,
                             source="rsi_property",
                         )
                         training_samples.append(ts_obj)
@@ -1346,7 +1355,13 @@ class ImprovementLoop:
                         # §7: retire problem on first training-pool acceptance.
                         _retire_problem(pid, reg, session_id=reg.sid)
                     except Exception as exc:
-                        logger.debug("TrainingPoolRecord/retire write failed: %s", exc)
+                        logger.warning(
+                            "TrainingSample/pool write failed (%s): %s — "
+                            "candidate accepted by quorum but dropped from "
+                            "training pool. If this happens on EVERY candidate, "
+                            "the TrainingSample constructor signature changed.",
+                            type(exc).__name__, exc,
+                        )
                 else:
                     logger.debug("  Quorum rejected %s: %s", cand_id, pe_record.reject_reason)
 

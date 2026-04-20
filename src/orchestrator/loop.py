@@ -2062,9 +2062,19 @@ class ImprovementLoop:
             else:
                 self._plateau_count = 0
         elif undertrained:
+            # Genuine training failure (LoRA never woke up) — this IS a
+            # failure signal worth tracking.
             self._consecutive_failures += 1
         else:
-            self._consecutive_failures += 1
+            # "No training happened this cycle." Previously this counted as
+            # a failure, which stopped run-4 at cycle 16 after the model
+            # simply hadn't produced enough RSI-verified samples yet to
+            # clear min_train_samples. That's not a pipeline failure —
+            # it's the training guard working as designed while the model
+            # warms up on the novel-problem proposal task. Only count
+            # training-FAILED cycles as failures; training-SKIPPED cycles
+            # are a wait state and should not trip the stop condition.
+            pass
 
         if self._plateau_count >= self.config.orchestrator.plateau_patience:
             return True, (
@@ -2073,7 +2083,7 @@ class ImprovementLoop:
                 f"threshold {self.config.orchestrator.min_improvement_threshold})"
             )
         if self._consecutive_failures >= self.config.orchestrator.plateau_patience * 2:
-            return True, f"{self._consecutive_failures} consecutive failed cycles — system is unable to produce training data"
+            return True, f"{self._consecutive_failures} consecutive TRAINING failures — pipeline appears broken"
         return False, ""
 
     def _save_checkpoint(self, cycle: int):

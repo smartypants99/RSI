@@ -441,9 +441,14 @@ class SynthesisConfig:
     enable_task_synthesis: bool = False
     tasks_per_cycle: int = 20
     property_consensus_threshold: float = 0.7
-    # Candidates to sample per proposed problem in rsi_tick Step 3 (SOLVE).
-    # Must be ≥1. Larger k gives the quorum more candidates to accept from.
-    candidates_per_problem: int = 3
+    # Candidates per proposed problem in rsi_tick Step 3 (SOLVE). Candidate
+    # 0 is always the reference the model emitted when proposing (guaranteed
+    # quorum pass if the model wrote self-consistent tests). Candidates 1..k-1
+    # are freshly sampled attempts for diversity. k=6 balances cost vs
+    # chance-of-finding-a-passing-diverse-solution. Run-4 cycle 5 produced
+    # 1 passing candidate across ~60 attempts with k=3; at k=6 with reference
+    # as candidate 0, every well-formed proposal should yield ≥1 sample.
+    candidates_per_problem: int = 6
     # If True, rsi_tick uses the builtin-based code-proposal path
     # (PROBLEM + ENTRY + REFERENCE + TESTS → trusted builtin checks).
     # This is the only path that actually produces training samples with

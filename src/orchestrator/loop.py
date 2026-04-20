@@ -1479,16 +1479,30 @@ class ImprovementLoop:
                     )
                     self.trainer.merge_lora()
 
-                    # Regression-revert guard: run held-out eval in HF mode
-                    # before swapping vLLM over. If training made the model
-                    # meaningfully worse, DON'T swap — keep using the prior
-                    # weights so a bad cycle doesn't cascade. The merged LoRA
-                    # weights are written to disk either way for forensics.
+                    # Regression-revert guard: do a FAST probe (not a full
+                    # diagnostic run) before swapping vLLM over. Previous
+                    # code called self.diagnostics.run(cycle) here, which
+                    # re-ran all 240 diagnostic prompts — BUT through the
+                    # HF model (vLLM is unloaded for training), which is
+                    # ~20x slower than vLLM. Run-7 burned ~4 minutes per
+                    # training cycle on that alone (6:27:42 strip_lora →
+                    # 6:31:32 regression warning). A 24-prompt probe
+                    # detects the -0.2+ drops that trigger the revert
+                    # just as reliably, in ~15s.
                     revert_threshold = float(getattr(
                         self.config.trainer, "regression_revert_threshold", 0.10,
                     ))
-                    post_diag = self.diagnostics.run(cycle)
-                    result.post_score = post_diag.overall_score
+                    try:
+                        post_score = self._quick_regression_probe(cycle)
+                    except Exception as exc:
+                        logger.warning(
+                            "[RSI tick %d] regression probe raised (%s); "
+                            "skipping revert check (may let a bad checkpoint "
+                            "through this cycle): %s",
+                            cycle, type(exc).__name__, exc,
+                        )
+                        post_score = result.pre_score  # treat as no-change
+                    result.post_score = post_score
                     result.improvement = result.post_score - result.pre_score
 
                     regressed = (
@@ -1498,14 +1512,28 @@ class ImprovementLoop:
                     if regressed:
                         logger.warning(
                             "[RSI tick %d] REGRESSION detected (%+.3f < -%.2f) — "
-                            "NOT writing checkpoint and NOT swapping vLLM. "
-                            "The in-memory HF model is corrupted by this cycle's "
-                            "merge, but vLLM keeps pointing at the previous "
-                            "cycle's known-good checkpoint; the next "
-                            "swap_to_hf_for_training will reload clean weights "
-                            "from that path.",
+                            "NOT writing checkpoint. Reloading vLLM from previous "
+                            "checkpoint (or base) so Phase 5b eval runs fast in "
+                            "vLLM mode instead of burning minutes on HF inference.",
                             cycle, result.improvement, revert_threshold,
                         )
+                        # Even on regression we MUST reload vLLM — otherwise
+                        # Phase 5b (held-out eval) runs via the slow HF model
+                        # that's still loaded in memory. Reloading from the
+                        # LAST known-good path (either the prior cycle's
+                        # checkpoint or the base model) gives us clean fast
+                        # inference without persisting the corrupted merge.
+                        if self._use_vllm:
+                            try:
+                                last_good = getattr(self.model_loader, "model_path", None)
+                                self.model_loader.swap_to_vllm_after_training(
+                                    str(last_good) if last_good else None
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "[RSI tick %d] vLLM reload after regression failed: %s",
+                                    cycle, exc,
+                                )
                     else:
                         if self._use_vllm:
                             ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
@@ -1542,6 +1570,40 @@ class ImprovementLoop:
     # means the held-out set is the SAME across all cycles, so scores track
     # true generalization over time instead of random per-cycle variance.
     HELDOUT_CYCLE_SEED = 0xE7A1
+
+    def _quick_regression_probe(self, cycle: int) -> float:
+        """Fast post-training sanity check — returns an overall score from a
+        small held-out slice.
+
+        Called BEFORE the vLLM swap-back, so it runs through the HF model
+        (slow). Using the full 240-prompt diagnostic here was adding ~4
+        minutes per training cycle (observed run-7). An 8-per-domain slice
+        is enough to detect the -0.2+ drops that trigger the regression
+        revert, at ~10-15 seconds instead.
+
+        Uses the same held-out seed + frozen_eval_mode as Phase 5b so this
+        probe measures the SAME surface the full eval does.
+        """
+        cfg = self.config.diagnostics
+        orig_n = cfg.questions_per_domain
+        orig_min = cfg.min_questions_per_domain
+        orig_max = cfg.max_questions_per_domain
+        orig_frozen = getattr(self.diagnostics, "_frozen_eval_mode", False)
+        probe_n = int(getattr(
+            self.config.orchestrator, "regression_probe_questions_per_domain", 8,
+        ))
+        try:
+            cfg.questions_per_domain = probe_n
+            cfg.min_questions_per_domain = min(orig_min, probe_n)
+            cfg.max_questions_per_domain = max(orig_max, probe_n)
+            self.diagnostics._frozen_eval_mode = True
+            d = self.diagnostics.run(self.HELDOUT_CYCLE_SEED)
+            return float(getattr(d, "overall_score", 0.0))
+        finally:
+            cfg.questions_per_domain = orig_n
+            cfg.min_questions_per_domain = orig_min
+            cfg.max_questions_per_domain = orig_max
+            self.diagnostics._frozen_eval_mode = orig_frozen
 
     def _eval_phase(self, cycle: int, result: CycleResult):
         """Run a held-out evaluation on a stable question set.

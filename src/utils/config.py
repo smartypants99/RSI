@@ -211,7 +211,11 @@ class TrainerConfig:
     # 1 epoch still qualifies. Require at least this many verified samples
     # before training; below this, skip the cycle's training (the fallback
     # pool will accumulate across cycles if populated-across-cycles is on).
-    min_train_samples: int = 16
+    # Run-9 observed: 21 samples × 2 steps → loss crashed to 0.18, held-out
+    # regressed by 0.296. Raised floor to 60 so pool accumulates across
+    # 3-4 cycles; lower-variance gradient updates on more diverse problems
+    # should stop the instant-memorization failure mode.
+    min_train_samples: int = 60
     # regression_revert_threshold: if post-training held-out drops by more
     # than this vs pre-training, revert the checkpoint to pre-training
     # weights. Trainers that blow up the base model shouldn't get to keep

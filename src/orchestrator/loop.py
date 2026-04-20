@@ -237,6 +237,15 @@ class ImprovementLoop:
         # plateau decisions aren't thrown off by a single outlier cycle.
         self._improvement_ema: float = 0.0
         self._ema_alpha: float = 0.3  # weight for newest observation
+        # Rolling RSI training pool — accumulates property-verified samples
+        # ACROSS cycles until we have enough for stable training. Run-8/9
+        # observed: training on 18-21 fresh samples per cycle × 2-3 steps
+        # overfits a 8B model every time (loss crashes from 0.5 to <0.2,
+        # held-out regresses by 0.2+). Accumulating for 3-4 cycles before
+        # training gives ~60-80 samples, lower-variance gradient updates,
+        # and less memorization risk.
+        self._rsi_pending_pool: list = []
+        self._rsi_pool_accumulated_cycles: int = 0
 
         # Meta-improvement layer — learns which config decisions pay off.
         meta_log = config.orchestrator.output_dir / "meta_decisions.jsonl"
@@ -1496,17 +1505,30 @@ class ImprovementLoop:
         except Exception:
             pass
 
-        logger.info("[RSI tick %d] Step 8: TRAIN (pool has %d samples)", cycle, len(training_samples))
+        # Accumulate this cycle's verified samples into the rolling RSI pool.
+        # Training fires only when the pool is large enough for a stable
+        # gradient update (observed: 18-21 fresh samples per cycle × 2 steps
+        # memorizes a 8B model instantly). Carry-over across cycles means
+        # the model sees diverse problems before any weight update.
+        self._rsi_pending_pool.extend(training_samples)
+        self._rsi_pool_accumulated_cycles += 1
+
+        logger.info(
+            "[RSI tick %d] Step 8: TRAIN (this cycle: %d samples, rolling pool: %d across %d cycles)",
+            cycle, len(training_samples),
+            len(self._rsi_pending_pool),
+            self._rsi_pool_accumulated_cycles,
+        )
         phase_start = time.time()
         # min_train_batch kept for back-compat (legacy field, default 1).
-        # min_train_samples is the stability floor — below this, a training
-        # step is basically random noise on 8B weights and corrupts the base
-        # model. Observed regression: 4 samples / 1 step dropped held-out by
-        # 0.244 and broke subsequent cycles. Enforce the higher of the two.
+        # min_train_samples is the stability floor — raised from 16 to 60
+        # because 18-sample training reliably crashed into memorization
+        # (run-8, run-9 cycle 1). Accumulate across 3-4 cycles.
         min_batch = max(
             getattr(self.config.trainer, "min_train_batch", 1),
-            getattr(self.config.trainer, "min_train_samples", 16),
+            getattr(self.config.trainer, "min_train_samples", 60),
         )
+        training_samples = list(self._rsi_pending_pool)  # rebind to the accumulated pool
         if len(training_samples) >= min_batch:
             try:
                 if self._use_vllm:
@@ -1608,6 +1630,13 @@ class ImprovementLoop:
                             "[RSI tick %d] training done: %d steps, score %+.3f",
                             cycle, metrics.steps, result.improvement,
                         )
+                        # Training succeeded the quick probe — flush the
+                        # accumulated pool. Next cycle starts fresh. If the
+                        # full Phase 5b eval later shows regression, the
+                        # post-Phase-5b guard reverts vLLM but the pool is
+                        # still flushed (those samples were already used).
+                        self._rsi_pending_pool.clear()
+                        self._rsi_pool_accumulated_cycles = 0
             except Exception as exc:
                 tb = traceback.format_exc()
                 logger.warning("Step 8 (train) failed (%s): %s", type(exc).__name__, exc)

@@ -1165,12 +1165,21 @@ class TaskSynthesizer:
         from collections import Counter
         issue_tally: Counter = Counter()
         accepted: list[ProposedProblem] = []
+        # Capture ONE failing raw response per batch so we can see what the
+        # model is actually producing. 19/20 failures with no preview means
+        # operators can't fix the prompt — we have to see the output to
+        # understand why PROBLEM: isn't landing.
+        first_failed_preview: str = ""
 
         for i, raw in enumerate(raws):
             parse = parse_code_proposal(raw)
             if not parse.ok:
                 for iss in parse.issues:
                     issue_tally[iss] += 1
+                if not first_failed_preview:
+                    first_failed_preview = (
+                        getattr(parse, "_raw_preview", "") or raw[:300].replace("\n", "\\n")
+                    )
                 continue
             problem_hash = hashlib.sha256(parse.problem_text.encode("utf-8")).hexdigest()
             ctx = {
@@ -1214,6 +1223,11 @@ class TaskSynthesizer:
                 "propose_batch_code: %d/%d proposals failed — top issues: %s",
                 total_failed, len(raws), top or "(none)",
             )
+            if first_failed_preview:
+                logger.info(
+                    "propose_batch_code: first failing response preview (300 chars): %s",
+                    first_failed_preview,
+                )
         else:
             logger.info("propose_batch_code: %d/%d proposals accepted", len(accepted), len(raws))
         return accepted
@@ -2331,30 +2345,37 @@ def propose_one(
 
 
 CODE_PROPOSAL_TEMPLATE = """\
-Propose a novel Python coding problem with concrete tests.
+Your task: propose ONE novel Python coding problem.
 
-REQUIRED FORMAT (return EXACTLY this, each label on its own line):
+Output EXACTLY in the format shown below. No prose, no markdown headers,
+no explanation — just the labeled blocks, each starting its own line.
 
-PROBLEM: <one-sentence description of what the function should compute>
-ENTRY: <function name, e.g. solve>
+Here is a complete, well-formed example of the required output format:
+
+PROBLEM: Return the sum of all even numbers in a list.
+ENTRY: solve
 REFERENCE:
 ```python
-def <ENTRY>(...):
-    ...
+def solve(xs):
+    return sum(x for x in xs if x % 2 == 0)
 ```
 TESTS:
-- assert <ENTRY>(<input1>) == <output1>
-- assert <ENTRY>(<input2>) == <output2>
-- assert <ENTRY>(<input3>) == <output3>
-EMPTY_INPUT: <repr of an empty-container input for ENTRY, e.g. [] or "" or ()>
-SAMPLE_INPUT: <repr of one valid non-empty input>
-EXPECTED_TYPE: <type name the function returns, e.g. int, list, str, bool>
+- assert solve([1, 2, 3, 4]) == 6
+- assert solve([]) == 0
+- assert solve([1, 3, 5]) == 0
+EMPTY_INPUT: []
+SAMPLE_INPUT: [1, 2, 3, 4, 5, 6]
+EXPECTED_TYPE: int
 
-Rules:
-- The problem must be solvable in 5–30 lines of Python.
-- The reference MUST be correct — your own tests will run against it.
-- Tests MUST be runnable as-is (use real function calls, not "example:").
-- Do NOT include markdown headers, prose, or additional blocks.
+Now produce ONE DIFFERENT problem in the same format. Rules:
+- Pick something NOT identical to the example above
+- Problem must be solvable in 5–30 lines of Python
+- REFERENCE must actually compute the right answer (your own tests will
+  be run against it)
+- Each TEST line must be a real runnable `assert` (not "example:" or prose)
+- Begin your output with `PROBLEM:` — no preamble, no "Sure, here is..."
+
+YOUR OUTPUT:
 """
 
 
@@ -2374,6 +2395,7 @@ class _CodeProposalParse:
     sample_input: str = ""
     expected_type: str = ""
     issues: list[str] = field(default_factory=list)
+    _raw_preview: str = ""  # first N chars of the failing raw response, for logging
 
     @property
     def ok(self) -> bool:
@@ -2388,20 +2410,47 @@ class _CodeProposalParse:
 
 def parse_code_proposal(raw: str) -> _CodeProposalParse:
     """Parse the simplified code-proposal format. Forgiving — only problem,
-    entry, reference, and ≥2 tests are hard-required; the rest default."""
+    entry, reference, and ≥2 tests are hard-required; the rest default.
+
+    Tolerant of common model-output decorations: markdown bold/headers
+    ( **PROBLEM:** / ### PROBLEM: ), extra whitespace, stray punctuation
+    before the label. Previously a strict `^\\s*PROBLEM:` match missed
+    18/20 of Qwen3-8B's cycle-1 responses even when the content was
+    correct — just because the model wrapped labels in markdown.
+    """
     out = _CodeProposalParse()
     if not raw or not raw.strip():
         out.issues.append("empty_response")
         return out
 
-    # Locate each labeled block's start.
+    # Strip think-tag artifacts that some models leak into text output.
+    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL | re.IGNORECASE)
+    raw = re.sub(r"</?think>", "", raw, flags=re.IGNORECASE)
+
+    # Locate each labeled block's start — tolerant of:
+    #   `**PROBLEM:**`, `### PROBLEM:`, `PROBLEM :` (space before colon),
+    #   `- PROBLEM:`, `1. PROBLEM:`, etc.
+    # We strip common decoration chars before the label when scanning.
     positions: dict[str, int] = {}
     for label in _CODE_BLOCK_LABELS:
-        m = re.search(rf"(?im)^\s*{re.escape(label)}", raw)
+        label_no_colon = label.rstrip(":")
+        # Match: optional markdown/bullet prefix, then the label name,
+        # optional space, then colon.
+        pattern = (
+            r"(?im)^[\s*#>\-\d.`'\"]*"     # decoration / bullets / quotes
+            + re.escape(label_no_colon)
+            + r"\s*[:：]"                   # colon (ASCII or fullwidth)
+        )
+        m = re.search(pattern, raw)
         if m:
             positions[label] = m.start()
     if "PROBLEM:" not in positions:
         out.issues.append("missing_problem")
+        # Dump the first 300 chars of the response so operators can see what
+        # format the model is actually producing. Rate-limited by the caller
+        # (propose_batch_code only emits the Counter summary) so this stays
+        # readable at INFO level.
+        out._raw_preview = raw[:300].replace("\n", "\\n")
         return out
 
     ordered = sorted(positions.items(), key=lambda kv: kv[1])
@@ -2409,7 +2458,20 @@ def parse_code_proposal(raw: str) -> _CodeProposalParse:
     for i, (label, start) in enumerate(ordered):
         end = ordered[i + 1][1] if i + 1 < len(ordered) else len(raw)
         body = raw[start:end]
-        body = re.sub(rf"(?i)^\s*{re.escape(label)}\s*", "", body, count=1).strip()
+        # Strip the matched label (including decoration and colon) — same
+        # tolerant pattern as above, then trim.
+        label_no_colon = label.rstrip(":")
+        body = re.sub(
+            r"(?i)^[\s*#>\-\d.`'\"]*"
+            + re.escape(label_no_colon)
+            + r"\s*[:：]\s*",
+            "",
+            body,
+            count=1,
+        )
+        # Also trim stray closing markdown bold after the label (e.g.
+        # "**PROBLEM:** reverse a list" leaves a leading "**" without this).
+        body = re.sub(r"^\**", "", body).strip()
         blocks[label] = body
 
     out.problem_text = blocks.get("PROBLEM:", "").strip()

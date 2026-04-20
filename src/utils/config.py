@@ -254,7 +254,17 @@ class TrainerConfig:
     # it (this is the failure mode that put held-out at 0.000 after cycle 4
     # where step 1 hit loss 0.0547). Training returns zero-step metrics
     # instead of applying the damaging update. Set to 0 to disable the probe.
-    skip_if_initial_loss_below: float = 0.50
+    # Lowered 0.50 → 0.15 because property-verified RSI samples are
+    # reference solutions the model itself wrote — pre-loss is naturally
+    # low (observed 0.37 on cycle-5 batch) but "already memorized" is
+    # the wrong diagnosis for that distribution. The 0.0547 failure case
+    # that set 0.50 was from STaR-era identical-chain samples where the
+    # loss truly indicated overfit-to-trivia. Property-quorum samples
+    # are diverse enough (admitted by 2+ independence classes) that a
+    # <0.50 pre-loss just reflects the fluency of reference code, not
+    # memorization. 0.15 is low enough to still catch pathological
+    # "loss=0.01 on 3 identical assert strings" failure modes.
+    skip_if_initial_loss_below: float = 0.15
     warmup_ratio: float = 0.1
     weight_decay: float = 0.01
     # max_grad_norm tightened 1.0 → 0.3 after run-10. With the old value,

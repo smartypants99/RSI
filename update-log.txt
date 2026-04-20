@@ -882,3 +882,31 @@ post-train held-out move; (c) does regression-revert kick in if bad.
 Run from 19:14 UTC is healthy: cycle 15, pool 24/15 cycles (~1.6/cycle),
 0 training cycles yet. With min_batch=30, training fires at cycle 19-20.
 Budget 40 cycles → expect 20+ training cycles. No changes this iteration.
+
+=== 2026-04-20 21:45 UTC — cron iteration — BREAKTHROUGH ===
+Iteration from 19:14 UTC plateaued at pool=9 after 15 cycles, accept
+rate 0.6/cycle (worse than prior 1.6). 4 cycles left, training
+wouldn't fire.
+
+Root cause: quorum_distinct_classes_required=3 was too strict.
+Reference-as-cand-0 fails 99% because many properties return ERROR
+(not PASS, doesn't count toward distinct_classes). With most
+quorums finding only 1-2 PASS verdicts, 3-distinct-classes was
+unreachable.
+
+Fix a5515c5: lowered quorum 3→2 and min_properties 3→2.
+Restart at 21:31 UTC showed ~10x lift: pool=32 by cycle 5
+(6-8 accepts/cycle). Training FIRED at cycle 5.
+
+But then hit ANOTHER safeguard: skip_if_initial_loss_below=0.50.
+Cycle-5 pre-loss was 0.37 (model writes reference solutions in
+its own fluent token distribution so pre-loss is naturally low).
+Safeguard designed for STaR-era loss=0.05 memorization, not
+property-verified samples. Training skipped.
+
+Fix 925b02c: lowered 0.50 → 0.15. Restart at 21:45 UTC.
+
+Projected: training actually APPLIES at cycle 5-8, regression-revert
+guard observes post-train held-out, we learn whether the end-to-end
+pipeline improves the model. This is the first iteration all night
+where training is expected to actually RUN.

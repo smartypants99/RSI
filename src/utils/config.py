@@ -170,10 +170,21 @@ class VerifierConfig:
 
 @dataclass
 class TrainerConfig:
-    lora_rank: int = 64
-    lora_alpha: int = 128
+    # Defaults lowered after run-10 regression analysis:
+    #   run-10 cycle 1: 21 samples × 2 optimizer steps → loss 0.50→0.18 crash,
+    #   held-out regressed -0.296. With LoRA+ (16× lr on B) and rsLoRA
+    #   (scale=alpha/sqrt(rank)), effective per-step weight delta was too
+    #   aggressive — one step on a tiny batch moved the model into the
+    #   training distribution at the cost of everything else.
+    # Fix: shrink LR 4× (2e-5 → 5e-6), shrink rank 8× (64 → 8), shrink alpha
+    # proportionally. rsLoRA scale drops from 128/sqrt(64)=16 to 16/sqrt(8)=5.66.
+    # Combined with LoRA+'s 16× on B and 4× lower LR, the effective update
+    # per step drops ~10× — landing in the regime where 2 steps don't
+    # memorize 20 samples.
+    lora_rank: int = 8
+    lora_alpha: int = 16
     lora_dropout: float = 0.05
-    learning_rate: float = 2e-5
+    learning_rate: float = 5e-6
     # Defaults tuned for small-cycle RSI regime (typ. 5-30 verified samples/cycle).
     # Cycle-2 (success) = 1-2 optimizer steps, final loss ~0.4-0.8.
     # Cycle-3 (overfit) = 25+ steps on 9 samples, final loss 0.045.
@@ -199,7 +210,12 @@ class TrainerConfig:
     # on tiny batches — less signal per cycle but no catastrophic overfit.
     # Combined with post-Phase-5b revert, this should hold the base model
     # at baseline or improve slowly instead of collapsing.
-    early_stop_loss: float = 0.30
+    # early_stop_loss raised 0.30 → 0.50 after run-10. Observed: loss dropped
+    # from ~0.5 → 0.18 in 2 optimizer steps, then early-stop fired at 0.30 AFTER
+    # damage. At 0.50 we catch the crash on the first batch whose forward-pass
+    # loss dips below natural SFT floor (~0.5-0.7), so we stop before more than
+    # one full accumulation group lands.
+    early_stop_loss: float = 0.50
     max_steps_per_cycle: int = 8
     min_steps_per_cycle: int = 1
     # min_train_samples: minimum training-pool size before we actually train.
@@ -229,10 +245,15 @@ class TrainerConfig:
     # it (this is the failure mode that put held-out at 0.000 after cycle 4
     # where step 1 hit loss 0.0547). Training returns zero-step metrics
     # instead of applying the damaging update. Set to 0 to disable the probe.
-    skip_if_initial_loss_below: float = 0.30
+    skip_if_initial_loss_below: float = 0.50
     warmup_ratio: float = 0.1
     weight_decay: float = 0.01
-    max_grad_norm: float = 1.0
+    # max_grad_norm tightened 1.0 → 0.3 after run-10. With the old value,
+    # a single noisy batch could produce a >1.0 grad norm whose clipped-to-1.0
+    # update still moved weights more than ~1% per step given LoRA+'s
+    # 16× B-side LR multiplier. 0.3 caps per-step update magnitude and is
+    # standard practice for small-batch preference/RLHF training.
+    max_grad_norm: float = 0.3
     target_modules: list[str] = field(default_factory=lambda: [
         # LLaMA/Mistral/Qwen-style
         "q_proj", "k_proj", "v_proj", "o_proj",
@@ -241,7 +262,7 @@ class TrainerConfig:
         "c_attn", "c_proj", "c_fc",
     ])
     # Custom: weakness-adaptive rank scaling
-    min_rank: int = 8
+    min_rank: int = 4
     max_rank: int = 256
     weakness_rank_scale: float = 2.0  # how much extra rank for weak layers
 

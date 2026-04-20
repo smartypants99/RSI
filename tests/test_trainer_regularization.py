@@ -25,7 +25,7 @@ def test_trainer_config_small_cycle_defaults():
     assert cfg.gradient_accumulation_steps == 4, (
         "grad_accum default must be 4 so cycles with <30 samples get 2-4 steps"
     )
-    assert cfg.early_stop_loss == 0.30
+    assert cfg.early_stop_loss == 0.50
     assert cfg.max_steps_per_cycle == 8
     assert cfg.min_steps_per_cycle == 1
 

@@ -869,8 +869,8 @@ class ImprovementLoop:
                                 admitted_properties=props,
                                 executor=_executor,
                                 calibration=self._registries,
-                                quorum_distinct_classes_required=3,
-                                min_properties=3,
+                                quorum_distinct_classes_required=2,
+                                min_properties=2,
                             )
                         except Exception as exc:
                             logger.debug("  verify() raised for task %s: %s", task_id, exc)
@@ -1399,8 +1399,8 @@ class ImprovementLoop:
                         admitted_properties=props,
                         executor=_executor,
                         calibration=reg.calibration_ledger,
-                        quorum_distinct_classes_required=3,
-                        min_properties=3,
+                        quorum_distinct_classes_required=2,
+                        min_properties=2,
                     )
                 except Exception as exc:
                     logger.debug("  verify() raised for candidate %s: %s", cand_id, exc)

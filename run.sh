@@ -12,6 +12,12 @@
 # known-good checkpoint; omit to start fresh from the base model.
 set -euo pipefail
 
+# PyTorch CUDA allocator: expandable_segments reduces fragmentation, which
+# is the difference between "OOM with 2.7 GB reserved-but-unallocated"
+# and "everything fits". Explicitly flagged by the run-6 OOM error
+# message. Set before launching so torch picks it up at import time.
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+
 RESUME_ARG=""
 if [ "$#" -ge 1 ]; then
     RESUME_ARG="$*"

@@ -1,24 +1,12 @@
-(main) root@C.35280593:/workspace/RSI$  # kill the current run (Ctrl+C or pkill -f "python main.py")
+(main) root@C.35280593:/workspace/RSI$ # Ctrl+C the current run
   cd /workspace/RSI                                                                                                                                                                                                  
-  rm -rf outputs/                                                                                                                                                                                                    
-  git pull origin main
-  bash run.sh      
-remote: Enumerating objects: 26, done.
-remote: Counting objects: 100% (26/26), done.
-remote: Compressing objects: 100% (3/3), done.
-remote: Total 17 (delta 14), reused 17 (delta 14), pack-reused 0 (from 0)
-Unpacking objects: 100% (17/17), 18.81 KiB | 409.00 KiB/s, done.
+  rm -rf outputs/                                           
+  git pull origin main                                                                                                                                                                                               
+  bash run.sh     
 From https://github.com/smartypants99/RSI
  * branch            main       -> FETCH_HEAD
-   edfa9b9..d48efe0  main       -> origin/main
-Updating edfa9b9..d48efe0
-Fast-forward
- src/generator/task_synthesizer.py |  134 ++++++++++--
- src/orchestrator/loop.py          |   92 +++++---
- src/utils/config.py               |   11 +-
- update-log.txt                    | 1346 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++----------------------------
- 4 files changed, 1207 insertions(+), 376 deletions(-)
-2026-04-20 05:48:32,947 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
+Already up to date.
+2026-04-20 06:05:52,335 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
 ============================================================
 PREFLIGHT CHECK
 ============================================================
@@ -28,7 +16,7 @@ PREFLIGHT CHECK
   ✓ import_sympy: sympy available
   ✓ torch: torch 2.10.0+cu128
   ✓ cuda: NVIDIA RTX A6000, 47GB total VRAM, capability 8.6
-  ✓ vram_free: 47.1GB/47GB VRAM free
+  ✓ vram_free: 46.9GB/47GB VRAM free
   ✓ model_path: HF repo id Qwen/Qwen3-8B (will be downloaded if not cached)
   ✓ output_dir_writable: outputs writable
   ✓ disk_space: 81GB free at outputs
@@ -37,220 +25,102 @@ PREFLIGHT CHECK
 ------------------------------------------------------------
 PASS — 12 checks ok, 0 warnings
 ============================================================
-2026-04-20 05:48:35,331 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
-2026-04-20 05:48:35,335 [INFO] src.orchestrator.loop: RSI registries opened (sid=04223f981e8f)
-2026-04-20 05:48:35,335 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:48:35,335 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
-2026-04-20 05:48:35,335 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:48:38,133 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
-INFO 04-20 05:48:38 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'Qwen/Qwen3-8B'}
+2026-04-20 06:05:53,216 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
+2026-04-20 06:05:53,220 [INFO] src.orchestrator.loop: RSI registries opened (sid=f5a37ed2fc8b)
+2026-04-20 06:05:53,220 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:05:53,220 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
+2026-04-20 06:05:53,220 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:05:56,209 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
+INFO 04-20 06:05:56 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'Qwen/Qwen3-8B'}
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-2026-04-20 05:48:38,420 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-INFO 04-20 05:48:39 [model.py:549] Resolved architecture: Qwen3ForCausalLM
-INFO 04-20 05:48:39 [model.py:1678] Using max model len 4096
-INFO 04-20 05:48:39 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
-INFO 04-20 05:48:39 [vllm.py:790] Asynchronous scheduling is enabled.
-WARNING 04-20 05:48:43 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
-(EngineCore pid=3071) INFO 04-20 05:48:49 [core.py:105] Initializing a V1 LLM engine (v0.19.1) with config: model='Qwen/Qwen3-8B', speculative_config=None, tokenizer='Qwen/Qwen3-8B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-8B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
-(EngineCore pid=3071) INFO 04-20 05:48:50 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.5:38427 backend=nccl
-(EngineCore pid=3071) INFO 04-20 05:48:50 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
-(EngineCore pid=3071) INFO 04-20 05:48:51 [gpu_model_runner.py:4735] Starting to load model Qwen/Qwen3-8B...
-(EngineCore pid=3071) INFO 04-20 05:48:52 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
-(EngineCore pid=3071) INFO 04-20 05:48:52 [flash_attn.py:596] Using FlashAttention version 2
-(EngineCore pid=3071) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
-(EngineCore pid=3071) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
-(EngineCore pid=3071) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 06:05:57,074 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+INFO 04-20 06:05:57 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-20 06:05:57 [model.py:1678] Using max model len 4096
+INFO 04-20 06:05:57 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
+INFO 04-20 06:05:57 [vllm.py:790] Asynchronous scheduling is enabled.
+WARNING 04-20 06:06:01 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(EngineCore pid=4702) INFO 04-20 06:06:07 [core.py:105] Initializing a V1 LLM engine (v0.19.1) with config: model='Qwen/Qwen3-8B', speculative_config=None, tokenizer='Qwen/Qwen3-8B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-8B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=4702) INFO 04-20 06:06:08 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.5:60115 backend=nccl
+(EngineCore pid=4702) INFO 04-20 06:06:08 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=4702) INFO 04-20 06:06:09 [gpu_model_runner.py:4735] Starting to load model Qwen/Qwen3-8B...
+(EngineCore pid=4702) INFO 04-20 06:06:10 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=4702) INFO 04-20 06:06:10 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=4702) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=4702) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+(EngineCore pid=4702) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
 Loading safetensors checkpoint shards:   0% Completed | 0/5 [00:00<?, ?it/s]
-Loading safetensors checkpoint shards:  20% Completed | 1/5 [00:01<00:04,  1.24s/it]
-Loading safetensors checkpoint shards:  40% Completed | 2/5 [00:02<00:04,  1.44s/it]
-Loading safetensors checkpoint shards:  60% Completed | 3/5 [00:04<00:02,  1.50s/it]
-Loading safetensors checkpoint shards:  80% Completed | 4/5 [00:05<00:01,  1.43s/it]
-Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:06<00:00,  1.14s/it]
-Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:06<00:00,  1.27s/it]
-(EngineCore pid=3071) 
-(EngineCore pid=3071) INFO 04-20 05:49:00 [default_loader.py:384] Loading weights took 6.41 seconds
-(EngineCore pid=3071) INFO 04-20 05:49:01 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 8.304906 seconds
-(EngineCore pid=3071) INFO 04-20 05:49:05 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/ebf33f1065/rank_0_0/backbone for vLLM's torch.compile
-(EngineCore pid=3071) INFO 04-20 05:49:05 [backends.py:1111] Dynamo bytecode transform time: 4.42 s
-(EngineCore pid=3071) INFO 04-20 05:49:07 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 1.255 s
-(EngineCore pid=3071) INFO 04-20 05:49:07 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/897f13ed9733826c1788fdf25e3d76c73afbe2304b86a8333fe0ca118af887f8/rank_0_0/model
-(EngineCore pid=3071) INFO 04-20 05:49:07 [monitor.py:48] torch.compile took 6.03 s in total
-(EngineCore pid=3071) INFO 04-20 05:49:07 [monitor.py:76] Initial profiling/warmup run took 0.21 s
-(EngineCore pid=3071) INFO 04-20 05:49:17 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
-(EngineCore pid=3071) INFO 04-20 05:49:17 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
-(EngineCore pid=3071) INFO 04-20 05:49:20 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.52 GiB total
-(EngineCore pid=3071) INFO 04-20 05:49:20 [gpu_worker.py:436] Available KV cache memory: 12.32 GiB
-(EngineCore pid=3071) INFO 04-20 05:49:20 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6110 to maintain the same effective KV cache size.
-(EngineCore pid=3071) INFO 04-20 05:49:20 [kv_cache_utils.py:1319] GPU KV cache size: 89,696 tokens
-(EngineCore pid=3071) INFO 04-20 05:49:20 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 21.90x
-Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:03<00:00, 13.88it/s]
-Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 17.96it/s]
-(EngineCore pid=3071) INFO 04-20 05:49:26 [gpu_model_runner.py:6046] Graph capturing finished in 6 secs, took 0.51 GiB
-(EngineCore pid=3071) INFO 04-20 05:49:26 [gpu_worker.py:597] CUDA graph pool memory: 0.51 GiB (actual), 0.52 GiB (estimated), difference: 0.01 GiB (1.5%).
-(EngineCore pid=3071) INFO 04-20 05:49:26 [core.py:283] init engine (profile, create kv cache, warmup model) took 25.91 seconds
-(EngineCore pid=3071) INFO 04-20 05:49:29 [vllm.py:790] Asynchronous scheduling is enabled.
-2026-04-20 05:49:29,909 [INFO] src.utils.vllm_backend: vLLM backend ready
-2026-04-20 05:49:29,910 [INFO] src.orchestrator.loop: 
+Loading safetensors checkpoint shards:  20% Completed | 1/5 [00:01<00:04,  1.15s/it]
+Loading safetensors checkpoint shards:  40% Completed | 2/5 [00:02<00:03,  1.26s/it]
+Loading safetensors checkpoint shards:  60% Completed | 3/5 [00:03<00:02,  1.30s/it]
+Loading safetensors checkpoint shards:  80% Completed | 4/5 [00:04<00:01,  1.23s/it]
+Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.05it/s]
+Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.08s/it]
+(EngineCore pid=4702) 
+(EngineCore pid=4702) INFO 04-20 06:06:17 [default_loader.py:384] Loading weights took 5.45 seconds
+(EngineCore pid=4702) INFO 04-20 06:06:18 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 7.374121 seconds
+(EngineCore pid=4702) INFO 04-20 06:06:23 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/ebf33f1065/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=4702) INFO 04-20 06:06:23 [backends.py:1111] Dynamo bytecode transform time: 4.58 s
+(EngineCore pid=4702) INFO 04-20 06:06:25 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 1.276 s
+(EngineCore pid=4702) INFO 04-20 06:06:25 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/897f13ed9733826c1788fdf25e3d76c73afbe2304b86a8333fe0ca118af887f8/rank_0_0/model
+(EngineCore pid=4702) INFO 04-20 06:06:25 [monitor.py:48] torch.compile took 6.21 s in total
+(EngineCore pid=4702) INFO 04-20 06:06:25 [monitor.py:76] Initial profiling/warmup run took 0.19 s
+(EngineCore pid=4702) INFO 04-20 06:06:26 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=4702) INFO 04-20 06:06:26 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=4702) INFO 04-20 06:06:28 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.52 GiB total
+(EngineCore pid=4702) INFO 04-20 06:06:29 [gpu_worker.py:436] Available KV cache memory: 12.32 GiB
+(EngineCore pid=4702) INFO 04-20 06:06:29 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6110 to maintain the same effective KV cache size.
+(EngineCore pid=4702) INFO 04-20 06:06:29 [kv_cache_utils.py:1319] GPU KV cache size: 89,696 tokens
+(EngineCore pid=4702) INFO 04-20 06:06:29 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 21.90x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:05<00:00,  9.73it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:02<00:00, 17.41it/s]
+(EngineCore pid=4702) INFO 04-20 06:06:37 [gpu_model_runner.py:6046] Graph capturing finished in 8 secs, took 0.51 GiB
+(EngineCore pid=4702) INFO 04-20 06:06:37 [gpu_worker.py:597] CUDA graph pool memory: 0.51 GiB (actual), 0.52 GiB (estimated), difference: 0.01 GiB (1.5%).
+(EngineCore pid=4702) INFO 04-20 06:06:37 [core.py:283] init engine (profile, create kv cache, warmup model) took 19.01 seconds
+(EngineCore pid=4702) INFO 04-20 06:06:40 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-20 06:06:40,447 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-20 06:06:40,448 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 05:49:29,910 [INFO] src.orchestrator.loop: CYCLE 1
-2026-04-20 05:49:29,910 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:49:29,910 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2134.67it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.31it/s, est. speed input: 172.66 toks/s, output: 2137.65 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3087.25it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 140.13 toks/s, output: 2226.89 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3075.37it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 143.00 toks/s, output: 2226.83 toks/s]
-2026-04-20 05:50:25,589 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1097.86it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:32<00:00,  1.62s/it, est. speed input: 173.84 toks/s, output: 619.87 toks/s]
-2026-04-20 05:50:58,057 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-2026-04-20 05:50:58,058 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
-2026-04-20 05:50:58,065 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2315.71it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.35it/s, est. speed input: 310.75 toks/s, output: 2283.44 toks/s]
-2026-04-20 05:51:16,792 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 18.7s
-2026-04-20 05:51:16,792 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
-2026-04-20 05:51:24,625 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=21
-2026-04-20 05:51:24,625 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
-2026-04-20 05:51:24,626 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (pool has 0 samples)
-2026-04-20 05:51:24,626 [INFO] src.orchestrator.loop: [RSI tick 1] pool size 0 < min_batch 16 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 05:51:24,626 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 05:51:24,627 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 05:51:24,630 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.40e-05 (from 2e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 05:51:24,630 [INFO] src.orchestrator.loop: 
+2026-04-20 06:06:40,448 [INFO] src.orchestrator.loop: CYCLE 1
+2026-04-20 06:06:40,448 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:06:40,448 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2135.39it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 175.10 toks/s, output: 2167.89 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3051.68it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.38it/s, est. speed input: 139.68 toks/s, output: 2210.10 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2905.12it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.35it/s, est. speed input: 142.52 toks/s, output: 2206.95 toks/s]
+2026-04-20 06:07:35,982 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1190.33it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:29<00:00,  1.49s/it, est. speed input: 189.34 toks/s, output: 675.14 toks/s]
+2026-04-20 06:08:05,793 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+2026-04-20 06:08:05,794 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
+2026-04-20 06:08:05,801 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (20 problems × 6 candidates, batched)
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2564.05it/s]
+Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.33it/s, est. speed input: 309.18 toks/s, output: 2345.73 toks/s]
+2026-04-20 06:08:24,619 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 18.8s
+2026-04-20 06:08:24,619 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
+2026-04-20 06:08:31,475 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=18
+2026-04-20 06:08:31,475 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
+2026-04-20 06:08:31,476 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (pool has 18 samples)
+2026-04-20 06:08:31,476 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=4702) INFO 04-20 06:08:31 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=4702) INFO 04-20 06:08:31 [core.py:1233] Shutdown complete
+[rank0]:[W420 06:08:31.596270723 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-20 06:08:32,608 [INFO] src.utils.vllm_backend: Loading HF model for training: Qwen/Qwen3-8B
+Loading weights: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 399/399 [00:04<00:00, 88.27it/s]
+2026-04-20 06:08:41,336 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-20 06:09:49,977 [WARNING] src.trainer.custom_lora: OOM during training (batch_size=2)
+2026-04-20 06:09:50,478 [WARNING] src.trainer.custom_lora:   Retrying with batch_size=1
+2026-04-20 06:09:50,483 [INFO] src.trainer.custom_lora:   Adaptive grad_accum: 4 → 5 (total_batches=36, cap=8)
+2026-04-20 06:10:06,730 [WARNING] src.trainer.custom_lora: OOM during training (batch_size=1)
+2026-04-20 06:10:07,179 [WARNING] src.orchestrator.loop: Step 8 (train) failed (OutOfMemoryError): CUDA out of memory. Tried to allocate 2.32 GiB. GPU 0 has a total capacity of 47.40 GiB of which 1.48 GiB is free. Process 264829 has 262.00 MiB memory in use. Process 286176 has 45.66 GiB memory in use. Of the allocated memory 42.59 GiB is allocated by PyTorch, and 2.74 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2026-04-20 06:10:07,180 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-20 06:10:07,218 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+Writing model shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:40<00:00, 40.45s/it]
+2026-04-20 06:10:47,812 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.40e-05 (from 2e-05), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 06:10:47,812 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 05:51:24,630 [INFO] src.orchestrator.loop: CYCLE 2
-2026-04-20 05:51:24,630 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:51:24,630 [INFO] src.orchestrator.loop: [RSI tick 2] Step 0: SET_DIAGNOSTICS
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1916.94it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.32it/s, est. speed input: 202.96 toks/s, output: 2133.90 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2866.11it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 118.15 toks/s, output: 2219.19 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2774.84it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.35it/s, est. speed input: 139.76 toks/s, output: 2199.95 toks/s]
-2026-04-20 05:52:20,450 [INFO] src.orchestrator.loop: [RSI tick 2] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1225.44it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:32<00:00,  1.62s/it, est. speed input: 173.78 toks/s, output: 610.16 toks/s]
-2026-04-20 05:52:52,924 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-2026-04-20 05:52:52,926 [INFO] src.orchestrator.loop: [RSI tick 2] Step 2: PROPOSE + ADMIT properties
-2026-04-20 05:52:52,927 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2559.95it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.39it/s, est. speed input: 321.53 toks/s, output: 2275.02 toks/s]
-2026-04-20 05:53:11,536 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: solve phase took 18.6s
-2026-04-20 05:53:11,536 [INFO] src.orchestrator.loop: [RSI tick 2] Step 4: VERIFY candidates
-2026-04-20 05:53:19,898 [INFO] src.orchestrator.loop: [RSI tick 2] candidates accepted=35
-2026-04-20 05:53:19,898 [INFO] src.orchestrator.loop: [RSI tick 2] Step 7: CALIBRATION CHECK
-2026-04-20 05:53:19,899 [INFO] src.orchestrator.loop: [RSI tick 2] Step 8: TRAIN (pool has 0 samples)
-2026-04-20 05:53:19,899 [INFO] src.orchestrator.loop: [RSI tick 2] pool size 0 < min_batch 16 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 05:53:19,899 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 05:53:19,901 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 05:53:19,903 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.82e-05 (from 1.4e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 05:53:19,903 [INFO] src.orchestrator.loop: 
-============================================================
-2026-04-20 05:53:19,903 [INFO] src.orchestrator.loop: CYCLE 3
-2026-04-20 05:53:19,904 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:53:19,904 [INFO] src.orchestrator.loop: [RSI tick 3] Step 0: SET_DIAGNOSTICS
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2670.79it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.32it/s, est. speed input: 188.87 toks/s, output: 2126.36 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3098.92it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 123.48 toks/s, output: 2205.29 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3227.50it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.35it/s, est. speed input: 140.47 toks/s, output: 2189.17 toks/s]
-2026-04-20 05:54:15,609 [INFO] src.orchestrator.loop: [RSI tick 3] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1198.10it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:29<00:00,  1.47s/it, est. speed input: 192.16 toks/s, output: 649.02 toks/s]
-2026-04-20 05:54:44,980 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-2026-04-20 05:54:44,981 [INFO] src.orchestrator.loop: [RSI tick 3] Step 2: PROPOSE + ADMIT properties
-2026-04-20 05:54:44,982 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2521.33it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.41it/s, est. speed input: 326.46 toks/s, output: 2170.84 toks/s]
-2026-04-20 05:55:03,511 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: solve phase took 18.5s
-2026-04-20 05:55:03,511 [INFO] src.orchestrator.loop: [RSI tick 3] Step 4: VERIFY candidates
-2026-04-20 05:55:13,370 [INFO] src.orchestrator.loop: [RSI tick 3] candidates accepted=29
-2026-04-20 05:55:13,370 [INFO] src.orchestrator.loop: [RSI tick 3] Step 7: CALIBRATION CHECK
-2026-04-20 05:55:13,371 [INFO] src.orchestrator.loop: [RSI tick 3] Step 8: TRAIN (pool has 0 samples)
-2026-04-20 05:55:13,371 [INFO] src.orchestrator.loop: [RSI tick 3] pool size 0 < min_batch 16 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 05:55:13,371 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 05:55:13,372 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 05:55:13,373 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_1
-2026-04-20 05:55:13,375 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.27e-05 (from 1.8200000000000002e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 05:55:13,375 [INFO] src.orchestrator.loop: 
-============================================================
-2026-04-20 05:55:13,375 [INFO] src.orchestrator.loop: CYCLE 4
-2026-04-20 05:55:13,375 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:55:13,375 [INFO] src.orchestrator.loop: [RSI tick 4] Step 0: SET_DIAGNOSTICS
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2275.79it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.33it/s, est. speed input: 178.78 toks/s, output: 2139.31 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3109.28it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.38it/s, est. speed input: 120.70 toks/s, output: 2182.92 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2988.01it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.35it/s, est. speed input: 138.81 toks/s, output: 2200.04 toks/s]
-2026-04-20 05:56:08,976 [INFO] src.orchestrator.loop: [RSI tick 4] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1202.17it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:29<00:00,  1.48s/it, est. speed input: 190.10 toks/s, output: 675.59 toks/s]
-2026-04-20 05:56:38,666 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-2026-04-20 05:56:38,667 [INFO] src.orchestrator.loop: [RSI tick 4] Step 2: PROPOSE + ADMIT properties
-2026-04-20 05:56:38,668 [INFO] src.orchestrator.loop: [RSI tick 4] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2316.31it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.36it/s, est. speed input: 318.86 toks/s, output: 2254.57 toks/s]
-2026-04-20 05:56:57,359 [INFO] src.orchestrator.loop: [RSI tick 4] Step 3: solve phase took 18.7s
-2026-04-20 05:56:57,359 [INFO] src.orchestrator.loop: [RSI tick 4] Step 4: VERIFY candidates
-2026-04-20 05:57:05,790 [INFO] src.orchestrator.loop: [RSI tick 4] candidates accepted=25
-2026-04-20 05:57:05,790 [INFO] src.orchestrator.loop: [RSI tick 4] Step 7: CALIBRATION CHECK
-2026-04-20 05:57:05,791 [INFO] src.orchestrator.loop: [RSI tick 4] Step 8: TRAIN (pool has 0 samples)
-2026-04-20 05:57:05,791 [INFO] src.orchestrator.loop: [RSI tick 4] pool size 0 < min_batch 16 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 05:57:05,791 [INFO] src.orchestrator.loop: [Cycle 4] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 05:57:05,793 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 05:57:05,793 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_2
-2026-04-20 05:57:05,796 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=8.92e-06 (from 1.274e-05), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 05:57:05,796 [INFO] src.orchestrator.loop: 
-============================================================
-2026-04-20 05:57:05,796 [INFO] src.orchestrator.loop: CYCLE 5
-2026-04-20 05:57:05,796 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:57:05,796 [INFO] src.orchestrator.loop: [RSI tick 5] Step 0: SET_DIAGNOSTICS
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2413.97it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.33it/s, est. speed input: 176.09 toks/s, output: 2162.73 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3092.18it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.38it/s, est. speed input: 117.50 toks/s, output: 2203.85 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3160.35it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 138.00 toks/s, output: 2190.45 toks/s]
-2026-04-20 05:58:01,442 [INFO] src.orchestrator.loop: [RSI tick 5] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1159.38it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:29<00:00,  1.48s/it, est. speed input: 190.74 toks/s, output: 661.30 toks/s]
-2026-04-20 05:58:31,033 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-2026-04-20 05:58:31,034 [INFO] src.orchestrator.loop: [RSI tick 5] Step 2: PROPOSE + ADMIT properties
-2026-04-20 05:58:31,035 [INFO] src.orchestrator.loop: [RSI tick 5] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2265.09it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.39it/s, est. speed input: 314.39 toks/s, output: 2372.46 toks/s]
-2026-04-20 05:58:49,642 [INFO] src.orchestrator.loop: [RSI tick 5] Step 3: solve phase took 18.6s
-2026-04-20 05:58:49,642 [INFO] src.orchestrator.loop: [RSI tick 5] Step 4: VERIFY candidates
-2026-04-20 05:58:56,603 [INFO] src.orchestrator.loop: [RSI tick 5] candidates accepted=25
-2026-04-20 05:58:56,603 [INFO] src.orchestrator.loop: [RSI tick 5] Step 7: CALIBRATION CHECK
-2026-04-20 05:58:56,604 [INFO] src.orchestrator.loop: [RSI tick 5] Step 8: TRAIN (pool has 0 samples)
-2026-04-20 05:58:56,604 [INFO] src.orchestrator.loop: [RSI tick 5] pool size 0 < min_batch 16 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 05:58:56,604 [INFO] src.orchestrator.loop: [Cycle 5] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 05:58:56,605 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 05:58:56,606 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_3
-2026-04-20 05:58:56,608 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.16e-05 (from 8.918e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 05:58:56,609 [INFO] src.orchestrator.loop: 
-============================================================
-2026-04-20 05:58:56,609 [INFO] src.orchestrator.loop: CYCLE 6
-2026-04-20 05:58:56,609 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 05:58:56,609 [INFO] src.orchestrator.loop: [RSI tick 6] Step 0: SET_DIAGNOSTICS
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2714.78it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.32it/s, est. speed input: 185.62 toks/s, output: 2125.31 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3038.14it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.36it/s, est. speed input: 122.87 toks/s, output: 2217.74 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3013.45it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 139.16 toks/s, output: 2196.06 toks/s]
-2026-04-20 05:59:52,551 [INFO] src.orchestrator.loop: [RSI tick 6] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1214.24it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:29<00:00,  1.49s/it, est. speed input: 189.86 toks/s, output: 684.95 toks/s]
-2026-04-20 06:00:22,277 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-2026-04-20 06:00:22,279 [INFO] src.orchestrator.loop: [RSI tick 6] Step 2: PROPOSE + ADMIT properties
-2026-04-20 06:00:22,280 [INFO] src.orchestrator.loop: [RSI tick 6] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2603.10it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.41it/s, est. speed input: 316.74 toks/s, output: 2218.37 toks/s]
-2026-04-20 06:00:40,806 [INFO] src.orchestrator.loop: [RSI tick 6] Step 3: solve phase took 18.5s
-2026-04-20 06:00:40,806 [INFO] src.orchestrator.loop: [RSI tick 6] Step 4: VERIFY candidates
+2026-04-20 06:10:47,812 [INFO] src.orchestrator.loop: CYCLE 2
+2026-04-20 06:10:47,812 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:10:47,812 [INFO] src.orchestrator.loop: [RSI tick 2] Step 0: SET_DIAGNOSTICS
+The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.

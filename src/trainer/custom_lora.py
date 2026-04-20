@@ -785,10 +785,22 @@ class CustomLoRATrainer:
         model = self.model_loader.model
         tokenizer = self.model_loader.tokenizer
 
+        # Training sequence length is capped independently of inference.
+        # Inference (vLLM) keeps max_model_len=4096 so long diagnostic
+        # prompts work, but training activations scale with seq_len — on
+        # a 47 GB GPU, 8B model + bf16 + gradient checkpointing + seq=4096
+        # OOMs at batch=1 (observed run-6). Code/math training samples
+        # fit easily in 1024; samples that don't get dropped by
+        # TrainingDataset's length filter, which is fine — quality over
+        # quantity for property-verified samples.
+        train_max_length = min(
+            getattr(self.config, "train_max_seq_length", 1024),
+            self.model_loader.config.max_seq_length,
+        )
         dataset = TrainingDataset(
             verified_samples,
             tokenizer,
-            max_length=self.model_loader.config.max_seq_length,
+            max_length=train_max_length,
         )
         samples_rejected = len(verified_samples) - len(dataset)
         if samples_rejected > 0:

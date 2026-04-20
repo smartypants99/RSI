@@ -128,8 +128,21 @@ class VLLMModelLoader:
             # Clear vLLM tokenizer — it's tied to the destroyed engine.
             # _load_hf will set _hf_tokenizer, and _load_vllm will set _tokenizer.
             self._tokenizer = None
-            gc.collect()
+            self._sampling_params_cls = None
+            # Aggressive cleanup — run-6 saw 42 GiB PyTorch-allocated
+            # during training when the HF model is only 15 GiB, suggesting
+            # vLLM's KV cache / CUDA graph pool wasn't fully released.
+            # Trigger multiple rounds of GC + ipc_collect + synchronize
+            # so the allocator returns memory to the OS before HF loads.
+            for _ in range(3):
+                gc.collect()
             if torch.cuda.is_available():
+                torch.cuda.synchronize()
+                torch.cuda.empty_cache()
+                try:
+                    torch.cuda.ipc_collect()
+                except Exception:
+                    pass
                 torch.cuda.empty_cache()
 
     def _load_hf(self):

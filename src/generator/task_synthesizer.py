@@ -2615,14 +2615,20 @@ Now produce ONE DIFFERENT problem in the same format. Rules:
   two-pointer invariant, bounded search, interval merging, topological
   traversal, expression parsing, careful modular arithmetic.
 - Problem must be solvable in 8–40 lines of Python
-- REFERENCE must actually compute the right answer (your own tests will
-  be run against it)
+- CRITICAL: your REFERENCE must pass ALL your own TESTS. Before emitting,
+  mentally trace each test through your reference — if any test would
+  fail on your reference, either rewrite the reference or rewrite the
+  test. A reference that doesn't pass its own tests is useless and will
+  be rejected by the property verifier.
+- Prefer writing SIMPLE, CONCRETE test cases where you can compute the
+  expected output by hand in 10 seconds. Do NOT write tests where you're
+  unsure what the reference returns. "solve([1,2,3]) == 4" must be a
+  value you're confident about.
 - Each TEST line must be a real runnable `assert` (not "example:" or prose)
 - Include at least one EDGE-CASE test (empty / minimum / off-by-one /
   impossibility) — trivial tests are not evidence of a frontier problem.
-- DIFFICULTY must be a float in [0.3, 0.9] reflecting your honest estimate
-  of first-attempt failure probability. If you set DIFFICULTY below 0.3
-  the proposal will be rejected — pick a harder problem instead.
+- DIFFICULTY must be a float in [0.15, 0.9] reflecting your honest estimate
+  of first-attempt failure probability. Below 0.15 the proposal is rejected.
 - Begin your output with `PROBLEM:` — no preamble, no "Sure, here is..."
 
 YOUR OUTPUT:
@@ -2659,7 +2665,13 @@ _CODE_BLOCK_LABELS = (
 # below which we reject the proposal outright — matches spec §3.2.1.
 # A proposal the model claims it could trivially solve is by construction
 # not at the frontier and training on it reinforces already-known skills.
-_MIN_CODE_PROPOSAL_DIFFICULTY = 0.3
+# Lowered 0.3 → 0.15 after run-11: at 0.3 the proposer pushed the model
+# into problems it could name but not self-consistently solve (palindromic
+# substring counts, etc.) — reference failed its own tests → 0 quorum
+# passes for 4 cycles. 0.15 is a non-trivial floor but leaves room for the
+# model to write references that actually satisfy its tests. The frontier
+# self-solve gate still rejects anything the model can already solve blind.
+_MIN_CODE_PROPOSAL_DIFFICULTY = 0.15
 
 
 @dataclass

@@ -2608,13 +2608,12 @@ DIFFICULTY_REASON: Classic DP; first-attempt failure modes include greedy
 heuristics, off-by-one on dp[0], and missing the -1 impossibility return.
 
 Now produce ONE DIFFERENT problem in the same format. Rules:
-- Pick something NOT identical to the example above AND NOT trivially
-  easy (NO "sum the even numbers", NO "reverse a list", NO "count vowels",
-  NO "is palindrome", NO one-line comprehensions). Favor problems that
-  require at least one non-obvious step: DP table, recursion + memo,
-  two-pointer invariant, bounded search, interval merging, topological
-  traversal, expression parsing, careful modular arithmetic.
-- Problem must be solvable in 8–40 lines of Python
+- Pick something NOT identical to the example above.
+- Favor small, well-defined problems where you are CONFIDENT you can write
+  a correct reference solution AND tests whose expected values you can
+  compute by hand. A 5-line problem with correct tests beats a 30-line
+  problem with buggy tests.
+- Problem must be solvable in 3–30 lines of Python.
 - CRITICAL: your REFERENCE must pass ALL your own TESTS. Before emitting,
   mentally trace each test through your reference — if any test would
   fail on your reference, either rewrite the reference or rewrite the
@@ -2663,15 +2662,19 @@ _CODE_BLOCK_LABELS = (
 
 # Minimum self-reported difficulty (= P[model fails on first attempt])
 # below which we reject the proposal outright — matches spec §3.2.1.
-# A proposal the model claims it could trivially solve is by construction
-# not at the frontier and training on it reinforces already-known skills.
-# Lowered 0.3 → 0.15 after run-11: at 0.3 the proposer pushed the model
-# into problems it could name but not self-consistently solve (palindromic
-# substring counts, etc.) — reference failed its own tests → 0 quorum
-# passes for 4 cycles. 0.15 is a non-trivial floor but leaves room for the
-# model to write references that actually satisfy its tests. The frontier
-# self-solve gate still rejects anything the model can already solve blind.
-_MIN_CODE_PROPOSAL_DIFFICULTY = 0.15
+# Floor disabled (0.0) after run-12: at 0.15 the model STILL couldn't write
+# self-consistent (problem, reference, tests) triples on moderate-difficulty
+# problems — 1 accepted in 5 cycles. The 8B base just isn't strong enough to
+# write hard problems with bug-free references.
+#
+# Gamble for run-13: accept any declared difficulty. Quorum's any-FAIL veto
+# still rejects self-inconsistent proposals. Rely on the frontier self-solve
+# gate to filter trivialities (drops anything the model can already solve
+# blind), and trust that the new trainer config (5e-6 LR, rank 8,
+# max_grad_norm 0.3, early_stop 0.50 — ~32× gentler than the config that
+# caused the run-8 regression) won't catastrophically overfit even on
+# easier verified samples.
+_MIN_CODE_PROPOSAL_DIFFICULTY = 0.0
 
 
 @dataclass

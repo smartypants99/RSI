@@ -95,14 +95,21 @@ def test_parse_accepts_frontier_proposal():
     assert len(p.tests) == 3
 
 
-def test_parse_rejects_below_frontier_difficulty():
+def test_parse_rejects_below_frontier_difficulty(monkeypatch):
+    # Temporarily raise the floor to verify the gating logic still works
+    # when configured > 0 (the module default is 0.0 post-run-12 since the
+    # 8B base couldn't reliably write self-consistent proposals above 0.15).
+    from src.generator import task_synthesizer as ts
+    monkeypatch.setattr(ts, "_MIN_CODE_PROPOSAL_DIFFICULTY", 0.30)
     raw = _HARD_PROPOSAL.replace("DIFFICULTY: 0.55", "DIFFICULTY: 0.10")
     p = parse_code_proposal(raw)
     assert not p.ok
     assert any("difficulty_below_frontier" in i for i in p.issues)
 
 
-def test_parse_rejects_missing_difficulty_as_below_frontier():
+def test_parse_rejects_missing_difficulty_as_below_frontier(monkeypatch):
+    from src.generator import task_synthesizer as ts
+    monkeypatch.setattr(ts, "_MIN_CODE_PROPOSAL_DIFFICULTY", 0.30)
     raw = re.sub(r"DIFFICULTY:.*\n", "", _HARD_PROPOSAL)
     raw = re.sub(r"DIFFICULTY_REASON:.*", "", raw)
     p = parse_code_proposal(raw)

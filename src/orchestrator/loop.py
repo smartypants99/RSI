@@ -338,6 +338,70 @@ class ImprovementLoop:
                     })
                 result.phase_times["eval"] = time.time() - eval_start
 
+                # Post-Phase-5b regression revert. Phase 5b is the AUTHORITY
+                # on whether training helped (3 reps × 240 prompts vs. the
+                # quick probe's 24). If the full eval shows a drop worse
+                # than the revert threshold from either the pre-training
+                # pre_score or the prior cycle's eval_score, roll vLLM back
+                # to the best known checkpoint.
+                #
+                # Observed run-8 cycle 1: quick probe reported -0.092
+                # (within -0.10 tolerance → checkpoint saved + vLLM swapped),
+                # then Phase 5b showed 0.280 vs 0.558 baseline = −0.28 real
+                # regression. Without this guard, cycle 2 starts from
+                # corrupted weights and cascades.
+                revert_threshold = float(getattr(
+                    self.config.trainer, "regression_revert_threshold", 0.10,
+                ))
+                if (
+                    _mode == "rsi"
+                    and trained  # only meaningful if we actually trained this cycle
+                    and result.eval_score is not None
+                    and revert_threshold > 0
+                ):
+                    # Compare against the best-ever eval score (baseline on
+                    # cycle 1, prior-best on later cycles).
+                    reference = (
+                        self._best_score if self._best_score and self._best_score > 0
+                        else result.pre_score or 0.0
+                    )
+                    full_eval_drop = reference - result.eval_score
+                    if full_eval_drop > revert_threshold:
+                        logger.warning(
+                            "[RSI tick %d] FULL EVAL REGRESSION: "
+                            "eval=%.3f vs reference=%.3f (drop %.3f > %.2f). "
+                            "Quick probe missed this. Reverting vLLM to best "
+                            "checkpoint (cycle %s) so cycle %d starts clean.",
+                            cycle, result.eval_score, reference,
+                            full_eval_drop, revert_threshold,
+                            self._best_checkpoint_cycle or "base",
+                            cycle + 1,
+                        )
+                        try:
+                            if self._best_checkpoint_cycle is not None:
+                                best_ckpt = (
+                                    self.config.orchestrator.output_dir
+                                    / "checkpoints"
+                                    / f"cycle_{self._best_checkpoint_cycle}"
+                                )
+                                if best_ckpt.exists() and (best_ckpt / "config.json").exists():
+                                    self.model_loader.swap_to_vllm_after_training(str(best_ckpt))
+                                else:
+                                    # Fall back to base model path
+                                    self.model_loader.swap_to_vllm_after_training(
+                                        str(getattr(self.model_loader, "model_path", None))
+                                    )
+                            else:
+                                # No prior good checkpoint — revert to base.
+                                self.model_loader.swap_to_vllm_after_training(
+                                    str(getattr(self.model_loader, "model_path", None))
+                                )
+                        except Exception as exc:
+                            logger.warning(
+                                "[RSI tick %d] vLLM revert after full-eval regression failed: %s",
+                                cycle, exc,
+                            )
+
                 self.history.append(result)
 
                 self._improvement_ema = (

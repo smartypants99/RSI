@@ -192,7 +192,14 @@ class TrainerConfig:
     #   grad_accum is scaled up automatically.
     # min_steps_per_cycle: if the computed step budget is below this, the
     #   cycle is skipped with a warning (too little signal to update safely).
-    early_stop_loss: float = 0.15
+    # early_stop_loss raised 0.15 → 0.30. Observed run-8 cycle 1: 18 samples
+    # × 3 optimizer steps drove loss from ~0.5 to 0.1112 in 13 batches. By the
+    # time we hit loss 0.15, the model had already memorized and held-out
+    # dropped from 0.558 → 0.280 (full eval). At 0.30 we stop after ~1 step
+    # on tiny batches — less signal per cycle but no catastrophic overfit.
+    # Combined with post-Phase-5b revert, this should hold the base model
+    # at baseline or improve slowly instead of collapsing.
+    early_stop_loss: float = 0.30
     max_steps_per_cycle: int = 8
     min_steps_per_cycle: int = 1
     # min_train_samples: minimum training-pool size before we actually train.

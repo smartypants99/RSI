@@ -1,22 +1,22 @@
-(main) root@C.35280593:/workspace$ cd /workspace/RSI
-  rm -rf outputs/
-  git pull origin main
-  bash run.sh
-remote: Enumerating objects: 23, done.
-remote: Counting objects: 100% (23/23), done.
-remote: Compressing objects: 100% (6/6), done.
-remote: Total 14 (delta 11), reused 11 (delta 8), pack-reused 0 (from 0)
-Unpacking objects: 100% (14/14), 6.37 KiB | 814.00 KiB/s, done.
+Activated conda/uv virtual environment at /venv/main
+(main) root@C.35280593:/workspace$ cd /workspace/RSI                                                                                                                                                                                                                                                            
+  rm -rf outputs/  
+  git pull origin main                                                                                                                                                                                                                                                         
+  bash run.sh 
+remote: Enumerating objects: 11, done.
+remote: Counting objects: 100% (11/11), done.
+remote: Compressing objects: 100% (1/1), done.
+remote: Total 6 (delta 5), reused 6 (delta 5), pack-reused 0 (from 0)
+Unpacking objects: 100% (6/6), 4.37 KiB | 1.09 MiB/s, done.
 From https://github.com/smartypants99/RSI
  * branch            main       -> FETCH_HEAD
-   430c002..59d8456  main       -> origin/main
-Updating 430c002..59d8456
+   59d8456..d6f4ede  main       -> origin/main
+Updating 59d8456..d6f4ede
 Fast-forward
- run.sh                    |   6 +++
- src/utils/vllm_backend.py |  15 +++++-
- update-log.txt            | 334 +++++++++++++++++++++++++++++++++++++------------------------------------------------------------------------------------
- 3 files changed, 122 insertions(+), 233 deletions(-)
-2026-04-20 06:22:32,726 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
+ src/orchestrator/loop.py |  88 ++++++++++++++++++++++++++++++++++++++++++++--------
+ update-log.txt           | 207 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-------------------------------------------------------------
+ 2 files changed, 178 insertions(+), 117 deletions(-)
+2026-04-20 06:40:46,713 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
 ============================================================
 PREFLIGHT CHECK
 ============================================================
@@ -35,91 +35,163 @@ PREFLIGHT CHECK
 ------------------------------------------------------------
 PASS — 12 checks ok, 0 warnings
 ============================================================
-2026-04-20 06:22:35,110 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
-2026-04-20 06:22:35,115 [INFO] src.orchestrator.loop: RSI registries opened (sid=edd6f41afb2e)
-2026-04-20 06:22:35,115 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 06:22:35,115 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
-2026-04-20 06:22:35,115 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 06:22:38,006 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
-INFO 04-20 06:22:38 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'Qwen/Qwen3-8B'}
+2026-04-20 06:40:47,711 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
+2026-04-20 06:40:47,715 [INFO] src.orchestrator.loop: RSI registries opened (sid=1c65f83e8849)
+2026-04-20 06:40:47,715 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:40:47,715 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
+2026-04-20 06:40:47,715 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:40:50,591 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
+INFO 04-20 06:40:50 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'Qwen/Qwen3-8B'}
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-2026-04-20 06:22:39,520 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-INFO 04-20 06:22:39 [model.py:549] Resolved architecture: Qwen3ForCausalLM
-INFO 04-20 06:22:39 [model.py:1678] Using max model len 4096
-INFO 04-20 06:22:39 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
-INFO 04-20 06:22:39 [vllm.py:790] Asynchronous scheduling is enabled.
-WARNING 04-20 06:22:43 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
-(EngineCore pid=1051) INFO 04-20 06:22:49 [core.py:105] Initializing a V1 LLM engine (v0.19.1) with config: model='Qwen/Qwen3-8B', speculative_config=None, tokenizer='Qwen/Qwen3-8B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-8B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
-(EngineCore pid=1051) INFO 04-20 06:22:51 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.4:57735 backend=nccl
-(EngineCore pid=1051) INFO 04-20 06:22:51 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
-(EngineCore pid=1051) INFO 04-20 06:22:51 [gpu_model_runner.py:4735] Starting to load model Qwen/Qwen3-8B...
-(EngineCore pid=1051) INFO 04-20 06:22:52 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
-(EngineCore pid=1051) INFO 04-20 06:22:52 [flash_attn.py:596] Using FlashAttention version 2
-(EngineCore pid=1051) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
-(EngineCore pid=1051) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+2026-04-20 06:40:51,231 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+INFO 04-20 06:40:52 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-20 06:40:52 [model.py:1678] Using max model len 4096
+INFO 04-20 06:40:52 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
+INFO 04-20 06:40:52 [vllm.py:790] Asynchronous scheduling is enabled.
+WARNING 04-20 06:40:55 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(EngineCore pid=1039) INFO 04-20 06:41:01 [core.py:105] Initializing a V1 LLM engine (v0.19.1) with config: model='Qwen/Qwen3-8B', speculative_config=None, tokenizer='Qwen/Qwen3-8B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-8B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1039) INFO 04-20 06:41:03 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.4:55687 backend=nccl
+(EngineCore pid=1039) INFO 04-20 06:41:03 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1039) INFO 04-20 06:41:04 [gpu_model_runner.py:4735] Starting to load model Qwen/Qwen3-8B...
+(EngineCore pid=1039) INFO 04-20 06:41:05 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1039) INFO 04-20 06:41:05 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1039) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1039) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+(EngineCore pid=1039) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
 Loading safetensors checkpoint shards:   0% Completed | 0/5 [00:00<?, ?it/s]
-Loading safetensors checkpoint shards:  20% Completed | 1/5 [00:01<00:04,  1.17s/it]
+Loading safetensors checkpoint shards:  20% Completed | 1/5 [00:01<00:04,  1.18s/it]
 Loading safetensors checkpoint shards:  40% Completed | 2/5 [00:02<00:03,  1.28s/it]
-Loading safetensors checkpoint shards:  60% Completed | 3/5 [00:03<00:02,  1.33s/it]
-Loading safetensors checkpoint shards:  80% Completed | 4/5 [00:05<00:01,  1.25s/it]
-Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.04it/s]
-Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.10s/it]
-(EngineCore pid=1051) 
-(EngineCore pid=1051) INFO 04-20 06:22:59 [default_loader.py:384] Loading weights took 5.52 seconds
-(EngineCore pid=1051) INFO 04-20 06:23:00 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 7.520378 seconds
-(EngineCore pid=1051) INFO 04-20 06:23:05 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/ebf33f1065/rank_0_0/backbone for vLLM's torch.compile
-(EngineCore pid=1051) INFO 04-20 06:23:05 [backends.py:1111] Dynamo bytecode transform time: 4.48 s
-(EngineCore pid=1051) INFO 04-20 06:23:06 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 1.280 s
-(EngineCore pid=1051) INFO 04-20 06:23:06 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/897f13ed9733826c1788fdf25e3d76c73afbe2304b86a8333fe0ca118af887f8/rank_0_0/model
-(EngineCore pid=1051) INFO 04-20 06:23:06 [monitor.py:48] torch.compile took 6.11 s in total
-(EngineCore pid=1051) INFO 04-20 06:23:07 [monitor.py:76] Initial profiling/warmup run took 0.21 s
-(EngineCore pid=1051) INFO 04-20 06:23:08 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
-(EngineCore pid=1051) INFO 04-20 06:23:08 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
-(EngineCore pid=1051) INFO 04-20 06:23:10 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.55 GiB total
-(EngineCore pid=1051) INFO 04-20 06:23:11 [gpu_worker.py:436] Available KV cache memory: 12.32 GiB
-(EngineCore pid=1051) INFO 04-20 06:23:11 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6116 to maintain the same effective KV cache size.
-(EngineCore pid=1051) INFO 04-20 06:23:11 [kv_cache_utils.py:1319] GPU KV cache size: 89,712 tokens
-(EngineCore pid=1051) INFO 04-20 06:23:11 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 21.90x
-Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:03<00:00, 13.78it/s]
-Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 17.68it/s]
-(EngineCore pid=1051) INFO 04-20 06:23:17 [gpu_model_runner.py:6046] Graph capturing finished in 7 secs, took 0.54 GiB
-(EngineCore pid=1051) INFO 04-20 06:23:17 [gpu_worker.py:597] CUDA graph pool memory: 0.54 GiB (actual), 0.55 GiB (estimated), difference: 0.01 GiB (1.1%).
-(EngineCore pid=1051) INFO 04-20 06:23:18 [core.py:283] init engine (profile, create kv cache, warmup model) took 17.64 seconds
-(EngineCore pid=1051) INFO 04-20 06:23:21 [vllm.py:790] Asynchronous scheduling is enabled.
-2026-04-20 06:23:21,063 [INFO] src.utils.vllm_backend: vLLM backend ready
-2026-04-20 06:23:21,063 [INFO] src.orchestrator.loop: 
+Loading safetensors checkpoint shards:  60% Completed | 3/5 [00:03<00:02,  1.31s/it]
+Loading safetensors checkpoint shards:  80% Completed | 4/5 [00:05<00:01,  1.24s/it]
+Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.05it/s]
+Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.09s/it]
+(EngineCore pid=1039) 
+(EngineCore pid=1039) INFO 04-20 06:41:12 [default_loader.py:384] Loading weights took 5.49 seconds
+(EngineCore pid=1039) INFO 04-20 06:41:13 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 7.731957 seconds
+(EngineCore pid=1039) INFO 04-20 06:41:18 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/ebf33f1065/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1039) INFO 04-20 06:41:18 [backends.py:1111] Dynamo bytecode transform time: 4.49 s
+(EngineCore pid=1039) INFO 04-20 06:41:19 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 1.248 s
+(EngineCore pid=1039) INFO 04-20 06:41:19 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/897f13ed9733826c1788fdf25e3d76c73afbe2304b86a8333fe0ca118af887f8/rank_0_0/model
+(EngineCore pid=1039) INFO 04-20 06:41:19 [monitor.py:48] torch.compile took 6.09 s in total
+(EngineCore pid=1039) INFO 04-20 06:41:20 [monitor.py:76] Initial profiling/warmup run took 0.20 s
+(EngineCore pid=1039) INFO 04-20 06:41:21 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1039) INFO 04-20 06:41:21 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1039) INFO 04-20 06:41:23 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.55 GiB total
+(EngineCore pid=1039) INFO 04-20 06:41:23 [gpu_worker.py:436] Available KV cache memory: 12.32 GiB
+(EngineCore pid=1039) INFO 04-20 06:41:23 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6116 to maintain the same effective KV cache size.
+(EngineCore pid=1039) INFO 04-20 06:41:23 [kv_cache_utils.py:1319] GPU KV cache size: 89,712 tokens
+(EngineCore pid=1039) INFO 04-20 06:41:23 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 21.90x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:03<00:00, 13.84it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 17.81it/s]
+(EngineCore pid=1039) INFO 04-20 06:41:30 [gpu_model_runner.py:6046] Graph capturing finished in 7 secs, took 0.54 GiB
+(EngineCore pid=1039) INFO 04-20 06:41:30 [gpu_worker.py:597] CUDA graph pool memory: 0.54 GiB (actual), 0.55 GiB (estimated), difference: 0.01 GiB (1.1%).
+(EngineCore pid=1039) INFO 04-20 06:41:30 [core.py:283] init engine (profile, create kv cache, warmup model) took 17.32 seconds
+(EngineCore pid=1039) INFO 04-20 06:41:33 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-20 06:41:33,655 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-20 06:41:33,655 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 06:23:21,063 [INFO] src.orchestrator.loop: CYCLE 1
-2026-04-20 06:23:21,063 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 06:23:21,064 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2166.48it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 175.86 toks/s, output: 2177.22 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3096.60it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.40it/s, est. speed input: 140.32 toks/s, output: 2232.82 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2859.93it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 143.17 toks/s, output: 2215.47 toks/s]
-2026-04-20 06:24:16,369 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1179.35it/s]
+2026-04-20 06:41:33,655 [INFO] src.orchestrator.loop: CYCLE 1
+2026-04-20 06:41:33,655 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:41:33,655 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2075.16it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 173.95 toks/s, output: 2153.58 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3005.83it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 139.90 toks/s, output: 2213.22 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3030.05it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.36it/s, est. speed input: 142.77 toks/s, output: 2207.10 toks/s]
+2026-04-20 06:42:29,191 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1182.56it/s]
 Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:29<00:00,  1.49s/it, est. speed input: 189.45 toks/s, output: 675.55 toks/s]
-2026-04-20 06:24:46,162 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-2026-04-20 06:24:46,163 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
-2026-04-20 06:24:46,170 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2616.35it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.37it/s, est. speed input: 312.01 toks/s, output: 2263.81 toks/s]
-2026-04-20 06:25:04,816 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 18.6s
-2026-04-20 06:25:04,816 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
-2026-04-20 06:25:12,792 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=21
-2026-04-20 06:25:12,792 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
-2026-04-20 06:25:12,792 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (pool has 21 samples)
-2026-04-20 06:25:12,792 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
-(EngineCore pid=1051) INFO 04-20 06:25:12 [core.py:1210] Shutdown initiated (timeout=0)
-(EngineCore pid=1051) INFO 04-20 06:25:12 [core.py:1233] Shutdown complete
-[rank0]:[W420 06:25:12.917181189 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
-2026-04-20 06:25:14,697 [INFO] src.utils.vllm_backend: Loading HF model for training: Qwen/Qwen3-8B
-Loading weights: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 399/399 [00:04<00:00, 88.31it/s]
-2026-04-20 06:25:23,308 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
-2026-04-20 06:27:33,895 [WARNING] src.trainer.custom_lora:   Early stop (pre-backward): loss 0.1405 < early_stop_loss 0.15 at batch 11 (step_count=2, accum=10, patience=8)
-2026-04-20 06:27:42,845 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
+2026-04-20 06:42:58,983 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+2026-04-20 06:42:58,984 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
+2026-04-20 06:42:58,991 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (20 problems × 6 candidates, batched)
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 2640.24it/s]
+Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:18<00:00,  5.33it/s, est. speed input: 309.21 toks/s, output: 2345.92 toks/s]
+2026-04-20 06:43:17,806 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 18.8s
+2026-04-20 06:43:17,806 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
+2026-04-20 06:43:24,189 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=18
+2026-04-20 06:43:24,190 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
+2026-04-20 06:43:24,190 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (pool has 18 samples)
+2026-04-20 06:43:24,190 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+(EngineCore pid=1039) INFO 04-20 06:43:24 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=1039) INFO 04-20 06:43:24 [core.py:1233] Shutdown complete
+[rank0]:[W420 06:43:24.315292656 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+2026-04-20 06:43:25,961 [INFO] src.utils.vllm_backend: Loading HF model for training: Qwen/Qwen3-8B
+Loading weights: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████| 399/399 [00:04<00:00, 87.52it/s]
+2026-04-20 06:43:34,537 [INFO] src.trainer.custom_lora: Injected 252 LoRA layers, avg rank: 16
+2026-04-20 06:46:11,792 [WARNING] src.trainer.custom_lora:   Early stop (pre-backward): loss 0.1112 < early_stop_loss 0.15 at batch 13 (step_count=3, accum=12, patience=8)
+2026-04-20 06:46:14,354 [INFO] src.trainer.custom_lora: Stripped 252 LoRA layers
 The following generation flags are not valid and may be ignored: ['temperature', 'top_p', 'top_k']. Set `TRANSFORMERS_VERBOSITY=info` for more details.
-2026-04-20 06:31:32,187 [WARNING] src.orchestrator.loop: [RSI tick 1] REGRESSION detected (-0.312 < -0.10) — NOT writing checkpoint and NOT swapping vLLM. The in-memory HF model is corrupted by this cycle's merge, but vLLM keeps pointing at the previous cycle's known-good checkpoint; the next swap_to_hf_for_training will reload clean weights from that path.
-2026-04-20 06:31:32,190 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL (x3)
+Writing model shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 1/1 [00:41<00:00, 41.01s/it]
+2026-04-20 06:48:37,467 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-20 06:48:38,411 [INFO] src.utils.vllm_backend: Loading model with vLLM: outputs/checkpoints/cycle_1
+INFO 04-20 06:48:38 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'outputs/checkpoints/cycle_1'}
+INFO 04-20 06:48:38 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-20 06:48:38 [model.py:1678] Using max model len 4096
+(EngineCore pid=1430) INFO 04-20 06:48:46 [core.py:105] Initializing a V1 LLM engine (v0.19.1) with config: model='outputs/checkpoints/cycle_1', speculative_config=None, tokenizer='outputs/checkpoints/cycle_1', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=outputs/checkpoints/cycle_1, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1430) INFO 04-20 06:48:47 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.4:44797 backend=nccl
+(EngineCore pid=1430) INFO 04-20 06:48:47 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1430) INFO 04-20 06:48:49 [gpu_model_runner.py:4735] Starting to load model outputs/checkpoints/cycle_1...
+(EngineCore pid=1430) INFO 04-20 06:48:50 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1430) INFO 04-20 06:48:50 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1430) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1430) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
+Loading safetensors checkpoint shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:04<00:00,  4.41s/it]
+Loading safetensors checkpoint shards: 100% Completed | 1/1 [00:04<00:00,  4.41s/it]
+(EngineCore pid=1430) 
+(EngineCore pid=1430) INFO 04-20 06:48:55 [default_loader.py:384] Loading weights took 4.87 seconds
+(EngineCore pid=1430) INFO 04-20 06:48:56 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 5.715400 seconds
+(EngineCore pid=1430) INFO 04-20 06:49:06 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/49cb0c0863/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1430) INFO 04-20 06:49:06 [backends.py:1111] Dynamo bytecode transform time: 9.56 s
+(EngineCore pid=1430) INFO 04-20 06:49:07 [backends.py:372] Cache the graph of compile range (1, 8192) for later use
+(EngineCore pid=1430) INFO 04-20 06:49:08 [backends.py:390] Compiling a graph for compile range (1, 8192) takes 1.45 s
+(EngineCore pid=1430) INFO 04-20 06:49:11 [decorators.py:655] saved AOT compiled function to /root/.cache/vllm/torch_compile_cache/torch_aot_compile/527b9d06ed4d28b909e1eea1f0a45e80fdac4b602015f63b44fe678577c1f3b0/rank_0_0/model
+(EngineCore pid=1430) INFO 04-20 06:49:11 [monitor.py:48] torch.compile took 14.14 s in total
+(EngineCore pid=1430) INFO 04-20 06:49:11 [monitor.py:76] Initial profiling/warmup run took 0.19 s
+(EngineCore pid=1430) INFO 04-20 06:49:13 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1430) INFO 04-20 06:49:13 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1430) INFO 04-20 06:49:15 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.55 GiB total
+(EngineCore pid=1430) INFO 04-20 06:49:15 [gpu_worker.py:436] Available KV cache memory: 12.32 GiB
+(EngineCore pid=1430) INFO 04-20 06:49:15 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6116 to maintain the same effective KV cache size.
+(EngineCore pid=1430) INFO 04-20 06:49:15 [kv_cache_utils.py:1319] GPU KV cache size: 89,712 tokens
+(EngineCore pid=1430) INFO 04-20 06:49:15 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 21.90x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:05<00:00,  9.88it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 17.76it/s]
+(EngineCore pid=1430) INFO 04-20 06:49:23 [gpu_model_runner.py:6046] Graph capturing finished in 8 secs, took 0.54 GiB
+(EngineCore pid=1430) INFO 04-20 06:49:23 [gpu_worker.py:597] CUDA graph pool memory: 0.54 GiB (actual), 0.55 GiB (estimated), difference: 0.01 GiB (1.1%).
+(EngineCore pid=1430) INFO 04-20 06:49:23 [core.py:283] init engine (profile, create kv cache, warmup model) took 27.29 seconds
+(EngineCore pid=1430) INFO 04-20 06:49:26 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-20 06:49:26,063 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-20 06:49:26,064 [INFO] src.orchestrator.loop: [RSI tick 1] training done: 3 steps, score -0.092
+2026-04-20 06:49:26,065 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL (x3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 2620.78it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:14<00:00,  3.15it/s, est. speed input: 121.63 toks/s, output: 1120.87 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 56/56 [00:00<00:00, 2772.34it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 56/56 [00:14<00:00,  3.96it/s, est. speed input: 106.88 toks/s, output: 925.50 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 56/56 [00:00<00:00, 2930.48it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 56/56 [00:15<00:00,  3.64it/s, est. speed input: 126.42 toks/s, output: 1341.26 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 2777.19it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:14<00:00,  3.19it/s, est. speed input: 122.87 toks/s, output: 1132.35 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 56/56 [00:00<00:00, 2979.10it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 56/56 [00:14<00:00,  3.98it/s, est. speed input: 107.43 toks/s, output: 948.30 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 56/56 [00:00<00:00, 3145.80it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 56/56 [00:15<00:00,  3.67it/s, est. speed input: 127.39 toks/s, output: 1351.53 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 45/45 [00:00<00:00, 2981.26it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 45/45 [00:14<00:00,  3.18it/s, est. speed input: 122.68 toks/s, output: 1130.61 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 56/56 [00:00<00:00, 3014.81it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 56/56 [00:14<00:00,  3.98it/s, est. speed input: 107.34 toks/s, output: 947.49 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 56/56 [00:00<00:00, 3148.88it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 56/56 [00:15<00:00,  3.67it/s, est. speed input: 127.20 toks/s, output: 1349.47 toks/s]
+2026-04-20 06:51:40,755 [INFO] src.orchestrator.loop:   Held-out eval: mean=0.280 scores=['0.280', '0.280', '0.280'] spread=0.000
+2026-04-20 06:51:40,757 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 06:51:40,759 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.40e-05 (from 2e-05), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 06:51:40,759 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 06:51:40,759 [INFO] src.orchestrator.loop: CYCLE 2
+2026-04-20 06:51:40,759 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 06:51:40,759 [INFO] src.orchestrator.loop: [RSI tick 2] Step 0: SET_DIAGNOSTICS
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2876.43it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:17<00:00,  4.45it/s, est. speed input: 209.28 toks/s, output: 1910.90 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3102.55it/s]
+Processed prompts:  21%|█████████▏                                 | 17/80 [00:02<00:06,  9.89it/s, est. speed input: 284.08 toks/s, output: 261.70 toks/s]

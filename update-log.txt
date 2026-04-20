@@ -798,3 +798,38 @@ Processed prompts: 100%|██████████████████�
 (EngineCore pid=1048) INFO 04-20 09:44:34 [core.py:1233] Shutdown complete
 [rank0]:[W420 09:44:34.565154432 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
 (main) root@C.35280593:/workspace/RSI$ 
+=== 2026-04-20 13:55 UTC — autonomous cron iteration (overnight) ===
+Prior run efce9c20f5cc: 25 cycles, 17/1488 accepted (1.1%), 0 training cycles.
+Dug into verification reason histograms. Found TWO compounding sandbox bugs:
+  1. audit hook blocked all open(...) outside workdir incl. read-only stdlib
+     imports (`import json` → opens /venv/.../json/__init__.py → blocked)
+  2. builtins.exec was monkey-patched to raise; Python's own import machinery
+     calls exec() to run module bytecode, so every pure-Python stdlib import
+     crashed. math (C-ext) worked, json/collections/re/itertools didn't.
+Together these crashed ~930/1488 verdicts/cycle with truncated tracebacks
+ending in `_load_unlocked` that I'd earlier misdiagnosed as zstd threading.
+
+Fix: 6997136 fix(sandbox): unbreak imports. audit hook now only blocks
+writes outside workdir; removed builtins.exec/eval/compile overrides;
+added AST-layer _DangerousAST.visit_Call to block user exec/eval/compile
+calls. 12 adversarial cases + 270 pytest all green.
+
+Also earlier this shift:
+  - 86e2414 fix(verifier): robust code extraction. old fence regex needed
+    closing ```; new one tolerates truncation + trailing prose. 5886
+    "no extractable Python code" verdicts eliminated.
+  - 2ace38c fix(tdq): bypass AutoModelForCausalLM.from_config random init
+    that stalled 32B load at 60 GB RAM (never reached GPU).
+
+Deferred: DeepSeek-32B TDQ integration. Clarified with user that .tdq is
+streamed from mmap (16 GB in RAM, per-layer decomp on forward), so the
+model fits the 48 GB GPU fine. BUT td_inference.TDQModel has its own
+custom forward and is NOT an HF nn.Module, so peft/LoRA cannot hook it
+for training. TDA1 adapter format exists but load_adapters is
+inference-only — no backprop path. Asked user about the training flow;
+they went to sleep before answering. Punting until morning; Qwen3-8B
+run is the priority for overnight.
+
+Current state: restarted run at 13:54 UTC. Qwen3-8B via vLLM, 25 cycles
+max. Expect next-iteration cron to verify acceptance rate recovers
+toward the ~70%-of-candidates that the sandbox bug was masking.

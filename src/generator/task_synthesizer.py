@@ -67,6 +67,83 @@ from ..verifier.verifier_of_verifiers import (
     VerifierTrustReport,
 )
 
+
+def _derive_ctx_from_tests(tests: list[str], entry: str) -> dict[str, Any]:
+    """Extract sample_input / edge_inputs / expected_type from assert statements.
+
+    Tests look like `assert solve(5, 3) == 8`. We parse each one and pull:
+      - call args (as a tuple if multi-arg, else the single literal) → edge_inputs
+      - the first parsed one → sample_input (for output-type + no-exceptions properties)
+      - type of the RHS literal → expected_type (e.g. "int", "list")
+
+    Args that aren't ast.literal_eval-able are skipped. If no tests parse,
+    returns {} and the property harnesses that need these fields will
+    report ERROR (which is still better than mislabelling them).
+    """
+    import ast as _ast
+    edge_inputs: list = []
+    expected_type: str = ""
+    entry_name = (entry or "solve").strip()
+    for t in tests or []:
+        src = (t or "").strip()
+        if not src:
+            continue
+        if not src.startswith("assert"):
+            src = "assert " + src
+        try:
+            tree = _ast.parse(src, mode="exec")
+        except SyntaxError:
+            continue
+        if not tree.body or not isinstance(tree.body[0], _ast.Assert):
+            continue
+        test = tree.body[0].test
+        # assert solve(X, Y) == Z → Compare(left=Call(solve, [X,Y]), ops=[Eq], comparators=[Z])
+        call_node = None
+        rhs_node = None
+        if isinstance(test, _ast.Compare) and isinstance(test.left, _ast.Call):
+            call_node = test.left
+            if test.comparators:
+                rhs_node = test.comparators[0]
+        elif isinstance(test, _ast.Call):
+            call_node = test
+        if call_node is None:
+            continue
+        # Check entry point name matches
+        fn_name = ""
+        if isinstance(call_node.func, _ast.Name):
+            fn_name = call_node.func.id
+        elif isinstance(call_node.func, _ast.Attribute):
+            fn_name = call_node.func.attr
+        if fn_name and entry_name and fn_name != entry_name:
+            continue
+        args_vals = []
+        bail = False
+        for a in call_node.args:
+            try:
+                args_vals.append(_ast.literal_eval(a))
+            except Exception:
+                bail = True
+                break
+        if bail:
+            continue
+        if len(args_vals) == 1:
+            edge_inputs.append(args_vals[0])
+        else:
+            edge_inputs.append(tuple(args_vals))
+        if rhs_node is not None and not expected_type:
+            try:
+                rhs_val = _ast.literal_eval(rhs_node)
+                expected_type = type(rhs_val).__name__
+            except Exception:
+                pass
+    out: dict[str, Any] = {}
+    if edge_inputs:
+        out["edge_inputs"] = edge_inputs[:5]
+        out["sample_input"] = edge_inputs[0]
+    if expected_type:
+        out["expected_type"] = expected_type
+    return out
+
 logger = logging.getLogger(__name__)
 
 
@@ -1227,6 +1304,17 @@ class TaskSynthesizer:
                 ctx["edge_inputs"] = [parse.sample_input]
             if parse.expected_type:
                 ctx["expected_type"] = parse.expected_type
+
+            # Derive missing ctx from tests. Every problem has tests like
+            # `assert solve(5, 3) == 8` — we can parse the call args out of
+            # the AST and use them as edge_inputs/sample_input, and type the
+            # RHS of the assertion for expected_type. Before this, >200
+            # verdicts/cycle came back ERROR (no edge_inputs / no
+            # sample_input / no expected_type), silently veto-ing the
+            # distinct-classes quorum check for admissible candidates.
+            _derived = _derive_ctx_from_tests(parse.tests, parse.entry_point)
+            for _k, _v in _derived.items():
+                ctx.setdefault(_k, _v)
             pp = ProposedProblem(
                 problem_id=str(uuid.uuid4()),
                 problem_text=parse.problem_text,

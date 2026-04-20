@@ -910,3 +910,39 @@ Projected: training actually APPLIES at cycle 5-8, regression-revert
 guard observes post-train held-out, we learn whether the end-to-end
 pipeline improves the model. This is the first iteration all night
 where training is expected to actually RUN.
+
+=== 2026-04-20 23:55 UTC — BREAKTHROUGH + REGRESSION (honest) ===
+Disk was full (11 leftover outputs_run_* backups, two @ 31 GB each).
+Cleaned, restarted at 22:31 UTC.
+
+Cycle 7 training fired with pool=30: ✓ LoRA injected, loss stepped,
+LoRA stripped. Held-out eval = 0.576 (scores [0.599, 0.554]). That
+is +0.018 (+3.2%) over the 0.558 baseline — FIRST trained-above-
+baseline held-out all night. Pipeline end-to-end verified.
+
+Cycle 20 trained again (pool=30, resumed from cycle_7 checkpoint).
+Early-stop kicked in at step 2 because loss fell below early_stop=0.5
+very fast (same issue we saw with skip_if_initial_loss). Held-out
+dropped to 0.525 (scores [0.554, 0.497]) — 0.051 below cycle-7 peak,
+0.033 below baseline. Regression guard (threshold 0.10) didn't fire
+because 0.051 < 0.10. Current running model is the cycle-20
+checkpoint, which is WORSE than the 0.558 baseline.
+
+Net state for the morning:
+  - Pipeline fully works end-to-end (propose → verify → train → eval
+    → checkpoint → regression guard path)
+  - Best observed held-out = 0.576 at cycle_7 (ABOVE baseline)
+  - Current running = 0.525 at cycle_20 (below baseline, not reverted)
+  - Commits this shift: 86e2414 (extractor), 6997136 (sandbox),
+    853be1b (harness dispatch), 772215f (ctx derive), 9171b31
+    (min_batch 60→30), a5515c5 (quorum 3→2), 925b02c (skip_loss
+    0.50→0.15), misc logging/tools
+
+Morning recommendations (will NOT change tonight without user input):
+  1. Tighten regression_revert_threshold 0.10 → 0.03 so post-train
+     drops like 0.051 actually revert to the cycle_7 winner.
+  2. Tighten early_stop_loss 0.50 → 0.15 for consistency with the
+     post-cycle-7 skip_if_initial_loss adjustment. Current 0.50 means
+     cycle 20 barely trained before early-stopping at step 2.
+  3. Retain cycle_7 as the "best" checkpoint reference rather than
+     always continuing from most-recent.

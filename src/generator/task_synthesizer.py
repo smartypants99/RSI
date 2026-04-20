@@ -1264,6 +1264,77 @@ class TaskSynthesizer:
                 out.append(p)
         return out
 
+    def solve_batch(
+        self, problems: list[ProposedProblem], *, k: int = 6,
+    ) -> dict[str, list[str]]:
+        """§4 step 3, BATCHED across all problems.
+
+        Previous code ran per-problem generate calls in a loop — 20
+        problems × 25s each = ~8 minutes per cycle just on solves, out
+        of ~13 minutes total cycle time. vLLM batches prompts across its
+        KV cache, so collecting all prompts up front and making ONE call
+        is ~20x faster: 20 problems × (k-1) sampled candidates = ~100
+        prompts in one batch completes in ~30s instead of ~500s.
+
+        Candidate 0 per problem is the reference (guaranteed pass when
+        model is self-consistent). Candidates 1..k-1 come from the
+        batched model call, split back per-problem by position.
+        """
+        out: dict[str, list[str]] = {}
+        if not problems or k <= 0:
+            return out
+
+        # Seed each problem's candidate list with the reference.
+        prompts: list[str] = []
+        slot_owner: list[str] = []  # parallel: index → problem_id
+        for p in problems:
+            pid = getattr(p, "problem_id", "")
+            if not pid:
+                continue
+            out[pid] = []
+            ref = (p.problem_ctx or {}).get("reference", "")
+            if ref:
+                out[pid].append(ref)
+            # Queue (k - len(refs)) sampled slots for this problem.
+            entry = (p.problem_ctx or {}).get("entry_point") or "solve"
+            prompt = (
+                "Solve the following problem by defining a Python function. "
+                "Output ONLY a Python code block with the function definition — "
+                "no prose, no explanation.\n\n"
+                f"PROBLEM: {p.problem_text}\n\n"
+                f"Your function must be named `{entry}`.\n\n"
+                "```python\n"
+            )
+            need = max(0, k - len(out[pid]))
+            for _ in range(need):
+                prompts.append(prompt)
+                slot_owner.append(pid)
+
+        if not prompts:
+            return out
+
+        # ONE batched model call — not len(problems) separate calls.
+        # Shorter max_new_tokens: a Python function is 5-30 lines ≈ 300 tokens.
+        # 512 is a safe ceiling; 1024 was slack that cost time with no gain.
+        try:
+            if self._generate_fn_override is not None:
+                raws = [self._generate_fn_override(p) for p in prompts]
+            elif self.model_loader is not None:
+                raws = list(self.model_loader.generate_batch(
+                    prompts, max_new_tokens=512, temperature=0.8, top_p=0.95,
+                ))
+            else:
+                raws = [""] * len(prompts)
+        except Exception as exc:
+            logger.warning("solve_batch generate_batch failed: %s", exc)
+            raws = [""] * len(prompts)
+        if len(raws) < len(prompts):
+            raws = list(raws) + [""] * (len(prompts) - len(raws))
+
+        for pid, raw in zip(slot_owner, raws):
+            out[pid].append(raw)
+        return out
+
     def solve(self, problem: ProposedProblem, *, k: int = 6) -> list[str]:
         """§4 step 3: generate K candidate solutions for a ProposedProblem.
 

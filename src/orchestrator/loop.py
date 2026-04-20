@@ -301,16 +301,34 @@ class ImprovementLoop:
                 result.duration = time.time() - cycle_start
 
                 # Held-out eval — isolated so eval failure doesn't lose the cycle.
-                # meta_analyst ASK 2: previously gated on training_metrics.steps>0,
-                # which skipped eval on cycles 4/7/8 (no training happened). That
-                # starved the LR bandit — it needs ≥6 paired eval_deltas before it
-                # exits insufficient_data, and we were stuck at 5. When training is
-                # skipped the model state is identical to last cycle, so the eval
-                # is still a valid data point (the bandit correctly sees a
-                # near-zero delta). Always run held-out eval.
+                # Classic mode: always run (the LR bandit needs eval_deltas even
+                # on no-training cycles for paired-effect statistics).
+                # RSI mode: skip when weights didn't change — re-running the
+                # same model against the same held-out bank produces the same
+                # score within noise, wasting ~2.5 minutes per cycle during
+                # the warm-up period where the pool is still filling.
+                trained = bool(
+                    result.training_metrics
+                    and getattr(result.training_metrics, "steps", 0) > 0
+                )
+                skip_eval = (_mode == "rsi") and (not trained)
                 eval_start = time.time()
                 try:
-                    self._eval_phase(cycle, result)
+                    if skip_eval:
+                        logger.info(
+                            "[Cycle %d] Phase 5b: HELD-OUT EVAL skipped — "
+                            "no training this cycle in RSI mode (model state "
+                            "unchanged; saves ~2.5 min/cycle during warm-up)",
+                            cycle,
+                        )
+                        # Carry forward previous eval_score so the meta
+                        # controller has SOMETHING to look at.
+                        if self.history:
+                            prev = self.history[-1].eval_score
+                            if prev is not None:
+                                result.eval_score = prev
+                    else:
+                        self._eval_phase(cycle, result)
                 except Exception as e:
                     tb = traceback.format_exc()
                     logger.warning(f"  Held-out eval failed ({type(e).__name__}): {e}")
@@ -1181,26 +1199,36 @@ class ImprovementLoop:
         result.phase_times["rsi_step2_admit"] = time.time() - phase_start
 
         # ── STEP 3: solve (generate candidates) ─────────────────────────────
-        logger.info("[RSI tick %d] Step 3: SOLVE (generate candidates)", cycle)
+        # Batch all problems' solve prompts into ONE vLLM call. Run-4 spent
+        # ~8 minutes per cycle (out of ~13) on this step because each
+        # problem's k-candidate set was its own generate_batch — 20 serial
+        # calls × 25s. One batch of 100 prompts completes in ~30s with
+        # vLLM's KV caching, a ~15x cycle speedup.
+        k = getattr(self.config.synthesis, "candidates_per_problem", 6)
+        logger.info("[RSI tick %d] Step 3: SOLVE (%d problems × %d candidates, batched)",
+                    cycle, len(proposed_problems), k)
         phase_start = time.time()
-        # candidates_by_problem: problem_id → list of candidate strings/objects
         candidates_by_problem: dict[str, list] = {}
-        for problem in proposed_problems:
-            pid = getattr(problem, "problem_id", None)
-            if pid is None:
-                continue
-            k = getattr(self.config.synthesis, "candidates_per_problem", 3)
-            try:
-                candidates = synth.solve(problem, k=k)
-            except AttributeError:
-                # solve() not yet on task_synthesizer — skip; training pool
-                # still gets populated via synthesize() path in Phase 1b.
-                candidates = []
-            except Exception as exc:
-                logger.debug("solve(%s, k=%d) failed: %s", pid, k, exc)
-                candidates = []
-            candidates_by_problem[pid] = candidates
+        try:
+            if hasattr(synth, "solve_batch"):
+                candidates_by_problem = synth.solve_batch(proposed_problems, k=k)
+            else:
+                # Fallback: old per-problem loop
+                for problem in proposed_problems:
+                    pid = getattr(problem, "problem_id", None)
+                    if pid is None:
+                        continue
+                    try:
+                        candidates_by_problem[pid] = synth.solve(problem, k=k)
+                    except Exception as exc:
+                        logger.debug("solve(%s) failed: %s", pid, exc)
+                        candidates_by_problem[pid] = []
+        except Exception as exc:
+            logger.warning("Step 3 (solve_batch) failed (%s): %s", type(exc).__name__, exc)
+            candidates_by_problem = {}
         result.phase_times["rsi_step3_solve"] = time.time() - phase_start
+        logger.info("[RSI tick %d] Step 3: solve phase took %.1fs",
+                    cycle, result.phase_times["rsi_step3_solve"])
 
         # ── STEP 4: verify (per-candidate quorum) ───────────────────────────
         logger.info("[RSI tick %d] Step 4: VERIFY candidates", cycle)

@@ -412,6 +412,15 @@ class OrchestratorConfig:
     # Execution mode: "classic" = diagnose→generate→verify→train (default);
     # "rsi" = full RSI tick per spec §4 (requires synthesis enabled).
     mode: str = "classic"
+    # Speed knob: RSI Step 0 diagnostics refresh period. Reuse the prior tick's
+    # DiagnosticResult for N-1 cycles, re-run fully every Nth cycle (and always
+    # on cycle 1 / post-training). 240-prompt diagnostic is ~56s/cycle; caching
+    # for 3 cycles saves ~37s/cycle on average. Set to 1 to disable caching.
+    rsi_diagnostic_refresh_every: int = 3
+    # Quick regression probe size (per domain) — 5 is enough to detect the
+    # -0.2+ drops that trigger revert. Default was 8; 5 saves ~5s per training
+    # cycle without changing revert semantics.
+    regression_probe_questions_per_domain: int = 5
 
     def __post_init__(self):
         if self.max_cycles < 1:

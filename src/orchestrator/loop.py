@@ -246,6 +246,14 @@ class ImprovementLoop:
         # and less memorization risk.
         self._rsi_pending_pool: list = []
         self._rsi_pool_accumulated_cycles: int = 0
+        # Speed knob: diagnostic result cache. Step 0 of rsi_tick runs a
+        # 240-prompt diagnostic every cycle (~56s). Weights only change on
+        # training cycles, so the mastery profile is stale-but-valid across
+        # non-training cycles. Cache the last DiagnosticResult and its cycle
+        # index; refresh every N cycles (rsi_diagnostic_refresh_every) or
+        # whenever weights change (invalidated in Step 8 after training).
+        self._rsi_diag_cache: "DiagnosticResult | None" = None
+        self._rsi_diag_cache_cycle: int = -1
 
         # Meta-improvement layer — learns which config decisions pay off.
         meta_log = config.orchestrator.output_dir / "meta_decisions.jsonl"
@@ -1157,9 +1165,35 @@ class ImprovementLoop:
         ts = self.config.synthesis.tasks_per_cycle
 
         # ── STEP 0: prime synthesizer with current diagnostics ───────────────
-        logger.info("[RSI tick %d] Step 0: SET_DIAGNOSTICS", cycle)
+        # Speed: reuse cached DiagnosticResult across non-training cycles.
+        # Weights only change when Step 8 trains, and rsi_tick invalidates
+        # the cache there. Between trainings the mastery profile is stable,
+        # so re-running all 240 probes every cycle burns ~56s/cycle for no
+        # signal change. Cache lifetime = rsi_diagnostic_refresh_every cycles.
+        refresh_every = max(1, int(getattr(
+            self.config.orchestrator, "rsi_diagnostic_refresh_every", 1,
+        )))
+        cache_age = cycle - self._rsi_diag_cache_cycle
+        use_cached_diag = (
+            self._rsi_diag_cache is not None
+            and refresh_every > 1
+            and cache_age < refresh_every
+            and cache_age >= 0
+        )
+        logger.info(
+            "[RSI tick %d] Step 0: SET_DIAGNOSTICS (cache=%s, age=%d/%d)",
+            cycle, "hit" if use_cached_diag else "miss",
+            cache_age if self._rsi_diag_cache is not None else -1,
+            refresh_every,
+        )
+        phase_start = time.time()
         try:
-            diag_result = self.diagnostics.run(cycle)
+            if use_cached_diag:
+                diag_result = self._rsi_diag_cache
+            else:
+                diag_result = self.diagnostics.run(cycle)
+                self._rsi_diag_cache = diag_result
+                self._rsi_diag_cache_cycle = cycle
             result.diagnostics = diag_result
             synth.set_diagnostics(
                 diag_result,
@@ -1173,6 +1207,7 @@ class ImprovementLoop:
         except Exception as exc:
             logger.warning("[RSI tick %d] set_diagnostics failed (%s): %s — propose_batch will return []",
                            cycle, type(exc).__name__, exc)
+        result.phase_times["rsi_step0_diagnose"] = time.time() - phase_start
 
         # ── STEP 1: propose problems ─────────────────────────────────────────
         # Use the builtin-based code-proposal path by default — it asks the
@@ -1530,6 +1565,11 @@ class ImprovementLoop:
         )
         training_samples = list(self._rsi_pending_pool)  # rebind to the accumulated pool
         if len(training_samples) >= min_batch:
+            # Weights will change (or be reverted) — either way invalidate the
+            # Step 0 diagnostic cache so next cycle re-probes against the new
+            # weights instead of using stale mastery estimates.
+            self._rsi_diag_cache = None
+            self._rsi_diag_cache_cycle = -1
             try:
                 if self._use_vllm:
                     self.model_loader.swap_to_hf_for_training()

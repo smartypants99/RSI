@@ -38,7 +38,7 @@ exec python main.py \
     --consistency-threshold 0.34 \
     --lora-rank 16 \
     --plateau-patience 8 \
-    --heldout-repetitions 3 \
+    --heldout-repetitions 2 \
     --max-cycles 25 \
     --write-cycle-metrics \
     --write-cycle-samples \

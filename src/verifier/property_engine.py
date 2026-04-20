@@ -1080,7 +1080,7 @@ def _b_executes(problem, candidate):
     if not code:
         return False, "no extractable Python code"
     ok, detail = run_python_sandboxed(code, _CODE_TIMEOUT, _CODE_MEM_MB)
-    return (True, "") if ok else (False, f"sandbox: {detail[:160]}")
+    return (True, "") if ok else (False, f"sandbox: {detail[:600]}")
 
 
 def _b_passes_provided_tests(problem, candidate):
@@ -1105,7 +1105,7 @@ def _b_passes_provided_tests(problem, candidate):
         return "ERROR", "no non-empty tests"
     full = code + "\n\n# --- provided tests ---\n" + test_block + "\n"
     ok, detail = run_python_sandboxed(full, _CODE_TIMEOUT, _CODE_MEM_MB)
-    return (True, "") if ok else (False, f"failed: {detail[:160]}")
+    return (True, "") if ok else (False, f"failed: {detail[:600]}")
 
 
 def _b_passes_generated_edge_cases(problem, candidate):
@@ -1157,9 +1157,9 @@ def _b_passes_generated_edge_cases(problem, candidate):
     )
     ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
     if not ok:
-        return False, f"harness crashed: {detail[:160]}"
+        return False, f"harness crashed: {detail[:600]}"
     if "FAIL:" in (detail or ""):
-        return False, detail[detail.index("FAIL:"):][:160]
+        return False, detail[detail.index("FAIL:"):][:600]
     return True, ""
 
 
@@ -1187,9 +1187,9 @@ def _b_output_type_matches_signature(problem, candidate):
     )
     ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
     if not ok:
-        return False, f"harness crashed: {detail[:160]}"
+        return False, f"harness crashed: {detail[:600]}"
     if "FAIL:" in (detail or ""):
-        return False, detail[detail.index("FAIL:"):][:160]
+        return False, detail[detail.index("FAIL:"):][:600]
     return True, ""
 
 
@@ -1215,9 +1215,9 @@ def _b_no_exceptions_on_empty_input(problem, candidate):
     )
     ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
     if not ok:
-        return False, f"harness crashed: {detail[:160]}"
+        return False, f"harness crashed: {detail[:600]}"
     if "FAIL:" in (detail or ""):
-        return False, detail[detail.index("FAIL:"):][:160]
+        return False, detail[detail.index("FAIL:"):][:600]
     return True, ""
 
 
@@ -1240,9 +1240,9 @@ def _b_idempotent_where_applicable(problem, candidate):
     )
     ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
     if not ok:
-        return False, f"harness crashed: {detail[:160]}"
+        return False, f"harness crashed: {detail[:600]}"
     if "FAIL:" in (detail or ""):
-        return False, detail[detail.index("FAIL:"):][:160]
+        return False, detail[detail.index("FAIL:"):][:600]
     return True, ""
 
 
@@ -1361,9 +1361,9 @@ def _b_trivial_case_correct(problem, candidate):
     )
     ok, detail = run_python_sandboxed(harness, _CODE_TIMEOUT, _CODE_MEM_MB)
     if not ok:
-        return False, f"harness crashed: {detail[:160]}"
+        return False, f"harness crashed: {detail[:600]}"
     if "FAIL:" in (detail or ""):
-        return False, detail[detail.index("FAIL:"):][:160]
+        return False, detail[detail.index("FAIL:"):][:600]
     return True, ""
 
 

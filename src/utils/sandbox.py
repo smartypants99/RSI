@@ -68,6 +68,13 @@ class _DangerousAST(ast.NodeVisitor):
         "__traceback__", "tb_frame", "tb_next",
     }
 
+    # User-level callables that would bypass every other check by feeding
+    # arbitrary source text back to the interpreter. We block these at the
+    # AST layer instead of monkey-patching builtins.exec/eval/compile —
+    # Python's own import machinery calls builtins.exec() to run module
+    # bytecode during imports, so patching those would break every import.
+    DANGEROUS_CALLS = {"exec", "eval", "compile", "__import__"}
+
     def __init__(self):
         self.violations: list[str] = []
 
@@ -82,6 +89,14 @@ class _DangerousAST(ast.NodeVisitor):
         if node.id in self.DANGEROUS_ATTRS:
             self.violations.append(
                 f"line {node.lineno}: dangerous name: {node.id}"
+            )
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in self.DANGEROUS_CALLS:
+            self.violations.append(
+                f"line {node.lineno}: dangerous call: {func.id}()"
             )
         self.generic_visit(node)
 
@@ -183,19 +198,11 @@ _PRELUDE = textwrap.dedent(
 
     builtins.__import__ = _safe_import
 
-    # Block eval/exec/compile explicitly
-    def _blocked_eval(*a, **kw):
-        raise PermissionError("eval() is blocked in sandbox")
-
-    def _blocked_exec(*a, **kw):
-        raise PermissionError("exec() is blocked in sandbox")
-
-    def _blocked_compile(*a, **kw):
-        raise PermissionError("compile() is blocked in sandbox")
-
-    builtins.eval = _blocked_eval
-    builtins.exec = _blocked_exec
-    builtins.compile = _blocked_compile
+    # NOTE: we do NOT monkey-patch builtins.exec / eval / compile here.
+    # Python's own import machinery calls exec() on every pure-Python module's
+    # bytecode to run its __init__, so patching exec breaks imports of json,
+    # collections, anything-non-builtin. User-level exec/eval/compile are
+    # already forbidden by _validate_ast before this subprocess starts.
 
     # ── Audit hook ──
     # Bind _realpath into the closure so we can still resolve paths AFTER
@@ -212,6 +219,13 @@ _PRELUDE = textwrap.dedent(
         if event in _BLOCKED_EVENTS:
             raise PermissionError(f"blocked syscall: {{event}}")
         if event == "open":
+            # Only restrict WRITES. Read-opens must be allowed unrestricted —
+            # `import json` (or any stdlib import not already cached) triggers
+            # an `open` event on e.g. /venv/.../json/__init__.py, which lives
+            # outside the workdir. Blocking reads broke ~1000 property
+            # verdicts per RSI cycle (harnesses crashed before they could
+            # evaluate the candidate). Only writes outside the workdir
+            # remain blocked.
             path = args[0] if args else ""
             if isinstance(path, (bytes, bytearray)):
                 try:
@@ -223,12 +237,9 @@ _PRELUDE = textwrap.dedent(
             if isinstance(path, str):
                 mode = args[1] if len(args) > 1 else "r"
                 if isinstance(mode, str) and any(c in mode for c in "wxa+"):
-                    raise PermissionError(f"open for writing blocked: {{path}}")
-                abs_p = _realpath(path) if path else ""
-                if not abs_p.startswith(_WORKDIR_PREFIX):
-                    raise PermissionError(f"open outside workdir: {{path}}")
-            else:
-                raise PermissionError("open: non-string path")
+                    abs_p = _realpath(path) if path else ""
+                    if not abs_p.startswith(_WORKDIR_PREFIX):
+                        raise PermissionError(f"open for writing blocked: {{path}}")
 
     sys.addaudithook(_audit)
 

@@ -126,14 +126,29 @@ class TDQModelLoader:
     # ---- Load / unload ----
 
     def load(self) -> None:
-        """Decompress the TDQ file into a real HF model in VRAM."""
+        """Decompress the TDQ file into a real HF model in VRAM.
+
+        We bypass TDQModelHF.load_full(): that path calls
+        AutoModelForCausalLM.from_config(config) which allocates random
+        fp32 weights for the full parameter count (~128 GB for a 32B model,
+        64 GB after .to(fp16)) BEFORE any real weight is loaded. For a
+        32B DeepSeek-R1-Distill we observed it stalling at 12+ min / 60 GB
+        RAM and never reaching the GPU.
+
+        Instead: build the skeleton with init_empty_weights (meta device,
+        zero RAM), then for each parameter name decompress from TDQ,
+        move straight to GPU, assign as a Parameter. Peak CPU RAM stays
+        at one layer's worth (~200 MB); all 32B weights land on the GPU
+        incrementally. Measured decomp rate is ~0.1s/layer × 771 layers
+        ≈ 75s end-to-end.
+        """
         if self._model is not None:
             return
         from td_inference import TDQModelHF
         logger.info(f"TDQ: loading {self.model_path}")
         dev = "cuda" if torch.cuda.is_available() else "cpu"
         self._tdq = TDQModelHF(self.model_path, device=dev)
-        self._model = self._tdq.load_full()
+        self._model = self._load_full_fast(self._tdq)
         # TDQModelHF.load_full() returns the HF model in fp16. Ensure the
         # tokenizer is accessible in our attribute and has a sensible pad.
         self._tokenizer = self._tdq.tokenizer
@@ -143,6 +158,78 @@ class TDQModelLoader:
             f"TDQ: model ready on {self.device}, "
             f"vram={_vram_gb():.1f} GB"
         )
+
+    @staticmethod
+    def _load_full_fast(tdq):
+        """Fast replacement for TDQModelHF.load_full().
+
+        Returns an HF CausalLM with every parameter backed by the real
+        TDQ-decompressed weight, materialized directly on the target
+        device. No random-init step, no full-model CPU allocation.
+        """
+        import time, gc
+        from transformers import AutoConfig, AutoModelForCausalLM
+        try:
+            from accelerate import init_empty_weights
+        except ImportError as e:
+            raise RuntimeError(
+                "accelerate is required for fast TDQ load; "
+                "pip install accelerate"
+            ) from e
+
+        t0 = time.time()
+        cfg = AutoConfig.from_pretrained(tdq.model_id)
+        with init_empty_weights():
+            model = AutoModelForCausalLM.from_config(cfg)
+        model = model.to(dtype=torch.float16)
+        logger.info(f"TDQ: skeleton built on meta in {time.time()-t0:.1f}s")
+
+        target_device = tdq.device
+        state = dict(model.state_dict(keep_vars=True))
+        missing: list[str] = []
+        n = 0
+        t0 = time.time()
+        for name in list(state.keys()):
+            if name not in tdq.layer_map:
+                missing.append(name)
+                continue
+            w = tdq._get_weight(name).to(
+                device=target_device, dtype=torch.float16, non_blocking=True
+            )
+            # Find the owning module and attribute.
+            parts = name.split(".")
+            obj = model
+            for p in parts[:-1]:
+                obj = getattr(obj, p)
+            setattr(obj, parts[-1], torch.nn.Parameter(w, requires_grad=False))
+            n += 1
+            if n % 100 == 0:
+                logger.info(
+                    f"TDQ: loaded {n}/{len(state)} tensors "
+                    f"({time.time()-t0:.1f}s elapsed)"
+                )
+
+        # Tied weights (lm_head ↔ embed): if lm_head was missing because HF
+        # ties it, rebind it explicitly.
+        for tied_name in missing[:]:
+            if tied_name == "lm_head.weight" and "model.embed_tokens.weight" in tdq.layer_map:
+                model.lm_head.weight = model.model.embed_tokens.weight
+                missing.remove(tied_name)
+
+        if missing:
+            logger.warning(f"TDQ: {len(missing)} tensors not in TDQ file: "
+                           f"{missing[:5]}{'...' if len(missing)>5 else ''}")
+
+        model.eval()
+        tdq.model = model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        logger.info(
+            f"TDQ: full model ready in {time.time()-t0:.1f}s, "
+            f"{n} tensors materialized"
+        )
+        return model
 
     # swap_* are no-ops — TDQ base stays in VRAM always; LoRA is applied
     # in-place via the trainer.

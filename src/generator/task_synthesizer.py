@@ -908,6 +908,14 @@ class TaskSynthesizer:
         self._exemplars_by_key: dict[str, list[str]] = {}
         self._session_id: str = ""
         self._run_id: str = ""
+        # Populated by set_diagnostics(); used by propose_batch_code to
+        # seed proposals from the model's most recent failures.
+        self._failed_diag_questions: list[str] = []
+        # Differential self-solve gate: reject proposals the model can
+        # already solve blind (= inside its capability, not at the
+        # frontier). Toggle off for tests that don't want the extra
+        # generate call.
+        self._frontier_self_solve_gate: bool = True
 
     # -- LLM access ----------------------------------------------------------
 
@@ -980,9 +988,17 @@ class TaskSynthesizer:
         """
         self._subdomain_scores = dict(getattr(diag, "subdomain_scores", {}) or {})
         self._prior_subdomain_scores = dict(prior_subdomain_scores or {})
-        self._exemplars_by_key = exemplars_from_per_question(
-            getattr(diag, "per_question", []) or [],
-        )
+        per_q = list(getattr(diag, "per_question", []) or [])
+        self._exemplars_by_key = exemplars_from_per_question(per_q)
+        # Frontier seed bank: questions the model JUST failed on the
+        # diagnostic. propose_batch_code uses these to anchor proposals to
+        # the actual capability frontier (rsi_design.md §3.2). Limit to 32
+        # to keep prompts bounded.
+        self._failed_diag_questions = [
+            e.get("question", "")
+            for e in per_q
+            if (not e.get("correct", False)) and e.get("question", "")
+        ][:32]
         if session_id:
             self._session_id = session_id
         if run_id:
@@ -1155,7 +1171,23 @@ class TaskSynthesizer:
         picks 3 builtin Property objects spanning distinct classes, runs
         solve+verify normally.
         """
-        prompts = [CODE_PROPOSAL_TEMPLATE] * max(0, n)
+        # Build N prompts. For each slot, prefer a failure-seeded variant
+        # that anchors the model to a problem IT just failed on the current
+        # diagnostic — that's a direct frontier signal. Fall back to the
+        # canonical template when no failures are available (e.g. first
+        # tick before set_diagnostics, or model got everything right on
+        # diagnostics which would itself be surprising).
+        failed_questions = list(getattr(self, "_failed_diag_questions", []) or [])
+        import random as _random
+        rng = _random.Random(hash(self._session_id or "code") & 0xFFFF_FFFF)
+
+        prompts: list[str] = []
+        for _ in range(max(0, n)):
+            if failed_questions:
+                seed = rng.choice(failed_questions)
+                prompts.append(_build_failure_seeded_prompt(seed))
+            else:
+                prompts.append(CODE_PROPOSAL_TEMPLATE)
         if not prompts:
             return []
         raws = self._generate_many(prompts)
@@ -1198,8 +1230,8 @@ class TaskSynthesizer:
             pp = ProposedProblem(
                 problem_id=str(uuid.uuid4()),
                 problem_text=parse.problem_text,
-                declared_difficulty=0.5,
-                declared_difficulty_reason="",
+                declared_difficulty=parse.difficulty,
+                declared_difficulty_reason=parse.difficulty_reason,
                 nearest_neighbor_problem="",
                 nearest_neighbor_dist=1.0,
                 axis_of_extension="",
@@ -1230,7 +1262,95 @@ class TaskSynthesizer:
                 )
         else:
             logger.info("propose_batch_code: %d/%d proposals accepted", len(accepted), len(raws))
+
+        # ── Differential self-solve frontier gate ───────────────────────────
+        # For each parse-accepted proposal, ask the model to solve the
+        # problem ONCE without seeing the reference. If the model's blind
+        # solve already passes the model's own tests, the problem is by
+        # construction inside — not at — its frontier, and training on it
+        # reinforces a skill the model already has. Reject those. This is
+        # the core signal that addresses the "propose-problems-it-already-
+        # knows" failure mode observed in run-4/run-5.
+        if accepted and getattr(self, "_frontier_self_solve_gate", True):
+            accepted = self._apply_frontier_self_solve_gate(accepted)
         return accepted
+
+    def _apply_frontier_self_solve_gate(
+        self, proposals: list[ProposedProblem],
+    ) -> list[ProposedProblem]:
+        """Reject proposals the model can already solve WITHOUT the reference.
+
+        For each proposal we batch one blind solve attempt (no reference
+        shown, low-ish temperature so this is close to the model's modal
+        answer). If that solve passes ALL the proposal's own assert tests
+        in the sandbox, the problem is inside the model's capability and
+        training on it reinforces a skill already mastered — which is
+        exactly the regression source observed in prior runs. Keep only
+        proposals the blind solve FAILS, or where sandbox execution
+        errors out (conservative: err on the side of keeping).
+
+        Cost: one extra generate + sandbox run per proposal. ~20 problems
+        /cycle × ~300 tokens × one batched call ≈ a few seconds on vLLM.
+        """
+        if not proposals:
+            return proposals
+        from ..utils.sandbox import run_python_sandboxed
+        # Build the batched blind-solve prompts (same prompt shape as
+        # solve_batch but emphasizing no reference is given).
+        prompts: list[str] = []
+        for p in proposals:
+            entry = (p.problem_ctx or {}).get("entry_point") or "solve"
+            prompts.append(
+                "Solve the following problem by defining a Python function. "
+                "Output ONLY a Python code block with the function "
+                "definition — no prose, no explanation.\n\n"
+                f"PROBLEM: {p.problem_text}\n\n"
+                f"Your function must be named `{entry}`.\n\n"
+                "```python\n"
+            )
+        try:
+            blind = self._generate_many(prompts)
+        except Exception as exc:
+            logger.debug("self-solve gate generate failed (%s) — keeping all", exc)
+            return proposals
+        if len(blind) < len(prompts):
+            blind = list(blind) + [""] * (len(prompts) - len(blind))
+
+        kept: list[ProposedProblem] = []
+        dropped_easy = 0
+        for p, raw in zip(proposals, blind):
+            ctx = p.problem_ctx or {}
+            tests = list(ctx.get("tests") or [])
+            entry = ctx.get("entry_point") or "solve"
+            # Extract the first python code block from the model's output.
+            m = re.search(r"```(?:python)?\s*\n(.*?)```", raw, re.DOTALL)
+            code = (m.group(1) if m else raw).strip()
+            if not code or not tests:
+                # Can't evaluate — keep (conservative).
+                kept.append(p)
+                continue
+            harness_lines = [code, ""]
+            for t in tests:
+                harness_lines.append(t)
+            harness_lines.append("print('ALL_OK')")
+            harness = "\n".join(harness_lines)
+            try:
+                ok, detail = run_python_sandboxed(harness, 5.0, 256)
+            except Exception:
+                kept.append(p)
+                continue
+            blind_passed = bool(ok) and ("ALL_OK" in (detail or ""))
+            if blind_passed:
+                dropped_easy += 1
+                continue
+            kept.append(p)
+        if dropped_easy:
+            logger.info(
+                "propose_batch_code: frontier gate dropped %d/%d proposals "
+                "the model could already solve blind",
+                dropped_easy, len(proposals),
+            )
+        return kept
 
     def materialize_builtin_properties(
         self, problem: ProposedProblem,
@@ -2445,44 +2565,101 @@ def propose_one(
 
 
 CODE_PROPOSAL_TEMPLATE = """\
-Your task: propose ONE novel Python coding problem.
+Your task: propose ONE novel Python coding problem AT THE FRONTIER of your
+own capability — a problem you estimate you would FAIL on a first attempt
+with probability at least 0.3. Trivial string/list/arithmetic problems
+teach nothing. Reach for algorithmic depth: dynamic programming, graph
+traversal, recursion with memoization, non-obvious invariants, tricky
+parsing, careful edge cases.
 
 Output EXACTLY in the format shown below. No prose, no markdown headers,
 no explanation — just the labeled blocks, each starting its own line.
 
-Here is a complete, well-formed example of the required output format:
+Here is a complete, well-formed example of the required output format
+(note the algorithmic difficulty — DP with edge cases, NOT a one-liner):
 
-PROBLEM: Return the sum of all even numbers in a list.
+PROBLEM: Given a list of positive integers `coins` and a target integer
+`amount`, return the minimum number of coins needed to make `amount`.
+Return -1 if it is impossible. You may use each coin an unlimited number
+of times. `amount` is in 0..10_000, `coins` length is in 1..20.
 ENTRY: solve
 REFERENCE:
 ```python
-def solve(xs):
-    return sum(x for x in xs if x % 2 == 0)
+def solve(coins, amount):
+    INF = float('inf')
+    dp = [0] + [INF] * amount
+    for a in range(1, amount + 1):
+        for c in coins:
+            if c <= a and dp[a - c] + 1 < dp[a]:
+                dp[a] = dp[a - c] + 1
+    return dp[amount] if dp[amount] != INF else -1
 ```
 TESTS:
-- assert solve([1, 2, 3, 4]) == 6
-- assert solve([]) == 0
-- assert solve([1, 3, 5]) == 0
-EMPTY_INPUT: []
-SAMPLE_INPUT: [1, 2, 3, 4, 5, 6]
+- assert solve([1, 2, 5], 11) == 3
+- assert solve([2], 3) == -1
+- assert solve([1], 0) == 0
+- assert solve([3, 7], 14) == 2
+- assert solve([5, 10], 3) == -1
+EMPTY_INPUT: [[1], 0]
+SAMPLE_INPUT: [[1, 2, 5], 11]
 EXPECTED_TYPE: int
+DIFFICULTY: 0.55
+DIFFICULTY_REASON: Classic DP; first-attempt failure modes include greedy
+heuristics, off-by-one on dp[0], and missing the -1 impossibility return.
 
 Now produce ONE DIFFERENT problem in the same format. Rules:
-- Pick something NOT identical to the example above
-- Problem must be solvable in 5–30 lines of Python
+- Pick something NOT identical to the example above AND NOT trivially
+  easy (NO "sum the even numbers", NO "reverse a list", NO "count vowels",
+  NO "is palindrome", NO one-line comprehensions). Favor problems that
+  require at least one non-obvious step: DP table, recursion + memo,
+  two-pointer invariant, bounded search, interval merging, topological
+  traversal, expression parsing, careful modular arithmetic.
+- Problem must be solvable in 8–40 lines of Python
 - REFERENCE must actually compute the right answer (your own tests will
   be run against it)
 - Each TEST line must be a real runnable `assert` (not "example:" or prose)
+- Include at least one EDGE-CASE test (empty / minimum / off-by-one /
+  impossibility) — trivial tests are not evidence of a frontier problem.
+- DIFFICULTY must be a float in [0.3, 0.9] reflecting your honest estimate
+  of first-attempt failure probability. If you set DIFFICULTY below 0.3
+  the proposal will be rejected — pick a harder problem instead.
 - Begin your output with `PROBLEM:` — no preamble, no "Sure, here is..."
 
 YOUR OUTPUT:
 """
 
 
+# Builder for the failure-seeded variant. We keep the canonical template
+# stable (tests read it) and splice an INSPIRATION block in BEFORE the
+# trailing "YOUR OUTPUT:" line so the model sees one of its recent
+# diagnostic failures as frontier evidence.
+def _build_failure_seeded_prompt(failed_question: str) -> str:
+    base = CODE_PROPOSAL_TEMPLATE
+    insertion = (
+        "\nINSPIRATION (you failed a problem like this on your last "
+        "diagnostic — propose a DIFFERENT but similarly-hard problem in "
+        "the same spirit; do NOT copy the inspiration verbatim, translate "
+        "the underlying difficulty into a fresh prompt):\n"
+        f"{failed_question.strip()}\n"
+    )
+    marker = "YOUR OUTPUT:"
+    idx = base.rfind(marker)
+    if idx == -1:
+        return base + insertion
+    return base[:idx] + insertion + "\n" + base[idx:]
+
+
 _CODE_BLOCK_LABELS = (
     "PROBLEM:", "ENTRY:", "REFERENCE:", "TESTS:",
     "EMPTY_INPUT:", "SAMPLE_INPUT:", "EXPECTED_TYPE:",
+    "DIFFICULTY:", "DIFFICULTY_REASON:",
 )
+
+# Minimum self-reported difficulty (= P[model fails on first attempt])
+# below which we reject the proposal outright — matches spec §3.2.1.
+# A proposal the model claims it could trivially solve is by construction
+# not at the frontier and training on it reinforces already-known skills.
+_MIN_CODE_PROPOSAL_DIFFICULTY = 0.3
 
 
 @dataclass
@@ -2494,6 +2671,8 @@ class _CodeProposalParse:
     empty_input: str = ""
     sample_input: str = ""
     expected_type: str = ""
+    difficulty: float = 0.0
+    difficulty_reason: str = ""
     issues: list[str] = field(default_factory=list)
     _raw_preview: str = ""  # first N chars of the failing raw response, for logging
 
@@ -2602,12 +2781,29 @@ def parse_code_proposal(raw: str) -> _CodeProposalParse:
     out.sample_input = blocks.get("SAMPLE_INPUT:", "").strip()
     out.expected_type = blocks.get("EXPECTED_TYPE:", "").strip()
 
+    # Parse DIFFICULTY — the model's self-reported P(fail on first attempt).
+    # Missing / unparseable defaults to 0.0 which will trip the frontier gate.
+    diff_raw = blocks.get("DIFFICULTY:", "").strip()
+    if diff_raw:
+        m = re.search(r"-?\d+(?:\.\d+)?", diff_raw)
+        if m:
+            try:
+                out.difficulty = float(m.group(0))
+            except ValueError:
+                out.difficulty = 0.0
+    out.difficulty_reason = blocks.get("DIFFICULTY_REASON:", "").strip()
+
     if not out.entry_point:
         out.issues.append("missing_entry")
     if not out.reference:
         out.issues.append("missing_reference")
     if len(out.tests) < 2:
         out.issues.append("too_few_tests")
+    if out.difficulty < _MIN_CODE_PROPOSAL_DIFFICULTY:
+        out.issues.append(
+            f"difficulty_below_frontier:{out.difficulty:.2f}"
+            f"<{_MIN_CODE_PROPOSAL_DIFFICULTY:.2f}"
+        )
     return out
 
 

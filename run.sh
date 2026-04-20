@@ -39,7 +39,7 @@ exec python main.py \
     --lora-rank 16 \
     --plateau-patience 8 \
     --heldout-repetitions 2 \
-    --max-cycles 25 \
+    --max-cycles 40 \
     --write-cycle-metrics \
     --write-cycle-samples \
     ${RESUME_ARG}

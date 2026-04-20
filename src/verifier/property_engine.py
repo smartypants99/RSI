@@ -936,18 +936,47 @@ def builtin_properties(independence_class: Optional[str] = None) -> list[Propert
 # stamped by task_synthesizer via build_property rebind.
 # ═════════════════════════════════════════════════════════════════════════
 
-_RE_FENCE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
-_RE_DEFCLASS = re.compile(r"((?:def|class)\s+\w+.*)", re.DOTALL)
+# Fences: accept ``` or ```python, tolerate missing closing fence (truncation),
+# tolerate missing newline after opener. Capture everything until the next ```
+# or end of string.
+_RE_FENCE = re.compile(r"```(?:python|py)?[ \t]*\n?(.*?)(?:```|\Z)", re.DOTALL)
+_RE_DEFCLASS = re.compile(r"(?:^|\n)((?:def|class|import|from|@)\s+.*)", re.DOTALL)
 _CODE_TIMEOUT = 5
 _CODE_MEM_MB = 256
 
 
 def _is_valid_python(src: str) -> bool:
+    if not src or not src.strip():
+        return False
     try:
         ast.parse(src)
         return True
     except SyntaxError:
         return False
+
+
+def _trim_to_valid_python(src: str) -> Optional[str]:
+    """Progressively strip trailing lines until ast.parse succeeds.
+
+    Reasoning-model outputs frequently append prose after the code block
+    ("This solution runs in O(n)..."), which blows up ast.parse on the full
+    string. Also strips trailing incomplete/truncated lines.
+    Caps work at 200 trim attempts so pathological inputs don't stall.
+    """
+    if not src:
+        return None
+    lines = src.rstrip().split("\n")
+    # Drop obvious non-code trailing lines (markdown/prose). Heuristic: a line
+    # starting with a lowercase word followed by space and not looking like
+    # Python, or ending with "." with no indent.
+    for _ in range(min(200, len(lines))):
+        candidate = "\n".join(lines).rstrip()
+        if _is_valid_python(candidate):
+            return candidate
+        if not lines:
+            return None
+        lines.pop()
+    return None
 
 
 def _extract_code(solution: Any) -> Optional[str]:
@@ -968,14 +997,39 @@ def _extract_code(solution: Any) -> Optional[str]:
     for t in texts:
         if not t:
             continue
-        m = _RE_FENCE.search(t)
-        if m and _is_valid_python(m.group(1).strip()):
-            return m.group(1).strip()
-        m = _RE_DEFCLASS.search(t)
-        if m and _is_valid_python(m.group(1)):
-            return m.group(1)
-        if _is_valid_python(t):
-            return t
+        # 1) All fenced blocks, prefer the largest valid one.
+        candidates: list[str] = []
+        for m in _RE_FENCE.finditer(t):
+            body = m.group(1).strip()
+            if body:
+                candidates.append(body)
+        # 2) Text from the first def/class/import onward.
+        m2 = _RE_DEFCLASS.search(t)
+        if m2:
+            candidates.append(m2.group(1))
+        # 3) Raw text as last resort.
+        candidates.append(t)
+
+        # Try each candidate: exact parse, then trim trailing prose.
+        best: Optional[str] = None
+        for cand in candidates:
+            cand = cand.strip()
+            if not cand:
+                continue
+            if _is_valid_python(cand):
+                # Prefer the first candidate with a function def in it.
+                if "def " in cand or "class " in cand:
+                    return cand
+                if best is None:
+                    best = cand
+                continue
+            trimmed = _trim_to_valid_python(cand)
+            if trimmed and ("def " in trimmed or "class " in trimmed):
+                return trimmed
+            if trimmed and best is None:
+                best = trimmed
+        if best:
+            return best
     return None
 
 

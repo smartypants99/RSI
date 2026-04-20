@@ -1041,22 +1041,11 @@ class Verifier:
 
     @staticmethod
     def _extract_code(sample: TrainingSample) -> Optional[str]:
-        """Pull Python source out of response / last step."""
-        texts = [sample.response or ""]
-        if sample.reasoning_chain:
-            texts.append(sample.reasoning_chain[-1].content)
-        for t in texts:
-            # Fenced code block
-            m = re.search(r"```(?:python)?\s*\n(.*?)```", t, re.DOTALL)
-            if m:
-                src = m.group(1).strip()
-                if Verifier._is_valid_python(src):
-                    return src
-            # Raw def/class
-            m = re.search(r"((?:def|class)\s+\w+.*)", t, re.DOTALL)
-            if m and Verifier._is_valid_python(m.group(1)):
-                return m.group(1)
-        return None
+        """Pull Python source out of response / last step. Delegates to the
+        robust property_engine extractor (handles missing-close fences,
+        trailing prose after code, etc.)."""
+        from .property_engine import _extract_code as _pe_extract
+        return _pe_extract(sample)
 
     @staticmethod
     def _is_valid_python(src: str) -> bool:

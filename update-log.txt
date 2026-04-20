@@ -877,3 +877,8 @@ New run at 19:17 UTC. Pool at 10 after 7 cycles. Projected training
 fires around cycle 20-25, with 15-20 training cycles in the budget.
 Watch next cron fire for: (a) does training actually fire; (b) does
 post-train held-out move; (c) does regression-revert kick in if bad.
+
+=== 2026-04-20 19:45 UTC — cron iteration (observational only) ===
+Run from 19:14 UTC is healthy: cycle 15, pool 24/15 cycles (~1.6/cycle),
+0 training cycles yet. With min_batch=30, training fires at cycle 19-20.
+Budget 40 cycles → expect 20+ training cycles. No changes this iteration.

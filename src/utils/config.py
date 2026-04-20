@@ -195,14 +195,6 @@ class TrainerConfig:
     early_stop_loss: float = 0.15
     max_steps_per_cycle: int = 8
     min_steps_per_cycle: int = 1
-    # Max sequence length for TRAINING only. Inference uses
-    # ModelConfig.max_seq_length (default 4096) so long diagnostic prompts
-    # work. Activation memory during training scales linearly with seq_len,
-    # and the 8B base model at seq=4096 with gradient checkpointing OOMs
-    # even at batch_size=1 on a 47 GB GPU (run-6 cycle 1). Code/math
-    # training samples fit easily in 1024. Samples longer than this get
-    # dropped by TrainingDataset's length filter — acceptable tradeoff.
-    train_max_seq_length: int = 1024
     # min_train_samples: minimum training-pool size before we actually train.
     # Observed failure: cycle-1 trained on 4 STaR-fallback samples (1 optimizer
     # step), which added enough gradient noise to an 8B model that held-out

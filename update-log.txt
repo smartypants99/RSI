@@ -859,3 +859,21 @@ should do the fuser step automatically before starting a new run.
 
 New run at 17:57 UTC, cycle 6, pool=18. Projected hit min_batch at
 ~cycle 20. Leaves ~20 training cycles in the 40-cycle budget.
+
+=== 2026-04-20 19:30 UTC — cron iteration ===
+Run from 18:00 hit same pattern: pool=39 at cycle 18, plateaued 15-18
+all 0 accepts. Training would never fire at min_batch=60 within 40-cycle
+budget (projected cycle 27 minimum, cutting training phase short).
+
+Lever: 9171b31 lowered min_train_samples 60→30. The 60 floor was set
+in response to STaR-era failure (4 samples → -0.296 regression); with
+property-verified data and the regression_revert_threshold=0.10 guard,
+the guard now gets to prove itself instead of being skipped every run.
+
+GPU cleanup again revealed orphan vLLM worker (PID 29262 this time)
+after pkill -9. Added fuser-then-kill as standard procedure.
+
+New run at 19:17 UTC. Pool at 10 after 7 cycles. Projected training
+fires around cycle 20-25, with 15-20 training cycles in the budget.
+Watch next cron fire for: (a) does training actually fire; (b) does
+post-train held-out move; (c) does regression-revert kick in if bad.

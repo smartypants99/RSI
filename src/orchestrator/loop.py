@@ -148,8 +148,25 @@ class ImprovementLoop:
     def __init__(self, config: SystemConfig):
         self.config = config
         self._use_vllm = config.use_vllm
+        self._backend = getattr(config, "backend", None)
 
-        if self._use_vllm:
+        if self._backend == "tdq":
+            # TDQ backend: decompress .tdq file into an HF model, skip vLLM.
+            # Sets _use_vllm=False so the orchestrator's vLLM-specific swap
+            # paths (swap_to_hf_for_training / swap_to_vllm_after_training)
+            # become no-ops via TDQModelLoader's stub methods.
+            from ..utils.tdq_backend import TDQModelLoader
+            self._use_vllm = False
+            self.model_loader = TDQModelLoader(
+                model_path=config.model.model_path,
+                dtype=config.model.dtype,
+                max_seq_length=config.model.max_seq_length,
+                allow_remote_code=getattr(config.model, "allow_remote_code", True),
+            )
+            # Eagerly load — the first diagnostic run would force it anyway
+            # and we want to see the VRAM footprint in the log up front.
+            self.model_loader.load()
+        elif self._use_vllm:
             from ..utils.vllm_backend import VLLMModelLoader
             vllm_cfg = config.vllm
             if vllm_cfg is None:

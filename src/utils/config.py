@@ -519,3 +519,6 @@ class SystemConfig:
     synthesis: SynthesisConfig = field(default_factory=SynthesisConfig)
     use_vllm: bool = False
     vllm: Optional[VLLMConfig] = None
+    # Alternative model backend. None = default (HF or vLLM per use_vllm).
+    # "tdq" = TDQModelLoader (decompresses a .tdq file into an HF model).
+    backend: Optional[str] = None

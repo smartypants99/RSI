@@ -1,22 +1,23 @@
 Activated conda/uv virtual environment at /venv/main
-(main) root@C.35280593:/workspace$  cd /workspace/RSI                                                                                                                                                                                                  
-  rm -rf outputs/                                                                                                                                                                                                    
-  git pull origin main                                      
-  bash run.sh  
-remote: Enumerating objects: 11, done.
-remote: Counting objects: 100% (11/11), done.
-remote: Compressing objects: 100% (1/1), done.
-remote: Total 6 (delta 5), reused 6 (delta 5), pack-reused 0 (from 0)
-Unpacking objects: 100% (6/6), 6.82 KiB | 1.14 MiB/s, done.
+(main) root@C.35280593:/workspace$ # Ctrl+C current run                                                                                                                                                                                               
+  cd /workspace/RSI                                                                                                                                                                                                  
+  rm -rf outputs/                                           
+  git pull origin main                                                                                                                                                                                               
+  bash run.sh         
+remote: Enumerating objects: 8, done.
+remote: Counting objects: 100% (7/7), done.
+remote: Total 8 (delta 7), reused 7 (delta 7), pack-reused 1 (from 1)
+Unpacking objects: 100% (8/8), 6.97 KiB | 1019.00 KiB/s, done.
 From https://github.com/smartypants99/RSI
  * branch            main       -> FETCH_HEAD
-   c24cce7..2a6a00c  main       -> origin/main
-Updating c24cce7..2a6a00c
+   2a6a00c..6837cbc  main       -> origin/main
+Updating 2a6a00c..6837cbc
 Fast-forward
- src/generator/task_synthesizer.py |  24 ++++--
- update-log.txt                    | 479 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-----------------------------------------
- 2 files changed, 324 insertions(+), 179 deletions(-)
-2026-04-20 08:24:40,125 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
+ src/generator/task_synthesizer.py |  35 ++++---
+ tests/test_frontier_proposal.py   |  11 ++-
+ update-log.txt                    | 616 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++-------------------------------------------------------
+ 3 files changed, 343 insertions(+), 319 deletions(-)
+2026-04-20 08:59:48,999 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
 ============================================================
 PREFLIGHT CHECK
 ============================================================
@@ -35,315 +36,765 @@ PREFLIGHT CHECK
 ------------------------------------------------------------
 PASS — 12 checks ok, 0 warnings
 ============================================================
-2026-04-20 08:24:41,145 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
-2026-04-20 08:24:41,149 [INFO] src.orchestrator.loop: RSI registries opened (sid=2d3946a9e7f2)
-2026-04-20 08:24:41,150 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:24:41,150 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
-2026-04-20 08:24:41,150 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:24:43,939 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
-INFO 04-20 08:24:43 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'Qwen/Qwen3-8B'}
+2026-04-20 08:59:50,528 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
+2026-04-20 08:59:50,532 [INFO] src.orchestrator.loop: RSI registries opened (sid=3802f7425e25)
+2026-04-20 08:59:50,533 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 08:59:50,533 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
+2026-04-20 08:59:50,533 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 08:59:53,375 [INFO] src.utils.vllm_backend: Loading model with vLLM: Qwen/Qwen3-8B
+INFO 04-20 08:59:53 [utils.py:233] non-default args: {'trust_remote_code': True, 'dtype': 'bfloat16', 'max_model_len': 4096, 'gpu_memory_utilization': 0.6, 'disable_log_stats': True, 'model': 'Qwen/Qwen3-8B'}
+INFO 04-20 08:59:54 [model.py:549] Resolved architecture: Qwen3ForCausalLM
+INFO 04-20 08:59:54 [model.py:1678] Using max model len 4096
+INFO 04-20 08:59:54 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
+INFO 04-20 08:59:54 [vllm.py:790] Asynchronous scheduling is enabled.
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-2026-04-20 08:24:44,627 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-INFO 04-20 08:24:45 [model.py:549] Resolved architecture: Qwen3ForCausalLM
-INFO 04-20 08:24:45 [model.py:1678] Using max model len 4096
-INFO 04-20 08:24:45 [scheduler.py:238] Chunked prefill is enabled with max_num_batched_tokens=8192.
-INFO 04-20 08:24:45 [vllm.py:790] Asynchronous scheduling is enabled.
-WARNING 04-20 08:24:49 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
-(EngineCore pid=1060) INFO 04-20 08:24:54 [core.py:105] Initializing a V1 LLM engine (v0.19.1) with config: model='Qwen/Qwen3-8B', speculative_config=None, tokenizer='Qwen/Qwen3-8B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-8B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
-(EngineCore pid=1060) INFO 04-20 08:24:56 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.4:42939 backend=nccl
-(EngineCore pid=1060) INFO 04-20 08:24:56 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
-(EngineCore pid=1060) INFO 04-20 08:24:57 [gpu_model_runner.py:4735] Starting to load model Qwen/Qwen3-8B...
-(EngineCore pid=1060) INFO 04-20 08:24:57 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
-(EngineCore pid=1060) INFO 04-20 08:24:57 [flash_attn.py:596] Using FlashAttention version 2
-(EngineCore pid=1060) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
-(EngineCore pid=1060) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
-(EngineCore pid=1060) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-20 08:59:56,929 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING 04-20 08:59:58 [system_utils.py:152] We must use the `spawn` multiprocessing start method. Overriding VLLM_WORKER_MULTIPROC_METHOD to 'spawn'. See https://docs.vllm.ai/en/latest/usage/troubleshooting.html#python-multiprocessing for more information. Reasons: CUDA is initialized
+(EngineCore pid=1048) INFO 04-20 09:00:05 [core.py:105] Initializing a V1 LLM engine (v0.19.1) with config: model='Qwen/Qwen3-8B', speculative_config=None, tokenizer='Qwen/Qwen3-8B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=True, dtype=torch.bfloat16, max_seq_len=4096, download_dir=None, load_format=auto, tensor_parallel_size=1, pipeline_parallel_size=1, data_parallel_size=1, decode_context_parallel_size=1, dcp_comm_backend=ag_rs, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, enable_return_routed_experts=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01, cudagraph_metrics=False, enable_layerwise_nvtx_tracing=False, enable_mfu_metrics=False, enable_mm_processor_stats=False, enable_logging_iteration_details=False), seed=0, served_model_name=Qwen/Qwen3-8B, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, compilation_config={'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 'vllm::olmo_hybrid_gdn_full_forward', 'vllm::kda_attention', 'vllm::sparse_attn_indexer', 'vllm::rocm_aiter_sparse_attn_indexer', 'vllm::unified_kv_cache_update', 'vllm::unified_mla_kv_cache_update'], 'compile_mm_encoder': False, 'cudagraph_mm_encoder': False, 'encoder_cudagraph_token_budgets': [], 'encoder_cudagraph_max_images_per_batch': 0, 'compile_sizes': [], 'compile_ranges_endpoints': [8192], 'inductor_compile_config': {'enable_auto_functionalized_v2': False, 'size_asserts': False, 'alignment_asserts': False, 'scalar_asserts': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96, 104, 112, 120, 128, 136, 144, 152, 160, 168, 176, 184, 192, 200, 208, 216, 224, 232, 240, 248, 256, 272, 288, 304, 320, 336, 352, 368, 384, 400, 416, 432, 448, 464, 480, 496, 512], 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'enable_sp': False, 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 512, 'dynamic_shapes_config': {'type': <DynamicShapesType.BACKED: 'backed'>, 'evaluate_guards': False, 'assume_32_bit_indexing': False}, 'local_cache_dir': None, 'fast_moe_cold_start': True, 'static_all_moe_layers': []}
+(EngineCore pid=1048) INFO 04-20 09:00:06 [parallel_state.py:1400] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://172.17.0.4:50257 backend=nccl
+(EngineCore pid=1048) INFO 04-20 09:00:06 [parallel_state.py:1716] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank N/A, EPLB rank N/A
+(EngineCore pid=1048) INFO 04-20 09:00:07 [gpu_model_runner.py:4735] Starting to load model Qwen/Qwen3-8B...
+(EngineCore pid=1048) INFO 04-20 09:00:08 [cuda.py:334] Using FLASH_ATTN attention backend out of potential backends: ['FLASH_ATTN', 'FLASHINFER', 'TRITON_ATTN', 'FLEX_ATTENTION'].
+(EngineCore pid=1048) INFO 04-20 09:00:08 [flash_attn.py:596] Using FlashAttention version 2
+(EngineCore pid=1048) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.cudart module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.runtime module instead.
+(EngineCore pid=1048) <frozen importlib._bootstrap_external>:1301: FutureWarning: The cuda.nvrtc module is deprecated and will be removed in a future release, please switch to use the cuda.bindings.nvrtc module instead.
 Loading safetensors checkpoint shards:   0% Completed | 0/5 [00:00<?, ?it/s]
-Loading safetensors checkpoint shards:  20% Completed | 1/5 [00:01<00:04,  1.21s/it]
-Loading safetensors checkpoint shards:  40% Completed | 2/5 [00:02<00:03,  1.32s/it]
-Loading safetensors checkpoint shards:  60% Completed | 3/5 [00:04<00:02,  1.36s/it]
+Loading safetensors checkpoint shards:  20% Completed | 1/5 [00:01<00:04,  1.20s/it]
+Loading safetensors checkpoint shards:  40% Completed | 2/5 [00:02<00:03,  1.31s/it]
+Loading safetensors checkpoint shards:  60% Completed | 3/5 [00:03<00:02,  1.34s/it]
 Loading safetensors checkpoint shards:  80% Completed | 4/5 [00:05<00:01,  1.27s/it]
 Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.02it/s]
 Loading safetensors checkpoint shards: 100% Completed | 5/5 [00:05<00:00,  1.12s/it]
-(EngineCore pid=1060) 
-(EngineCore pid=1060) INFO 04-20 08:25:04 [default_loader.py:384] Loading weights took 5.64 seconds
-(EngineCore pid=1060) INFO 04-20 08:25:05 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 7.605553 seconds
-(EngineCore pid=1060) INFO 04-20 08:25:10 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/ebf33f1065/rank_0_0/backbone for vLLM's torch.compile
-(EngineCore pid=1060) INFO 04-20 08:25:10 [backends.py:1111] Dynamo bytecode transform time: 4.50 s
-(EngineCore pid=1060) INFO 04-20 08:25:12 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 1.234 s
-(EngineCore pid=1060) INFO 04-20 08:25:12 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/897f13ed9733826c1788fdf25e3d76c73afbe2304b86a8333fe0ca118af887f8/rank_0_0/model
-(EngineCore pid=1060) INFO 04-20 08:25:12 [monitor.py:48] torch.compile took 6.07 s in total
-(EngineCore pid=1060) INFO 04-20 08:25:12 [monitor.py:76] Initial profiling/warmup run took 0.21 s
-(EngineCore pid=1060) INFO 04-20 08:25:14 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
-(EngineCore pid=1060) INFO 04-20 08:25:14 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
-(EngineCore pid=1060) INFO 04-20 08:25:15 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.55 GiB total
-(EngineCore pid=1060) INFO 04-20 08:25:16 [gpu_worker.py:436] Available KV cache memory: 12.32 GiB
-(EngineCore pid=1060) INFO 04-20 08:25:16 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6116 to maintain the same effective KV cache size.
-(EngineCore pid=1060) INFO 04-20 08:25:16 [kv_cache_utils.py:1319] GPU KV cache size: 89,712 tokens
-(EngineCore pid=1060) INFO 04-20 08:25:16 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 21.90x
-Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:05<00:00, 10.10it/s]
-Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 17.78it/s]
-(EngineCore pid=1060) INFO 04-20 08:25:24 [gpu_model_runner.py:6046] Graph capturing finished in 8 secs, took 0.54 GiB
-(EngineCore pid=1060) INFO 04-20 08:25:24 [gpu_worker.py:597] CUDA graph pool memory: 0.54 GiB (actual), 0.55 GiB (estimated), difference: 0.01 GiB (1.1%).
-(EngineCore pid=1060) INFO 04-20 08:25:24 [core.py:283] init engine (profile, create kv cache, warmup model) took 18.82 seconds
-(EngineCore pid=1060) INFO 04-20 08:25:27 [vllm.py:790] Asynchronous scheduling is enabled.
-2026-04-20 08:25:27,556 [INFO] src.utils.vllm_backend: vLLM backend ready
-2026-04-20 08:25:27,557 [INFO] src.orchestrator.loop: 
+(EngineCore pid=1048) 
+(EngineCore pid=1048) INFO 04-20 09:00:15 [default_loader.py:384] Loading weights took 5.62 seconds
+(EngineCore pid=1048) INFO 04-20 09:00:15 [gpu_model_runner.py:4820] Model loading took 15.27 GiB memory and 7.571821 seconds
+(EngineCore pid=1048) INFO 04-20 09:00:20 [backends.py:1051] Using cache directory: /root/.cache/vllm/torch_compile_cache/ebf33f1065/rank_0_0/backbone for vLLM's torch.compile
+(EngineCore pid=1048) INFO 04-20 09:00:20 [backends.py:1111] Dynamo bytecode transform time: 4.39 s
+(EngineCore pid=1048) INFO 04-20 09:00:22 [backends.py:285] Directly load the compiled graph(s) for compile range (1, 8192) from the cache, took 1.210 s
+(EngineCore pid=1048) INFO 04-20 09:00:22 [decorators.py:305] Directly load AOT compilation from path /root/.cache/vllm/torch_compile_cache/torch_aot_compile/897f13ed9733826c1788fdf25e3d76c73afbe2304b86a8333fe0ca118af887f8/rank_0_0/model
+(EngineCore pid=1048) INFO 04-20 09:00:22 [monitor.py:48] torch.compile took 5.96 s in total
+(EngineCore pid=1048) INFO 04-20 09:00:22 [monitor.py:76] Initial profiling/warmup run took 0.20 s
+(EngineCore pid=1048) INFO 04-20 09:00:24 [kv_cache_utils.py:829] Overriding num_gpu_blocks=0 with num_gpu_blocks_override=512
+(EngineCore pid=1048) INFO 04-20 09:00:24 [gpu_model_runner.py:5876] Profiling CUDA graph memory: PIECEWISE=51 (largest=512), FULL=35 (largest=256)
+(EngineCore pid=1048) INFO 04-20 09:00:25 [gpu_model_runner.py:5955] Estimated CUDA graph memory: 0.55 GiB total
+(EngineCore pid=1048) INFO 04-20 09:00:26 [gpu_worker.py:436] Available KV cache memory: 12.32 GiB
+(EngineCore pid=1048) INFO 04-20 09:00:26 [gpu_worker.py:470] In v0.19, CUDA graph memory profiling will be enabled by default (VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1), which more accurately accounts for CUDA graph memory during KV cache allocation. To try it now, set VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=1 and increase --gpu-memory-utilization from 0.6000 to 0.6116 to maintain the same effective KV cache size.
+(EngineCore pid=1048) INFO 04-20 09:00:26 [kv_cache_utils.py:1319] GPU KV cache size: 89,712 tokens
+(EngineCore pid=1048) INFO 04-20 09:00:26 [kv_cache_utils.py:1324] Maximum concurrency for 4,096 tokens per request: 21.90x
+Capturing CUDA graphs (mixed prefill-decode, PIECEWISE): 100%|█████████████████████████████████████████████████████████████| 51/51 [00:03<00:00, 14.02it/s]
+Capturing CUDA graphs (decode, FULL): 100%|████████████████████████████████████████████████████████████████████████████████| 35/35 [00:01<00:00, 17.91it/s]
+(EngineCore pid=1048) INFO 04-20 09:00:32 [gpu_model_runner.py:6046] Graph capturing finished in 7 secs, took 0.54 GiB
+(EngineCore pid=1048) INFO 04-20 09:00:32 [gpu_worker.py:597] CUDA graph pool memory: 0.54 GiB (actual), 0.55 GiB (estimated), difference: 0.01 GiB (1.1%).
+(EngineCore pid=1048) INFO 04-20 09:00:33 [core.py:283] init engine (profile, create kv cache, warmup model) took 17.19 seconds
+(EngineCore pid=1048) Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+(EngineCore pid=1048) INFO 04-20 09:00:36 [vllm.py:790] Asynchronous scheduling is enabled.
+2026-04-20 09:00:36,196 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-20 09:00:36,196 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:25:27,557 [INFO] src.orchestrator.loop: CYCLE 1
-2026-04-20 08:25:27,557 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:25:27,557 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/3)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2166.75it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.38it/s, est. speed input: 175.48 toks/s, output: 2172.51 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3027.78it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.38it/s, est. speed input: 139.81 toks/s, output: 2230.90 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3050.24it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 143.00 toks/s, output: 2203.53 toks/s]
-2026-04-20 08:26:22,914 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 481.72it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.58s/it, est. speed input: 612.82 toks/s, output: 649.58 toks/s]
-2026-04-20 08:26:54,491 [INFO] src.generator.task_synthesizer: propose_batch_code: 2/20 proposals failed — top issues: difficulty_below_frontier:0.00<0.15=2, too_few_tests=1
-2026-04-20 08:26:54,492 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a string `s` and a target integer `k`, determine the number of substrings that contain exactly `k` distinct characters and at least one occurrence of each of those characters. The substring must be non-empty.\nENTRY: solve\nREFERENCE:\n```python\ndef solve(s, k):\n    from collections impo
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [00:00<00:00, 1605.24it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 18/18 [00:28<00:00,  1.58s/it, est. speed input: 83.88 toks/s, output: 578.40 toks/s]
-2026-04-20 08:27:23,135 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:27:23,144 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (18 problems × 6 candidates, batched)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1850.41it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.76it/s, est. speed input: 631.21 toks/s, output: 2109.56 toks/s]
-2026-04-20 08:27:42,096 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 19.0s
-2026-04-20 08:27:42,096 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
-2026-04-20 08:27:53,487 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=1
-2026-04-20 08:27:53,487 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
-2026-04-20 08:27:53,488 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (this cycle: 1 samples, rolling pool: 1 across 1 cycles)
-2026-04-20 08:27:53,488 [INFO] src.orchestrator.loop: [RSI tick 1] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:27:53,488 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:27:53,490 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:27:53,492 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=3.50e-06 (from 5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:27:53,492 [INFO] src.orchestrator.loop: 
+2026-04-20 09:00:36,196 [INFO] src.orchestrator.loop: CYCLE 1
+2026-04-20 09:00:36,196 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:00:36,196 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2142.94it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 175.96 toks/s, output: 2178.49 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2965.12it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.40it/s, est. speed input: 140.15 toks/s, output: 2230.34 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2963.44it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.36it/s, est. speed input: 142.86 toks/s, output: 2224.71 toks/s]
+2026-04-20 09:01:31,494 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 504.78it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 594.19 toks/s, output: 651.16 toks/s]
+2026-04-20 09:02:02,993 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1
+2026-04-20 09:02:02,994 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a binary tree represented by a list `nodes` where the root is at index 0, each node's left child is at 2*i+1 and right at 2*i+2, return the sum of all nodes that are on the same level as the maximum node in the tree. If multiple max nodes exist, sum all of their levels. `nodes` is non
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1677.93it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.55s/it, est. speed input: 79.79 toks/s, output: 629.86 toks/s]
+2026-04-20 09:02:32,691 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/19 proposals the model could already solve blind
+2026-04-20 09:02:32,693 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:02:32,701 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (18 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1895.54it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.76it/s, est. speed input: 591.29 toks/s, output: 2195.59 toks/s]
+2026-04-20 09:02:51,660 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 19.0s
+2026-04-20 09:02:51,660 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
+2026-04-20 09:02:54,960 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=0
+2026-04-20 09:02:54,960 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
+2026-04-20 09:02:54,961 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 0 across 1 cycles)
+2026-04-20 09:02:54,961 [INFO] src.orchestrator.loop: [RSI tick 1] pool size 0 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:02:54,961 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:02:54,963 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:02:54,965 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=3.50e-06 (from 5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:02:54,965 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:27:53,492 [INFO] src.orchestrator.loop: CYCLE 2
-2026-04-20 08:27:53,492 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:27:53,492 [INFO] src.orchestrator.loop: [RSI tick 2] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
-2026-04-20 08:27:53,492 [INFO] src.orchestrator.loop: [RSI tick 2] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 465.64it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 617.84 toks/s, output: 654.90 toks/s]
-2026-04-20 08:28:24,813 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1569.23it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.47s/it, est. speed input: 83.77 toks/s, output: 616.17 toks/s]
-2026-04-20 08:28:54,483 [INFO] src.orchestrator.loop: [RSI tick 2] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:28:54,484 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1849.44it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:19<00:00,  5.13it/s, est. speed input: 630.94 toks/s, output: 2502.72 toks/s]
-2026-04-20 08:29:14,037 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: solve phase took 19.6s
-2026-04-20 08:29:14,037 [INFO] src.orchestrator.loop: [RSI tick 2] Step 4: VERIFY candidates
-2026-04-20 08:29:24,896 [INFO] src.orchestrator.loop: [RSI tick 2] candidates accepted=0
-2026-04-20 08:29:24,896 [INFO] src.orchestrator.loop: [RSI tick 2] Step 7: CALIBRATION CHECK
-2026-04-20 08:29:24,897 [INFO] src.orchestrator.loop: [RSI tick 2] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 2 cycles)
-2026-04-20 08:29:24,897 [INFO] src.orchestrator.loop: [RSI tick 2] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:29:24,897 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:29:24,899 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:29:24,901 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=4.55e-06 (from 3.5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:29:24,901 [INFO] src.orchestrator.loop: 
+2026-04-20 09:02:54,965 [INFO] src.orchestrator.loop: CYCLE 2
+2026-04-20 09:02:54,965 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:02:54,965 [INFO] src.orchestrator.loop: [RSI tick 2] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:02:54,965 [INFO] src.orchestrator.loop: [RSI tick 2] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 499.56it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 596.80 toks/s, output: 654.03 toks/s]
+2026-04-20 09:03:26,325 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1670.17it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:28<00:00,  1.43s/it, est. speed input: 81.20 toks/s, output: 597.20 toks/s]
+2026-04-20 09:03:55,056 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 2/20 proposals the model could already solve blind
+2026-04-20 09:03:55,057 [INFO] src.orchestrator.loop: [RSI tick 2] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:03:55,058 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: SOLVE (18 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1927.32it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.81it/s, est. speed input: 565.00 toks/s, output: 2095.18 toks/s]
+2026-04-20 09:04:13,807 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: solve phase took 18.7s
+2026-04-20 09:04:13,808 [INFO] src.orchestrator.loop: [RSI tick 2] Step 4: VERIFY candidates
+2026-04-20 09:04:18,952 [INFO] src.orchestrator.loop: [RSI tick 2] candidates accepted=5
+2026-04-20 09:04:18,952 [INFO] src.orchestrator.loop: [RSI tick 2] Step 7: CALIBRATION CHECK
+2026-04-20 09:04:18,953 [INFO] src.orchestrator.loop: [RSI tick 2] Step 8: TRAIN (this cycle: 5 samples, rolling pool: 5 across 2 cycles)
+2026-04-20 09:04:18,953 [INFO] src.orchestrator.loop: [RSI tick 2] pool size 5 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:04:18,953 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:04:18,955 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:04:18,957 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=4.55e-06 (from 3.5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:04:18,957 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:29:24,901 [INFO] src.orchestrator.loop: CYCLE 3
-2026-04-20 08:29:24,901 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:29:24,901 [INFO] src.orchestrator.loop: [RSI tick 3] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
-2026-04-20 08:29:24,901 [INFO] src.orchestrator.loop: [RSI tick 3] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 461.53it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 617.53 toks/s, output: 654.58 toks/s]
-2026-04-20 08:29:56,239 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1, difficulty_below_frontier:0.00<0.15=1
-2026-04-20 08:29:56,239 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a binary string `s`, determine the minimum number of bit flips required to convert it into a string of all 1's. You are allowed to flip any substring (contiguous sequence of bits) to its complement (0 becomes 1, 1 becomes 0) any number of times. However, each flip operation must be ap
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1573.04it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.55s/it, est. speed input: 81.63 toks/s, output: 630.72 toks/s]
-2026-04-20 08:30:25,988 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/19 proposals the model could already solve blind
-2026-04-20 08:30:25,989 [INFO] src.orchestrator.loop: [RSI tick 3] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:30:25,990 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: SOLVE (18 problems × 6 candidates, batched)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1901.73it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.77it/s, est. speed input: 588.84 toks/s, output: 2336.14 toks/s]
-2026-04-20 08:30:44,909 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: solve phase took 18.9s
-2026-04-20 08:30:44,909 [INFO] src.orchestrator.loop: [RSI tick 3] Step 4: VERIFY candidates
-2026-04-20 08:30:48,922 [INFO] src.orchestrator.loop: [RSI tick 3] candidates accepted=0
-2026-04-20 08:30:48,922 [INFO] src.orchestrator.loop: [RSI tick 3] Step 7: CALIBRATION CHECK
-2026-04-20 08:30:48,922 [INFO] src.orchestrator.loop: [RSI tick 3] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 3 cycles)
-2026-04-20 08:30:48,923 [INFO] src.orchestrator.loop: [RSI tick 3] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:30:48,923 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:30:48,924 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:30:48,925 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_1
-2026-04-20 08:30:48,927 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=3.18e-06 (from 4.5500000000000005e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:30:48,927 [INFO] src.orchestrator.loop: 
+2026-04-20 09:04:18,957 [INFO] src.orchestrator.loop: CYCLE 3
+2026-04-20 09:04:18,957 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:04:18,957 [INFO] src.orchestrator.loop: [RSI tick 3] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:04:18,957 [INFO] src.orchestrator.loop: [RSI tick 3] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 490.17it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 597.51 toks/s, output: 654.80 toks/s]
+2026-04-20 09:04:50,281 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1601.28it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.47s/it, est. speed input: 82.77 toks/s, output: 606.32 toks/s]
+2026-04-20 09:05:19,754 [INFO] src.orchestrator.loop: [RSI tick 3] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:05:19,755 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: SOLVE (20 problems × 6 candidates, batched)
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1899.73it/s]
+Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:19<00:00,  5.20it/s, est. speed input: 632.23 toks/s, output: 2425.51 toks/s]
+2026-04-20 09:05:39,045 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: solve phase took 19.3s
+2026-04-20 09:05:39,046 [INFO] src.orchestrator.loop: [RSI tick 3] Step 4: VERIFY candidates
+2026-04-20 09:05:43,095 [INFO] src.orchestrator.loop: [RSI tick 3] candidates accepted=2
+2026-04-20 09:05:43,095 [INFO] src.orchestrator.loop: [RSI tick 3] Step 7: CALIBRATION CHECK
+2026-04-20 09:05:43,096 [INFO] src.orchestrator.loop: [RSI tick 3] Step 8: TRAIN (this cycle: 2 samples, rolling pool: 7 across 3 cycles)
+2026-04-20 09:05:43,096 [INFO] src.orchestrator.loop: [RSI tick 3] pool size 7 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:05:43,096 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:05:43,097 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:05:43,098 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_1
+2026-04-20 09:05:43,100 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=3.18e-06 (from 4.5500000000000005e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:05:43,100 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:30:48,927 [INFO] src.orchestrator.loop: CYCLE 4
-2026-04-20 08:30:48,927 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:30:48,927 [INFO] src.orchestrator.loop: [RSI tick 4] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2435.49it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.28it/s, est. speed input: 213.21 toks/s, output: 2133.03 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2856.81it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 122.29 toks/s, output: 2195.92 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2982.96it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 138.49 toks/s, output: 2211.44 toks/s]
-2026-04-20 08:31:44,856 [INFO] src.orchestrator.loop: [RSI tick 4] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 487.95it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.58s/it, est. speed input: 615.11 toks/s, output: 647.16 toks/s]
-2026-04-20 08:32:16,550 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: difficulty_below_frontier:0.00<0.15=1
-2026-04-20 08:32:16,550 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a binary matrix `grid` of size N x M, determine the maximum number of non-overlapping, non-adjacent rectangles that can be selected such that each rectangle has a perimeter of at least 4. A rectangle is defined as a contiguous block of 1s, with all four sides (top, bottom, left, right
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1580.18it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.56s/it, est. speed input: 86.85 toks/s, output: 627.25 toks/s]
-2026-04-20 08:32:46,432 [INFO] src.orchestrator.loop: [RSI tick 4] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:32:46,433 [INFO] src.orchestrator.loop: [RSI tick 4] Step 3: SOLVE (19 problems × 6 candidates, batched)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1715.46it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.92it/s, est. speed input: 666.41 toks/s, output: 2410.12 toks/s]
-2026-04-20 08:33:05,797 [INFO] src.orchestrator.loop: [RSI tick 4] Step 3: solve phase took 19.4s
-2026-04-20 08:33:05,797 [INFO] src.orchestrator.loop: [RSI tick 4] Step 4: VERIFY candidates
-2026-04-20 08:33:11,611 [INFO] src.orchestrator.loop: [RSI tick 4] candidates accepted=0
-2026-04-20 08:33:11,611 [INFO] src.orchestrator.loop: [RSI tick 4] Step 7: CALIBRATION CHECK
-2026-04-20 08:33:11,611 [INFO] src.orchestrator.loop: [RSI tick 4] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 4 cycles)
-2026-04-20 08:33:11,612 [INFO] src.orchestrator.loop: [RSI tick 4] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:33:11,612 [INFO] src.orchestrator.loop: [Cycle 4] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:33:11,613 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:33:11,614 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_2
-2026-04-20 08:33:11,616 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.23e-06 (from 3.185e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:33:11,616 [INFO] src.orchestrator.loop: 
+2026-04-20 09:05:43,100 [INFO] src.orchestrator.loop: CYCLE 4
+2026-04-20 09:05:43,100 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:05:43,100 [INFO] src.orchestrator.loop: [RSI tick 4] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2701.06it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.28it/s, est. speed input: 213.15 toks/s, output: 2132.48 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3011.85it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 122.37 toks/s, output: 2193.77 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3116.67it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.35it/s, est. speed input: 138.72 toks/s, output: 2199.35 toks/s]
+2026-04-20 09:06:39,035 [INFO] src.orchestrator.loop: [RSI tick 4] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 517.87it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.58s/it, est. speed input: 599.99 toks/s, output: 648.60 toks/s]
+2026-04-20 09:07:10,655 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1
+2026-04-20 09:07:10,655 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a list of integers `nums`, return the length of the longest\nsubarray with a sum that is a perfect square. The subarray must be contiguous\nand non-empty. If no such subarray exists, return 0. The sum of any\nsubarray can be in the range [-10^9, 10^9].\nENTRY: solve\nREFERENCE:\n```python\nd
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1701.76it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.56s/it, est. speed input: 78.72 toks/s, output: 655.63 toks/s]
+2026-04-20 09:07:40,419 [INFO] src.orchestrator.loop: [RSI tick 4] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:07:40,420 [INFO] src.orchestrator.loop: [RSI tick 4] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1896.97it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.89it/s, est. speed input: 601.51 toks/s, output: 2472.97 toks/s]
+2026-04-20 09:07:59,892 [INFO] src.orchestrator.loop: [RSI tick 4] Step 3: solve phase took 19.5s
+2026-04-20 09:07:59,892 [INFO] src.orchestrator.loop: [RSI tick 4] Step 4: VERIFY candidates
+2026-04-20 09:08:04,881 [INFO] src.orchestrator.loop: [RSI tick 4] candidates accepted=1
+2026-04-20 09:08:04,882 [INFO] src.orchestrator.loop: [RSI tick 4] Step 7: CALIBRATION CHECK
+2026-04-20 09:08:04,882 [INFO] src.orchestrator.loop: [RSI tick 4] Step 8: TRAIN (this cycle: 1 samples, rolling pool: 8 across 4 cycles)
+2026-04-20 09:08:04,882 [INFO] src.orchestrator.loop: [RSI tick 4] pool size 8 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:08:04,883 [INFO] src.orchestrator.loop: [Cycle 4] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:08:04,884 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:08:04,884 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_2
+2026-04-20 09:08:04,887 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.23e-06 (from 3.185e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:08:04,887 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:33:11,616 [INFO] src.orchestrator.loop: CYCLE 5
-2026-04-20 08:33:11,616 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:33:11,616 [INFO] src.orchestrator.loop: [RSI tick 5] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
-2026-04-20 08:33:11,617 [INFO] src.orchestrator.loop: [RSI tick 5] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 465.79it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 621.79 toks/s, output: 654.18 toks/s]
-2026-04-20 08:33:42,972 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: difficulty_below_frontier:0.00<0.15=1
-2026-04-20 08:33:42,973 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a positive integer `n`, determine the number of distinct ways to climb a staircase of `n` steps, where you can take 1, 2, or 3 steps at a time, and the total number of steps taken must be exactly `n`. The order of steps matters (e.g., 1+2 is different from 2+1). `n` is in 0..1000.\nENT
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1491.55it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.56s/it, est. speed input: 84.48 toks/s, output: 631.22 toks/s]
-2026-04-20 08:34:12,710 [INFO] src.orchestrator.loop: [RSI tick 5] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:34:12,711 [INFO] src.orchestrator.loop: [RSI tick 5] Step 3: SOLVE (19 problems × 6 candidates, batched)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1655.84it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.95it/s, est. speed input: 650.17 toks/s, output: 2394.16 toks/s]
-2026-04-20 08:34:31,983 [INFO] src.orchestrator.loop: [RSI tick 5] Step 3: solve phase took 19.3s
-2026-04-20 08:34:31,983 [INFO] src.orchestrator.loop: [RSI tick 5] Step 4: VERIFY candidates
-2026-04-20 08:34:38,072 [INFO] src.orchestrator.loop: [RSI tick 5] candidates accepted=0
-2026-04-20 08:34:38,072 [INFO] src.orchestrator.loop: [RSI tick 5] Step 7: CALIBRATION CHECK
-2026-04-20 08:34:38,073 [INFO] src.orchestrator.loop: [RSI tick 5] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 5 cycles)
-2026-04-20 08:34:38,073 [INFO] src.orchestrator.loop: [RSI tick 5] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:34:38,073 [INFO] src.orchestrator.loop: [Cycle 5] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:34:38,074 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:34:38,075 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_3
-2026-04-20 08:34:38,077 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.90e-06 (from 2.2295e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:34:38,077 [INFO] src.orchestrator.loop: 
+2026-04-20 09:08:04,887 [INFO] src.orchestrator.loop: CYCLE 5
+2026-04-20 09:08:04,887 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:08:04,887 [INFO] src.orchestrator.loop: [RSI tick 5] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:08:04,887 [INFO] src.orchestrator.loop: [RSI tick 5] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 485.15it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 606.42 toks/s, output: 655.56 toks/s]
+2026-04-20 09:08:36,175 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1688.29it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.47s/it, est. speed input: 79.28 toks/s, output: 634.05 toks/s]
+2026-04-20 09:09:05,733 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:09:05,735 [INFO] src.orchestrator.loop: [RSI tick 5] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:09:05,736 [INFO] src.orchestrator.loop: [RSI tick 5] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1736.89it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.03it/s, est. speed input: 588.48 toks/s, output: 2346.09 toks/s]
+2026-04-20 09:09:24,690 [INFO] src.orchestrator.loop: [RSI tick 5] Step 3: solve phase took 19.0s
+2026-04-20 09:09:24,690 [INFO] src.orchestrator.loop: [RSI tick 5] Step 4: VERIFY candidates
+2026-04-20 09:09:30,391 [INFO] src.orchestrator.loop: [RSI tick 5] candidates accepted=0
+2026-04-20 09:09:30,392 [INFO] src.orchestrator.loop: [RSI tick 5] Step 7: CALIBRATION CHECK
+2026-04-20 09:09:30,392 [INFO] src.orchestrator.loop: [RSI tick 5] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 8 across 5 cycles)
+2026-04-20 09:09:30,392 [INFO] src.orchestrator.loop: [RSI tick 5] pool size 8 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:09:30,393 [INFO] src.orchestrator.loop: [Cycle 5] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:09:30,394 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:09:30,394 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_3
+2026-04-20 09:09:30,397 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.90e-06 (from 2.2295e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:09:30,397 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:34:38,077 [INFO] src.orchestrator.loop: CYCLE 6
-2026-04-20 08:34:38,077 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:34:38,077 [INFO] src.orchestrator.loop: [RSI tick 6] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
-2026-04-20 08:34:38,078 [INFO] src.orchestrator.loop: [RSI tick 6] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 453.76it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 618.89 toks/s, output: 642.87 toks/s]
-2026-04-20 08:35:09,581 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1, difficulty_below_frontier:0.00<0.15=1
-2026-04-20 08:35:09,582 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a string `s` and an integer `k`, determine the maximum number of non-overlapping substrings of length `k` that can be formed by deleting characters from `s`. Each character in `s` must be used exactly once. `k` is between 1 and 50, and `s` length is between 1 and 5000.\nENTRY: solve\nRE
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1625.00it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.55s/it, est. speed input: 77.71 toks/s, output: 628.09 toks/s]
-2026-04-20 08:35:39,126 [INFO] src.orchestrator.loop: [RSI tick 6] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:35:39,127 [INFO] src.orchestrator.loop: [RSI tick 6] Step 3: SOLVE (19 problems × 6 candidates, batched)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1821.42it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.94it/s, est. speed input: 594.78 toks/s, output: 2408.36 toks/s]
-2026-04-20 08:35:58,425 [INFO] src.orchestrator.loop: [RSI tick 6] Step 3: solve phase took 19.3s
-2026-04-20 08:35:58,425 [INFO] src.orchestrator.loop: [RSI tick 6] Step 4: VERIFY candidates
-2026-04-20 08:36:12,843 [INFO] src.orchestrator.loop: [RSI tick 6] candidates accepted=0
-2026-04-20 08:36:12,843 [INFO] src.orchestrator.loop: [RSI tick 6] Step 7: CALIBRATION CHECK
-2026-04-20 08:36:12,844 [INFO] src.orchestrator.loop: [RSI tick 6] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 6 cycles)
-2026-04-20 08:36:12,844 [INFO] src.orchestrator.loop: [RSI tick 6] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:36:12,845 [INFO] src.orchestrator.loop: [Cycle 6] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:36:12,847 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:36:12,848 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_4
-2026-04-20 08:36:12,851 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.03e-06 (from 2.89835e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:36:12,851 [INFO] src.orchestrator.loop: 
+2026-04-20 09:09:30,397 [INFO] src.orchestrator.loop: CYCLE 6
+2026-04-20 09:09:30,397 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:09:30,397 [INFO] src.orchestrator.loop: [RSI tick 6] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:09:30,397 [INFO] src.orchestrator.loop: [RSI tick 6] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 484.26it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 606.40 toks/s, output: 655.53 toks/s]
+2026-04-20 09:10:01,687 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1606.58it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:28<00:00,  1.41s/it, est. speed input: 86.67 toks/s, output: 560.81 toks/s]
+2026-04-20 09:10:30,069 [INFO] src.orchestrator.loop: [RSI tick 6] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:10:30,070 [INFO] src.orchestrator.loop: [RSI tick 6] Step 3: SOLVE (20 problems × 6 candidates, batched)
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1889.45it/s]
+Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:19<00:00,  5.18it/s, est. speed input: 634.20 toks/s, output: 2400.38 toks/s]
+2026-04-20 09:10:49,419 [INFO] src.orchestrator.loop: [RSI tick 6] Step 3: solve phase took 19.3s
+2026-04-20 09:10:49,419 [INFO] src.orchestrator.loop: [RSI tick 6] Step 4: VERIFY candidates
+2026-04-20 09:10:53,772 [INFO] src.orchestrator.loop: [RSI tick 6] candidates accepted=1
+2026-04-20 09:10:53,772 [INFO] src.orchestrator.loop: [RSI tick 6] Step 7: CALIBRATION CHECK
+2026-04-20 09:10:53,773 [INFO] src.orchestrator.loop: [RSI tick 6] Step 8: TRAIN (this cycle: 1 samples, rolling pool: 9 across 6 cycles)
+2026-04-20 09:10:53,773 [INFO] src.orchestrator.loop: [RSI tick 6] pool size 9 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:10:53,773 [INFO] src.orchestrator.loop: [Cycle 6] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:10:53,775 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:10:53,775 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_4
+2026-04-20 09:10:53,778 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.03e-06 (from 2.89835e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:10:53,778 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:36:12,851 [INFO] src.orchestrator.loop: CYCLE 7
-2026-04-20 08:36:12,851 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:36:12,852 [INFO] src.orchestrator.loop: [RSI tick 7] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 1779.59it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.30it/s, est. speed input: 212.15 toks/s, output: 2140.81 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2892.87it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 108.32 toks/s, output: 2208.15 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2835.69it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 140.61 toks/s, output: 2210.74 toks/s]
-2026-04-20 08:37:08,750 [INFO] src.orchestrator.loop: [RSI tick 7] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 463.03it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 606.69 toks/s, output: 650.59 toks/s]
-2026-04-20 08:37:40,279 [INFO] src.generator.task_synthesizer: propose_batch_code: 2/20 proposals failed — top issues: too_few_tests=2, difficulty_below_frontier:0.00<0.15=2
-2026-04-20 08:37:40,280 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a list of integers `nums` and an integer `k`, find the length of the longest subsequence that can be formed by removing at most `k` elements. A subsequence is not necessarily contiguous, but maintains order. `nums` has length between 1 and 1000, and `k` is between 0 and len(nums).\nENT
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [00:00<00:00, 1477.97it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 18/18 [00:28<00:00,  1.58s/it, est. speed input: 85.57 toks/s, output: 579.20 toks/s]
-2026-04-20 08:38:09,032 [INFO] src.orchestrator.loop: [RSI tick 7] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:38:09,033 [INFO] src.orchestrator.loop: [RSI tick 7] Step 3: SOLVE (18 problems × 6 candidates, batched)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1577.33it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.74it/s, est. speed input: 641.32 toks/s, output: 2334.02 toks/s]
-2026-04-20 08:38:28,079 [INFO] src.orchestrator.loop: [RSI tick 7] Step 3: solve phase took 19.0s
-2026-04-20 08:38:28,079 [INFO] src.orchestrator.loop: [RSI tick 7] Step 4: VERIFY candidates
-2026-04-20 08:38:34,180 [INFO] src.orchestrator.loop: [RSI tick 7] candidates accepted=0
-2026-04-20 08:38:34,180 [INFO] src.orchestrator.loop: [RSI tick 7] Step 7: CALIBRATION CHECK
-2026-04-20 08:38:34,181 [INFO] src.orchestrator.loop: [RSI tick 7] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 7 cycles)
-2026-04-20 08:38:34,181 [INFO] src.orchestrator.loop: [RSI tick 7] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:38:34,181 [INFO] src.orchestrator.loop: [Cycle 7] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:38:34,182 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:38:34,183 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_5
-2026-04-20 08:38:34,186 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.42e-06 (from 2.0288449999999997e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:38:34,186 [INFO] src.orchestrator.loop: 
+2026-04-20 09:10:53,778 [INFO] src.orchestrator.loop: CYCLE 7
+2026-04-20 09:10:53,778 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:10:53,778 [INFO] src.orchestrator.loop: [RSI tick 7] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2630.30it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.29it/s, est. speed input: 211.57 toks/s, output: 2134.99 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3101.01it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 109.67 toks/s, output: 2211.55 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2989.37it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 140.58 toks/s, output: 2210.41 toks/s]
+2026-04-20 09:11:49,615 [INFO] src.orchestrator.loop: [RSI tick 7] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 504.32it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.58s/it, est. speed input: 598.51 toks/s, output: 648.92 toks/s]
+2026-04-20 09:12:21,221 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1
+2026-04-20 09:12:21,221 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a binary string `s` of length 1000, determine the number of\ndistinct subsequences of `s` that are palindromes of even length. A\nsubsequence is formed by deleting any number of characters (possibly\nzero) from `s` without changing the order. `s` may contain any number of\n'0's and '1's. 
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1581.00it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:28<00:00,  1.50s/it, est. speed input: 89.00 toks/s, output: 584.38 toks/s]
+2026-04-20 09:12:49,737 [INFO] src.orchestrator.loop: [RSI tick 7] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:12:49,738 [INFO] src.orchestrator.loop: [RSI tick 7] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1751.31it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.05it/s, est. speed input: 672.24 toks/s, output: 2297.03 toks/s]
+2026-04-20 09:13:08,614 [INFO] src.orchestrator.loop: [RSI tick 7] Step 3: solve phase took 18.9s
+2026-04-20 09:13:08,615 [INFO] src.orchestrator.loop: [RSI tick 7] Step 4: VERIFY candidates
+2026-04-20 09:13:14,061 [INFO] src.orchestrator.loop: [RSI tick 7] candidates accepted=0
+2026-04-20 09:13:14,061 [INFO] src.orchestrator.loop: [RSI tick 7] Step 7: CALIBRATION CHECK
+2026-04-20 09:13:14,062 [INFO] src.orchestrator.loop: [RSI tick 7] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 9 across 7 cycles)
+2026-04-20 09:13:14,062 [INFO] src.orchestrator.loop: [RSI tick 7] pool size 9 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:13:14,063 [INFO] src.orchestrator.loop: [Cycle 7] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:13:14,064 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:13:14,064 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_5
+2026-04-20 09:13:14,067 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.42e-06 (from 2.0288449999999997e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:13:14,067 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:38:34,186 [INFO] src.orchestrator.loop: CYCLE 8
-2026-04-20 08:38:34,186 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:38:34,186 [INFO] src.orchestrator.loop: [RSI tick 8] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
-2026-04-20 08:38:34,186 [INFO] src.orchestrator.loop: [RSI tick 8] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 460.48it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 611.66 toks/s, output: 655.92 toks/s]
-2026-04-20 08:39:05,460 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1478.51it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:28<00:00,  1.45s/it, est. speed input: 91.18 toks/s, output: 603.08 toks/s]
-2026-04-20 08:39:34,607 [INFO] src.orchestrator.loop: [RSI tick 8] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:39:34,608 [INFO] src.orchestrator.loop: [RSI tick 8] Step 3: SOLVE (20 problems × 6 candidates, batched)
-Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1802.74it/s]
-Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:19<00:00,  5.15it/s, est. speed input: 679.80 toks/s, output: 2431.87 toks/s]
-2026-04-20 08:39:54,070 [INFO] src.orchestrator.loop: [RSI tick 8] Step 3: solve phase took 19.5s
-2026-04-20 08:39:54,070 [INFO] src.orchestrator.loop: [RSI tick 8] Step 4: VERIFY candidates
-2026-04-20 08:40:04,147 [INFO] src.orchestrator.loop: [RSI tick 8] candidates accepted=0
-2026-04-20 08:40:04,147 [INFO] src.orchestrator.loop: [RSI tick 8] Step 7: CALIBRATION CHECK
-2026-04-20 08:40:04,148 [INFO] src.orchestrator.loop: [RSI tick 8] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 8 cycles)
-2026-04-20 08:40:04,148 [INFO] src.orchestrator.loop: [RSI tick 8] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:40:04,148 [INFO] src.orchestrator.loop: [Cycle 8] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:40:04,149 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:40:04,150 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_6
-2026-04-20 08:40:04,153 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.85e-06 (from 1.4201914999999996e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:40:04,153 [INFO] src.orchestrator.loop: 
+2026-04-20 09:13:14,067 [INFO] src.orchestrator.loop: CYCLE 8
+2026-04-20 09:13:14,067 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:13:14,067 [INFO] src.orchestrator.loop: [RSI tick 8] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:13:14,068 [INFO] src.orchestrator.loop: [RSI tick 8] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 468.31it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 604.21 toks/s, output: 655.10 toks/s]
+2026-04-20 09:13:45,379 [INFO] src.generator.task_synthesizer: propose_batch_code: 2/20 proposals failed — top issues: too_few_tests=2
+2026-04-20 09:13:45,380 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a string `s` consisting of only lowercase letters and digits,\nreturn the length of the longest substring that contains at least one\nvowel and at least one consonant. If the string has no such substring,\nreturn 0. Vowels are a, e, i, o, u. The substring must contain at least one\nvowel 
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [00:00<00:00, 1614.92it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 18/18 [00:28<00:00,  1.57s/it, est. speed input: 76.88 toks/s, output: 584.60 toks/s]
+2026-04-20 09:14:13,821 [INFO] src.orchestrator.loop: [RSI tick 8] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:14:13,822 [INFO] src.orchestrator.loop: [RSI tick 8] Step 3: SOLVE (18 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1843.90it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.75it/s, est. speed input: 573.47 toks/s, output: 2130.31 toks/s]
+2026-04-20 09:14:32,838 [INFO] src.orchestrator.loop: [RSI tick 8] Step 3: solve phase took 19.0s
+2026-04-20 09:14:32,838 [INFO] src.orchestrator.loop: [RSI tick 8] Step 4: VERIFY candidates
+2026-04-20 09:14:37,184 [INFO] src.orchestrator.loop: [RSI tick 8] candidates accepted=1
+2026-04-20 09:14:37,184 [INFO] src.orchestrator.loop: [RSI tick 8] Step 7: CALIBRATION CHECK
+2026-04-20 09:14:37,185 [INFO] src.orchestrator.loop: [RSI tick 8] Step 8: TRAIN (this cycle: 1 samples, rolling pool: 10 across 8 cycles)
+2026-04-20 09:14:37,185 [INFO] src.orchestrator.loop: [RSI tick 8] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:14:37,185 [INFO] src.orchestrator.loop: [Cycle 8] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:14:37,186 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:14:37,187 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_6
+2026-04-20 09:14:37,190 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.85e-06 (from 1.4201914999999996e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:14:37,190 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:40:04,153 [INFO] src.orchestrator.loop: CYCLE 9
-2026-04-20 08:40:04,153 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:40:04,153 [INFO] src.orchestrator.loop: [RSI tick 9] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
-2026-04-20 08:40:04,153 [INFO] src.orchestrator.loop: [RSI tick 9] Step 1: PROPOSE 20 problems (path=code_builtins)
-Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 458.35it/s]
-Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 611.40 toks/s, output: 655.64 toks/s]
-2026-04-20 08:40:35,440 [INFO] src.generator.task_synthesizer: propose_batch_code: 2/20 proposals failed — top issues: difficulty_below_frontier:0.00<0.15=2
-2026-04-20 08:40:35,440 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a binary string `s` and an integer `k`, determine the\nmaximum number of non-overlapping substrings of length `k` that can be\nreplaced with '1's such that the resulting string contains no more than\n`m` occurrences of the substring '01'. `s` is of length 1..1000, `k` is\n1..100, and `m` 
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [00:00<00:00, 1577.04it/s]
-Processed prompts: 100%|████████████████████████████████████████████| 18/18 [00:29<00:00,  1.63s/it, est. speed input: 81.31 toks/s, output: 595.28 toks/s]
-2026-04-20 08:41:09,979 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/18 proposals the model could already solve blind
-2026-04-20 08:41:09,981 [INFO] src.orchestrator.loop: [RSI tick 9] Step 2: PROPOSE + ADMIT properties
-2026-04-20 08:41:09,982 [INFO] src.orchestrator.loop: [RSI tick 9] Step 3: SOLVE (17 problems × 6 candidates, batched)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 85/85 [00:00<00:00, 1774.88it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 85/85 [00:18<00:00,  4.51it/s, est. speed input: 594.00 toks/s, output: 2201.23 toks/s]
-2026-04-20 08:41:28,888 [INFO] src.orchestrator.loop: [RSI tick 9] Step 3: solve phase took 18.9s
-2026-04-20 08:41:28,888 [INFO] src.orchestrator.loop: [RSI tick 9] Step 4: VERIFY candidates
-2026-04-20 08:41:32,691 [INFO] src.orchestrator.loop: [RSI tick 9] candidates accepted=0
-2026-04-20 08:41:32,691 [INFO] src.orchestrator.loop: [RSI tick 9] Step 7: CALIBRATION CHECK
-2026-04-20 08:41:32,692 [INFO] src.orchestrator.loop: [RSI tick 9] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 1 across 9 cycles)
-2026-04-20 08:41:32,692 [INFO] src.orchestrator.loop: [RSI tick 9] pool size 1 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
-2026-04-20 08:41:32,692 [INFO] src.orchestrator.loop: [Cycle 9] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
-2026-04-20 08:41:32,694 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
-2026-04-20 08:41:32,694 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_7
-2026-04-20 08:41:32,697 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.40e-06 (from 1.8462489499999995e-06), bounded to ±30%; tracker=insufficient_data (n=0)
-2026-04-20 08:41:32,697 [INFO] src.orchestrator.loop: 
+2026-04-20 09:14:37,190 [INFO] src.orchestrator.loop: CYCLE 9
+2026-04-20 09:14:37,190 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:14:37,190 [INFO] src.orchestrator.loop: [RSI tick 9] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:14:37,190 [INFO] src.orchestrator.loop: [RSI tick 9] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 474.30it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 604.11 toks/s, output: 655.00 toks/s]
+2026-04-20 09:15:08,506 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1632.18it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.48s/it, est. speed input: 84.45 toks/s, output: 633.51 toks/s]
+2026-04-20 09:15:38,118 [INFO] src.orchestrator.loop: [RSI tick 9] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:15:38,119 [INFO] src.orchestrator.loop: [RSI tick 9] Step 3: SOLVE (20 problems × 6 candidates, batched)
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1822.83it/s]
+Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:19<00:00,  5.13it/s, est. speed input: 639.42 toks/s, output: 2493.83 toks/s]
+2026-04-20 09:15:57,672 [INFO] src.orchestrator.loop: [RSI tick 9] Step 3: solve phase took 19.6s
+2026-04-20 09:15:57,672 [INFO] src.orchestrator.loop: [RSI tick 9] Step 4: VERIFY candidates
+2026-04-20 09:16:03,867 [INFO] src.orchestrator.loop: [RSI tick 9] candidates accepted=0
+2026-04-20 09:16:03,867 [INFO] src.orchestrator.loop: [RSI tick 9] Step 7: CALIBRATION CHECK
+2026-04-20 09:16:03,868 [INFO] src.orchestrator.loop: [RSI tick 9] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 9 cycles)
+2026-04-20 09:16:03,868 [INFO] src.orchestrator.loop: [RSI tick 9] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:16:03,868 [INFO] src.orchestrator.loop: [Cycle 9] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:16:03,869 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:16:03,870 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_7
+2026-04-20 09:16:03,873 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.40e-06 (from 1.8462489499999995e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:16:03,873 [INFO] src.orchestrator.loop: 
 ============================================================
-2026-04-20 08:41:32,697 [INFO] src.orchestrator.loop: CYCLE 10
-2026-04-20 08:41:32,697 [INFO] src.orchestrator.loop: ============================================================
-2026-04-20 08:41:32,697 [INFO] src.orchestrator.loop: [RSI tick 10] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2843.07it/s]
-Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.36it/s, est. speed input: 173.61 toks/s, output: 2116.74 toks/s]
-Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3041.58it/s]
-Processed prompts:   1%|▌                                              | 1/80 [00:08<11:15,  8.55s/it, est. speed input: 3.98 toks/s, output: 29.14 toks/s]
+2026-04-20 09:16:03,873 [INFO] src.orchestrator.loop: CYCLE 10
+2026-04-20 09:16:03,873 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:16:03,873 [INFO] src.orchestrator.loop: [RSI tick 10] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2820.74it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 173.02 toks/s, output: 2123.75 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2911.88it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.37it/s, est. speed input: 123.27 toks/s, output: 2219.27 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2873.33it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 141.69 toks/s, output: 2213.24 toks/s]
+2026-04-20 09:16:59,680 [INFO] src.orchestrator.loop: [RSI tick 10] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 497.59it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 593.83 toks/s, output: 651.29 toks/s]
+2026-04-20 09:17:31,171 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1216.60it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:28<00:00,  1.42s/it, est. speed input: 82.51 toks/s, output: 583.17 toks/s]
+2026-04-20 09:17:59,674 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:17:59,676 [INFO] src.orchestrator.loop: [RSI tick 10] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:17:59,677 [INFO] src.orchestrator.loop: [RSI tick 10] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1858.01it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.05it/s, est. speed input: 591.71 toks/s, output: 2331.42 toks/s]
+2026-04-20 09:18:18,541 [INFO] src.orchestrator.loop: [RSI tick 10] Step 3: solve phase took 18.9s
+2026-04-20 09:18:18,541 [INFO] src.orchestrator.loop: [RSI tick 10] Step 4: VERIFY candidates
+2026-04-20 09:18:22,484 [INFO] src.orchestrator.loop: [RSI tick 10] candidates accepted=0
+2026-04-20 09:18:22,484 [INFO] src.orchestrator.loop: [RSI tick 10] Step 7: CALIBRATION CHECK
+2026-04-20 09:18:22,485 [INFO] src.orchestrator.loop: [RSI tick 10] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 10 cycles)
+2026-04-20 09:18:22,485 [INFO] src.orchestrator.loop: [RSI tick 10] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:18:22,485 [INFO] src.orchestrator.loop: [Cycle 10] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:18:22,487 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:18:22,487 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_8
+2026-04-20 09:18:22,490 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.50e-06 (from 2.4001236349999996e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:18:22,490 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:18:22,490 [INFO] src.orchestrator.loop: CYCLE 11
+2026-04-20 09:18:22,490 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:18:22,491 [INFO] src.orchestrator.loop: [RSI tick 11] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:18:22,491 [INFO] src.orchestrator.loop: [RSI tick 11] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 486.07it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 598.13 toks/s, output: 656.01 toks/s]
+2026-04-20 09:18:53,757 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1632.34it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.48s/it, est. speed input: 83.76 toks/s, output: 652.31 toks/s]
+2026-04-20 09:19:23,501 [INFO] src.orchestrator.loop: [RSI tick 11] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:19:23,502 [INFO] src.orchestrator.loop: [RSI tick 11] Step 3: SOLVE (20 problems × 6 candidates, batched)
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1824.17it/s]
+Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:19<00:00,  5.16it/s, est. speed input: 637.96 toks/s, output: 2469.46 toks/s]
+2026-04-20 09:19:42,951 [INFO] src.orchestrator.loop: [RSI tick 11] Step 3: solve phase took 19.4s
+2026-04-20 09:19:42,951 [INFO] src.orchestrator.loop: [RSI tick 11] Step 4: VERIFY candidates
+2026-04-20 09:19:52,948 [INFO] src.orchestrator.loop: [RSI tick 11] candidates accepted=0
+2026-04-20 09:19:52,948 [INFO] src.orchestrator.loop: [RSI tick 11] Step 7: CALIBRATION CHECK
+2026-04-20 09:19:52,949 [INFO] src.orchestrator.loop: [RSI tick 11] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 11 cycles)
+2026-04-20 09:19:52,949 [INFO] src.orchestrator.loop: [RSI tick 11] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:19:52,949 [INFO] src.orchestrator.loop: [Cycle 11] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:19:52,950 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:19:52,951 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_9
+2026-04-20 09:19:52,954 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=3.25e-06 (from 2.5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:19:52,954 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:19:52,954 [INFO] src.orchestrator.loop: CYCLE 12
+2026-04-20 09:19:52,954 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:19:52,954 [INFO] src.orchestrator.loop: [RSI tick 12] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:19:52,955 [INFO] src.orchestrator.loop: [RSI tick 12] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 470.61it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 598.29 toks/s, output: 656.18 toks/s]
+2026-04-20 09:20:24,214 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1658.68it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.47s/it, est. speed input: 82.33 toks/s, output: 632.43 toks/s]
+2026-04-20 09:20:54,005 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:20:54,007 [INFO] src.orchestrator.loop: [RSI tick 12] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:20:54,008 [INFO] src.orchestrator.loop: [RSI tick 12] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1767.42it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.98it/s, est. speed input: 609.93 toks/s, output: 2370.23 toks/s]
+2026-04-20 09:21:13,149 [INFO] src.orchestrator.loop: [RSI tick 12] Step 3: solve phase took 19.1s
+2026-04-20 09:21:13,149 [INFO] src.orchestrator.loop: [RSI tick 12] Step 4: VERIFY candidates
+2026-04-20 09:21:16,983 [INFO] src.orchestrator.loop: [RSI tick 12] candidates accepted=0
+2026-04-20 09:21:16,983 [INFO] src.orchestrator.loop: [RSI tick 12] Step 7: CALIBRATION CHECK
+2026-04-20 09:21:16,984 [INFO] src.orchestrator.loop: [RSI tick 12] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 12 cycles)
+2026-04-20 09:21:16,984 [INFO] src.orchestrator.loop: [RSI tick 12] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:21:16,984 [INFO] src.orchestrator.loop: [Cycle 12] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:21:16,985 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:21:16,986 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_10
+2026-04-20 09:21:16,989 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=4.23e-06 (from 3.2500000000000002e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:21:16,989 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:21:16,989 [INFO] src.orchestrator.loop: CYCLE 13
+2026-04-20 09:21:16,989 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:21:16,989 [INFO] src.orchestrator.loop: [RSI tick 13] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2617.76it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.31it/s, est. speed input: 196.07 toks/s, output: 2119.10 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2994.46it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 113.25 toks/s, output: 2207.26 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3032.32it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.35it/s, est. speed input: 139.66 toks/s, output: 2201.50 toks/s]
+2026-04-20 09:22:12,931 [INFO] src.orchestrator.loop: [RSI tick 13] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 492.12it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.58s/it, est. speed input: 595.07 toks/s, output: 649.00 toks/s]
+2026-04-20 09:22:44,536 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1157.94it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.47s/it, est. speed input: 85.01 toks/s, output: 602.58 toks/s]
+2026-04-20 09:23:14,171 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:23:14,173 [INFO] src.orchestrator.loop: [RSI tick 13] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:23:14,174 [INFO] src.orchestrator.loop: [RSI tick 13] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1830.48it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.01it/s, est. speed input: 629.44 toks/s, output: 2353.22 toks/s]
+2026-04-20 09:23:33,200 [INFO] src.orchestrator.loop: [RSI tick 13] Step 3: solve phase took 19.0s
+2026-04-20 09:23:33,200 [INFO] src.orchestrator.loop: [RSI tick 13] Step 4: VERIFY candidates
+2026-04-20 09:23:36,895 [INFO] src.orchestrator.loop: [RSI tick 13] candidates accepted=0
+2026-04-20 09:23:36,895 [INFO] src.orchestrator.loop: [RSI tick 13] Step 7: CALIBRATION CHECK
+2026-04-20 09:23:36,895 [INFO] src.orchestrator.loop: [RSI tick 13] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 13 cycles)
+2026-04-20 09:23:36,896 [INFO] src.orchestrator.loop: [RSI tick 13] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:23:36,896 [INFO] src.orchestrator.loop: [Cycle 13] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:23:36,897 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:23:36,898 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_11
+2026-04-20 09:23:36,901 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.96e-06 (from 4.225e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:23:36,901 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:23:36,901 [INFO] src.orchestrator.loop: CYCLE 14
+2026-04-20 09:23:36,901 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:23:36,902 [INFO] src.orchestrator.loop: [RSI tick 14] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:23:36,902 [INFO] src.orchestrator.loop: [RSI tick 14] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 465.02it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 600.54 toks/s, output: 654.97 toks/s]
+2026-04-20 09:24:08,224 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1175.62it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.48s/it, est. speed input: 85.32 toks/s, output: 645.22 toks/s]
+2026-04-20 09:24:38,112 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:24:38,114 [INFO] src.orchestrator.loop: [RSI tick 14] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:24:38,115 [INFO] src.orchestrator.loop: [RSI tick 14] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1723.40it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.94it/s, est. speed input: 627.38 toks/s, output: 2433.00 toks/s]
+2026-04-20 09:24:57,389 [INFO] src.orchestrator.loop: [RSI tick 14] Step 3: solve phase took 19.3s
+2026-04-20 09:24:57,389 [INFO] src.orchestrator.loop: [RSI tick 14] Step 4: VERIFY candidates
+2026-04-20 09:25:01,431 [INFO] src.orchestrator.loop: [RSI tick 14] candidates accepted=0
+2026-04-20 09:25:01,431 [INFO] src.orchestrator.loop: [RSI tick 14] Step 7: CALIBRATION CHECK
+2026-04-20 09:25:01,432 [INFO] src.orchestrator.loop: [RSI tick 14] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 14 cycles)
+2026-04-20 09:25:01,432 [INFO] src.orchestrator.loop: [RSI tick 14] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:25:01,433 [INFO] src.orchestrator.loop: [Cycle 14] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:25:01,434 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:25:01,435 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_12
+2026-04-20 09:25:01,438 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.07e-06 (from 2.9575e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:25:01,439 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:25:01,439 [INFO] src.orchestrator.loop: CYCLE 15
+2026-04-20 09:25:01,439 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:25:01,439 [INFO] src.orchestrator.loop: [RSI tick 15] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:25:01,439 [INFO] src.orchestrator.loop: [RSI tick 15] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 456.73it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 601.06 toks/s, output: 655.54 toks/s]
+2026-04-20 09:25:32,730 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1455.17it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.47s/it, est. speed input: 81.27 toks/s, output: 601.27 toks/s]
+2026-04-20 09:26:02,209 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:26:02,211 [INFO] src.orchestrator.loop: [RSI tick 15] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:26:02,212 [INFO] src.orchestrator.loop: [RSI tick 15] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1807.23it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.01it/s, est. speed input: 595.72 toks/s, output: 2345.44 toks/s]
+2026-04-20 09:26:21,237 [INFO] src.orchestrator.loop: [RSI tick 15] Step 3: solve phase took 19.0s
+2026-04-20 09:26:21,237 [INFO] src.orchestrator.loop: [RSI tick 15] Step 4: VERIFY candidates
+2026-04-20 09:26:24,905 [INFO] src.orchestrator.loop: [RSI tick 15] candidates accepted=0
+2026-04-20 09:26:24,905 [INFO] src.orchestrator.loop: [RSI tick 15] Step 7: CALIBRATION CHECK
+2026-04-20 09:26:24,906 [INFO] src.orchestrator.loop: [RSI tick 15] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 15 cycles)
+2026-04-20 09:26:24,906 [INFO] src.orchestrator.loop: [RSI tick 15] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:26:24,906 [INFO] src.orchestrator.loop: [Cycle 15] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:26:24,907 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:26:24,908 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_13
+2026-04-20 09:26:24,912 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.50e-06 (from 2.0702499999999998e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:26:24,912 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:26:24,912 [INFO] src.orchestrator.loop: CYCLE 16
+2026-04-20 09:26:24,912 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:26:24,912 [INFO] src.orchestrator.loop: [RSI tick 16] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2711.78it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.33it/s, est. speed input: 189.24 toks/s, output: 2125.44 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2993.69it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.38it/s, est. speed input: 111.92 toks/s, output: 2201.22 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2972.18it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 137.67 toks/s, output: 2222.75 toks/s]
+2026-04-20 09:27:20,662 [INFO] src.orchestrator.loop: [RSI tick 16] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 499.58it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 599.11 toks/s, output: 650.75 toks/s]
+2026-04-20 09:27:52,180 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1
+2026-04-20 09:27:52,180 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a binary tree `root` represented as a list where each node is a\ndictionary with keys 'val', 'left', 'right', and the list is in level-order\ntraversal, compute the sum of the values of all nodes that are at a distance\nequal to the depth of the node. The root has depth 0. For example, i
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1525.20it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.54s/it, est. speed input: 79.52 toks/s, output: 602.01 toks/s]
+2026-04-20 09:28:21,741 [INFO] src.orchestrator.loop: [RSI tick 16] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:28:21,743 [INFO] src.orchestrator.loop: [RSI tick 16] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1737.45it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.94it/s, est. speed input: 606.84 toks/s, output: 2365.91 toks/s]
+2026-04-20 09:28:41,031 [INFO] src.orchestrator.loop: [RSI tick 16] Step 3: solve phase took 19.3s
+2026-04-20 09:28:41,031 [INFO] src.orchestrator.loop: [RSI tick 16] Step 4: VERIFY candidates
+2026-04-20 09:28:44,974 [INFO] src.orchestrator.loop: [RSI tick 16] candidates accepted=0
+2026-04-20 09:28:44,975 [INFO] src.orchestrator.loop: [RSI tick 16] Step 7: CALIBRATION CHECK
+2026-04-20 09:28:44,975 [INFO] src.orchestrator.loop: [RSI tick 16] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 16 cycles)
+2026-04-20 09:28:44,975 [INFO] src.orchestrator.loop: [RSI tick 16] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:28:44,976 [INFO] src.orchestrator.loop: [Cycle 16] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:28:44,977 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:28:44,977 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_14
+2026-04-20 09:28:44,982 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=3.25e-06 (from 2.5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:28:44,982 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:28:44,982 [INFO] src.orchestrator.loop: CYCLE 17
+2026-04-20 09:28:44,982 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:28:44,982 [INFO] src.orchestrator.loop: [RSI tick 17] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:28:44,982 [INFO] src.orchestrator.loop: [RSI tick 17] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 479.90it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 603.27 toks/s, output: 655.26 toks/s]
+2026-04-20 09:29:16,285 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1
+2026-04-20 09:29:16,285 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a list of integers `nums`, find the length of the longest subsequence where the sum of elements is divisible by 3. A subsequence is formed by deleting some or no elements without changing the order. The subsequence must be non-empty. `nums` length is in 1..20.\nENTRY: solve\nREFERENCE:\n
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1537.35it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.55s/it, est. speed input: 77.24 toks/s, output: 631.58 toks/s]
+2026-04-20 09:29:45,961 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 2/19 proposals the model could already solve blind
+2026-04-20 09:29:45,962 [INFO] src.orchestrator.loop: [RSI tick 17] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:29:45,963 [INFO] src.orchestrator.loop: [RSI tick 17] Step 3: SOLVE (17 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 85/85 [00:00<00:00, 1857.47it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 85/85 [00:18<00:00,  4.50it/s, est. speed input: 525.25 toks/s, output: 2190.80 toks/s]
+2026-04-20 09:30:04,918 [INFO] src.orchestrator.loop: [RSI tick 17] Step 3: solve phase took 19.0s
+2026-04-20 09:30:04,918 [INFO] src.orchestrator.loop: [RSI tick 17] Step 4: VERIFY candidates
+2026-04-20 09:30:13,579 [INFO] src.orchestrator.loop: [RSI tick 17] candidates accepted=0
+2026-04-20 09:30:13,579 [INFO] src.orchestrator.loop: [RSI tick 17] Step 7: CALIBRATION CHECK
+2026-04-20 09:30:13,580 [INFO] src.orchestrator.loop: [RSI tick 17] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 17 cycles)
+2026-04-20 09:30:13,580 [INFO] src.orchestrator.loop: [RSI tick 17] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:30:13,580 [INFO] src.orchestrator.loop: [Cycle 17] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:30:13,582 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:30:13,582 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_15
+2026-04-20 09:30:13,586 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.50e-06 (from 3.2500000000000002e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:30:13,586 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:30:13,586 [INFO] src.orchestrator.loop: CYCLE 18
+2026-04-20 09:30:13,586 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:30:13,587 [INFO] src.orchestrator.loop: [RSI tick 18] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:30:13,587 [INFO] src.orchestrator.loop: [RSI tick 18] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 447.30it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 603.80 toks/s, output: 655.83 toks/s]
+2026-04-20 09:30:44,865 [INFO] src.generator.task_synthesizer: propose_batch_code: 2/20 proposals failed — top issues: too_few_tests=2
+2026-04-20 09:30:44,866 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a non-empty list of integers `nums`, find the length of the longest subsequence where the sum of the elements is divisible by 3. A subsequence is a sequence derived by deleting some or no elements without changing the order. `nums` length is in 1..1000.\nENTRY: solve\nREFERENCE:\n```pyth
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 18/18 [00:00<00:00, 1469.77it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 18/18 [00:28<00:00,  1.56s/it, est. speed input: 78.03 toks/s, output: 535.70 toks/s]
+2026-04-20 09:31:13,317 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/18 proposals the model could already solve blind
+2026-04-20 09:31:13,319 [INFO] src.orchestrator.loop: [RSI tick 18] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:31:13,320 [INFO] src.orchestrator.loop: [RSI tick 18] Step 3: SOLVE (17 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 85/85 [00:00<00:00, 1864.64it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 85/85 [00:18<00:00,  4.49it/s, est. speed input: 535.63 toks/s, output: 2107.59 toks/s]
+2026-04-20 09:31:32,291 [INFO] src.orchestrator.loop: [RSI tick 18] Step 3: solve phase took 19.0s
+2026-04-20 09:31:32,291 [INFO] src.orchestrator.loop: [RSI tick 18] Step 4: VERIFY candidates
+2026-04-20 09:31:50,074 [INFO] src.orchestrator.loop: [RSI tick 18] candidates accepted=0
+2026-04-20 09:31:50,074 [INFO] src.orchestrator.loop: [RSI tick 18] Step 7: CALIBRATION CHECK
+2026-04-20 09:31:50,075 [INFO] src.orchestrator.loop: [RSI tick 18] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 18 cycles)
+2026-04-20 09:31:50,075 [INFO] src.orchestrator.loop: [RSI tick 18] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:31:50,075 [INFO] src.orchestrator.loop: [Cycle 18] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:31:50,076 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:31:50,077 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_16
+2026-04-20 09:31:50,081 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:31:50,081 [INFO] src.orchestrator.loop: CYCLE 19
+2026-04-20 09:31:50,081 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:31:50,081 [INFO] src.orchestrator.loop: [RSI tick 19] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2539.25it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 186.24 toks/s, output: 2138.09 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3074.97it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 114.29 toks/s, output: 2228.65 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 3097.17it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.35it/s, est. speed input: 139.92 toks/s, output: 2211.33 toks/s]
+2026-04-20 09:32:45,645 [INFO] src.orchestrator.loop: [RSI tick 19] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 512.95it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 591.17 toks/s, output: 651.66 toks/s]
+2026-04-20 09:33:17,118 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1436.11it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.48s/it, est. speed input: 88.68 toks/s, output: 633.48 toks/s]
+2026-04-20 09:33:46,888 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 2/20 proposals the model could already solve blind
+2026-04-20 09:33:46,890 [INFO] src.orchestrator.loop: [RSI tick 19] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:33:46,891 [INFO] src.orchestrator.loop: [RSI tick 19] Step 3: SOLVE (18 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1701.01it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.79it/s, est. speed input: 626.99 toks/s, output: 2296.69 toks/s]
+2026-04-20 09:34:05,743 [INFO] src.orchestrator.loop: [RSI tick 19] Step 3: solve phase took 18.9s
+2026-04-20 09:34:05,743 [INFO] src.orchestrator.loop: [RSI tick 19] Step 4: VERIFY candidates
+2026-04-20 09:34:09,860 [INFO] src.orchestrator.loop: [RSI tick 19] candidates accepted=0
+2026-04-20 09:34:09,860 [INFO] src.orchestrator.loop: [RSI tick 19] Step 7: CALIBRATION CHECK
+2026-04-20 09:34:09,861 [INFO] src.orchestrator.loop: [RSI tick 19] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 19 cycles)
+2026-04-20 09:34:09,861 [INFO] src.orchestrator.loop: [RSI tick 19] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:34:09,861 [INFO] src.orchestrator.loop: [Cycle 19] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:34:09,863 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:34:09,863 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_17
+2026-04-20 09:34:09,868 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=3.25e-06 (from 2.5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:34:09,868 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:34:09,868 [INFO] src.orchestrator.loop: CYCLE 20
+2026-04-20 09:34:09,868 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:34:09,868 [INFO] src.orchestrator.loop: [RSI tick 20] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:34:09,868 [INFO] src.orchestrator.loop: [RSI tick 20] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 478.79it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 594.83 toks/s, output: 655.69 toks/s]
+2026-04-20 09:34:41,150 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1
+2026-04-20 09:34:41,150 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a binary tree `root` with unique node values, find the length of the longest path where the node values form an arithmetic sequence. The path can be any sequence of nodes connected by parent-child edges (not necessarily straight), and the path can be in any direction (up/down/left/rig
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1502.99it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:28<00:00,  1.50s/it, est. speed input: 85.64 toks/s, output: 572.24 toks/s]
+2026-04-20 09:35:09,776 [INFO] src.orchestrator.loop: [RSI tick 20] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:35:09,777 [INFO] src.orchestrator.loop: [RSI tick 20] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1778.13it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.02it/s, est. speed input: 643.08 toks/s, output: 2324.91 toks/s]
+2026-04-20 09:35:28,751 [INFO] src.orchestrator.loop: [RSI tick 20] Step 3: solve phase took 19.0s
+2026-04-20 09:35:28,751 [INFO] src.orchestrator.loop: [RSI tick 20] Step 4: VERIFY candidates
+2026-04-20 09:35:33,699 [INFO] src.orchestrator.loop: [RSI tick 20] candidates accepted=0
+2026-04-20 09:35:33,699 [INFO] src.orchestrator.loop: [RSI tick 20] Step 7: CALIBRATION CHECK
+2026-04-20 09:35:33,700 [INFO] src.orchestrator.loop: [RSI tick 20] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 20 cycles)
+2026-04-20 09:35:33,700 [INFO] src.orchestrator.loop: [RSI tick 20] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:35:33,701 [INFO] src.orchestrator.loop: [Cycle 20] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:35:33,702 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:35:33,702 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_18
+2026-04-20 09:35:33,707 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.27e-06 (from 3.2500000000000002e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:35:33,707 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:35:33,707 [INFO] src.orchestrator.loop: CYCLE 21
+2026-04-20 09:35:33,707 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:35:33,707 [INFO] src.orchestrator.loop: [RSI tick 21] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:35:33,707 [INFO] src.orchestrator.loop: [RSI tick 21] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 472.61it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 595.14 toks/s, output: 656.04 toks/s]
+2026-04-20 09:36:04,974 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1351.50it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.48s/it, est. speed input: 87.05 toks/s, output: 637.70 toks/s]
+2026-04-20 09:36:34,816 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:36:34,818 [INFO] src.orchestrator.loop: [RSI tick 21] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:36:34,820 [INFO] src.orchestrator.loop: [RSI tick 21] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1794.60it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:19<00:00,  4.93it/s, est. speed input: 637.61 toks/s, output: 2406.06 toks/s]
+2026-04-20 09:36:54,143 [INFO] src.orchestrator.loop: [RSI tick 21] Step 3: solve phase took 19.3s
+2026-04-20 09:36:54,143 [INFO] src.orchestrator.loop: [RSI tick 21] Step 4: VERIFY candidates
+2026-04-20 09:36:59,615 [INFO] src.orchestrator.loop: [RSI tick 21] candidates accepted=0
+2026-04-20 09:36:59,615 [INFO] src.orchestrator.loop: [RSI tick 21] Step 7: CALIBRATION CHECK
+2026-04-20 09:36:59,616 [INFO] src.orchestrator.loop: [RSI tick 21] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 10 across 21 cycles)
+2026-04-20 09:36:59,616 [INFO] src.orchestrator.loop: [RSI tick 21] pool size 10 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:36:59,617 [INFO] src.orchestrator.loop: [Cycle 21] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:36:59,618 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:36:59,618 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_19
+2026-04-20 09:36:59,623 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.50e-06 (from 2.275e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:36:59,623 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:36:59,623 [INFO] src.orchestrator.loop: CYCLE 22
+2026-04-20 09:36:59,623 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:36:59,623 [INFO] src.orchestrator.loop: [RSI tick 22] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2399.25it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.33it/s, est. speed input: 198.03 toks/s, output: 2107.30 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2643.73it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.39it/s, est. speed input: 105.57 toks/s, output: 2215.32 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2576.45it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 142.47 toks/s, output: 2203.27 toks/s]
+2026-04-20 09:37:55,430 [INFO] src.orchestrator.loop: [RSI tick 22] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 498.21it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.58s/it, est. speed input: 602.58 toks/s, output: 650.07 toks/s]
+2026-04-20 09:38:26,981 [INFO] src.generator.task_synthesizer: propose_batch_code: 1/20 proposals failed — top issues: too_few_tests=1
+2026-04-20 09:38:26,981 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a string `s` and a non-empty list of unique characters `chars`, determine the number of distinct subsequences of `s` that contain all characters in `chars`. A subsequence is formed by deleting some or no characters without changing the order. The result should be modulo 10^9 + 7. `s` 
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 19/19 [00:00<00:00, 1510.77it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 19/19 [00:29<00:00,  1.54s/it, est. speed input: 76.77 toks/s, output: 603.48 toks/s]
+2026-04-20 09:38:56,596 [INFO] src.orchestrator.loop: [RSI tick 22] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:38:56,597 [INFO] src.orchestrator.loop: [RSI tick 22] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1806.10it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.01it/s, est. speed input: 594.65 toks/s, output: 2386.57 toks/s]
+2026-04-20 09:39:15,596 [INFO] src.orchestrator.loop: [RSI tick 22] Step 3: solve phase took 19.0s
+2026-04-20 09:39:15,597 [INFO] src.orchestrator.loop: [RSI tick 22] Step 4: VERIFY candidates
+2026-04-20 09:39:20,241 [INFO] src.orchestrator.loop: [RSI tick 22] candidates accepted=2
+2026-04-20 09:39:20,241 [INFO] src.orchestrator.loop: [RSI tick 22] Step 7: CALIBRATION CHECK
+2026-04-20 09:39:20,242 [INFO] src.orchestrator.loop: [RSI tick 22] Step 8: TRAIN (this cycle: 2 samples, rolling pool: 12 across 22 cycles)
+2026-04-20 09:39:20,242 [INFO] src.orchestrator.loop: [RSI tick 22] pool size 12 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:39:20,243 [INFO] src.orchestrator.loop: [Cycle 22] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:39:20,244 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:39:20,245 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_20
+2026-04-20 09:39:20,249 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.75e-06 (from 2.5e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:39:20,249 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:39:20,249 [INFO] src.orchestrator.loop: CYCLE 23
+2026-04-20 09:39:20,249 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:39:20,249 [INFO] src.orchestrator.loop: [RSI tick 23] Step 0: SET_DIAGNOSTICS (cache=hit, age=1/3)
+2026-04-20 09:39:20,250 [INFO] src.orchestrator.loop: [RSI tick 23] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 468.97it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 607.36 toks/s, output: 655.22 toks/s]
+2026-04-20 09:39:51,555 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1444.15it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:29<00:00,  1.49s/it, est. speed input: 82.10 toks/s, output: 688.85 toks/s]
+2026-04-20 09:40:21,493 [INFO] src.orchestrator.loop: [RSI tick 23] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:40:21,495 [INFO] src.orchestrator.loop: [RSI tick 23] Step 3: SOLVE (20 problems × 6 candidates, batched)
+Rendering prompts: 100%|███████████████████████████████████████████████████████████████████████████████████████████████| 100/100 [00:00<00:00, 1782.67it/s]
+Processed prompts: 100%|████████████████████████████████████████| 100/100 [00:19<00:00,  5.15it/s, est. speed input: 628.44 toks/s, output: 2470.68 toks/s]
+2026-04-20 09:40:40,976 [INFO] src.orchestrator.loop: [RSI tick 23] Step 3: solve phase took 19.5s
+2026-04-20 09:40:40,976 [INFO] src.orchestrator.loop: [RSI tick 23] Step 4: VERIFY candidates
+2026-04-20 09:40:45,531 [INFO] src.orchestrator.loop: [RSI tick 23] candidates accepted=0
+2026-04-20 09:40:45,531 [INFO] src.orchestrator.loop: [RSI tick 23] Step 7: CALIBRATION CHECK
+2026-04-20 09:40:45,532 [INFO] src.orchestrator.loop: [RSI tick 23] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 12 across 23 cycles)
+2026-04-20 09:40:45,532 [INFO] src.orchestrator.loop: [RSI tick 23] pool size 12 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:40:45,532 [INFO] src.orchestrator.loop: [Cycle 23] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:40:45,534 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:40:45,534 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_21
+2026-04-20 09:40:45,539 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.25e-06 (from 1.75e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:40:45,539 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:40:45,539 [INFO] src.orchestrator.loop: CYCLE 24
+2026-04-20 09:40:45,539 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:40:45,539 [INFO] src.orchestrator.loop: [RSI tick 24] Step 0: SET_DIAGNOSTICS (cache=hit, age=2/3)
+2026-04-20 09:40:45,540 [INFO] src.orchestrator.loop: [RSI tick 24] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 444.81it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.56s/it, est. speed input: 606.79 toks/s, output: 654.61 toks/s]
+2026-04-20 09:41:16,877 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1433.97it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:28<00:00,  1.41s/it, est. speed input: 85.70 toks/s, output: 562.93 toks/s]
+2026-04-20 09:41:45,280 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 1/20 proposals the model could already solve blind
+2026-04-20 09:41:45,281 [INFO] src.orchestrator.loop: [RSI tick 24] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:41:45,282 [INFO] src.orchestrator.loop: [RSI tick 24] Step 3: SOLVE (19 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 95/95 [00:00<00:00, 1687.48it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 95/95 [00:18<00:00,  5.02it/s, est. speed input: 605.99 toks/s, output: 2252.26 toks/s]
+2026-04-20 09:42:04,270 [INFO] src.orchestrator.loop: [RSI tick 24] Step 3: solve phase took 19.0s
+2026-04-20 09:42:04,270 [INFO] src.orchestrator.loop: [RSI tick 24] Step 4: VERIFY candidates
+2026-04-20 09:42:09,151 [INFO] src.orchestrator.loop: [RSI tick 24] candidates accepted=0
+2026-04-20 09:42:09,151 [INFO] src.orchestrator.loop: [RSI tick 24] Step 7: CALIBRATION CHECK
+2026-04-20 09:42:09,152 [INFO] src.orchestrator.loop: [RSI tick 24] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 12 across 24 cycles)
+2026-04-20 09:42:09,152 [INFO] src.orchestrator.loop: [RSI tick 24] pool size 12 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:42:09,152 [INFO] src.orchestrator.loop: [Cycle 24] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:42:09,154 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:42:09,154 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_22
+2026-04-20 09:42:09,159 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=1.63e-06 (from 1.25e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:42:09,159 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:42:09,160 [INFO] src.orchestrator.loop: CYCLE 25
+2026-04-20 09:42:09,160 [INFO] src.orchestrator.loop: ============================================================
+2026-04-20 09:42:09,160 [INFO] src.orchestrator.loop: [RSI tick 25] Step 0: SET_DIAGNOSTICS (cache=miss, age=3/3)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2364.24it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.31it/s, est. speed input: 192.59 toks/s, output: 2142.03 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2658.60it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.38it/s, est. speed input: 114.40 toks/s, output: 2218.70 toks/s]
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 80/80 [00:00<00:00, 2228.94it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 80/80 [00:18<00:00,  4.34it/s, est. speed input: 141.59 toks/s, output: 2213.44 toks/s]
+2026-04-20 09:43:04,864 [INFO] src.orchestrator.loop: [RSI tick 25] Step 1: PROPOSE 20 problems (path=code_builtins)
+Rendering prompts: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 442.37it/s]
+Processed prompts: 100%|███████████████████████████████████████████| 20/20 [00:31<00:00,  1.57s/it, est. speed input: 592.86 toks/s, output: 650.48 toks/s]
+2026-04-20 09:43:36,400 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 20/20 [00:00<00:00, 1675.28it/s]
+Processed prompts: 100%|████████████████████████████████████████████| 20/20 [00:28<00:00,  1.42s/it, est. speed input: 80.28 toks/s, output: 590.26 toks/s]
+2026-04-20 09:44:05,061 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 2/20 proposals the model could already solve blind
+2026-04-20 09:44:05,063 [INFO] src.orchestrator.loop: [RSI tick 25] Step 2: PROPOSE + ADMIT properties
+2026-04-20 09:44:05,065 [INFO] src.orchestrator.loop: [RSI tick 25] Step 3: SOLVE (18 problems × 6 candidates, batched)
+Rendering prompts: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████| 90/90 [00:00<00:00, 1769.09it/s]
+Processed prompts: 100%|██████████████████████████████████████████| 90/90 [00:18<00:00,  4.80it/s, est. speed input: 554.03 toks/s, output: 2334.70 toks/s]
+2026-04-20 09:44:23,863 [INFO] src.orchestrator.loop: [RSI tick 25] Step 3: solve phase took 18.8s
+2026-04-20 09:44:23,863 [INFO] src.orchestrator.loop: [RSI tick 25] Step 4: VERIFY candidates
+2026-04-20 09:44:34,425 [INFO] src.orchestrator.loop: [RSI tick 25] candidates accepted=0
+2026-04-20 09:44:34,426 [INFO] src.orchestrator.loop: [RSI tick 25] Step 7: CALIBRATION CHECK
+2026-04-20 09:44:34,427 [INFO] src.orchestrator.loop: [RSI tick 25] Step 8: TRAIN (this cycle: 0 samples, rolling pool: 12 across 25 cycles)
+2026-04-20 09:44:34,427 [INFO] src.orchestrator.loop: [RSI tick 25] pool size 12 < min_batch 60 — skipping training (prevents corrupting base weights with tiny-batch gradient noise)
+2026-04-20 09:44:34,427 [INFO] src.orchestrator.loop: [Cycle 25] Phase 5b: HELD-OUT EVAL skipped — no training this cycle in RSI mode (model state unchanged; saves ~2.5 min/cycle during warm-up)
+2026-04-20 09:44:34,429 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-20 09:44:34,430 [INFO] src.orchestrator.loop:   Pruned stale incomplete checkpoint dir: cycle_23
+2026-04-20 09:44:34,436 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=2.11e-06 (from 1.6250000000000001e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-20 09:44:34,437 [INFO] src.orchestrator.loop: Final report saved to outputs/final_report.json
+2026-04-20 09:44:34,437 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-20 09:44:34,437 [INFO] src.orchestrator.loop: IMPROVEMENT LOOP COMPLETE
+2026-04-20 09:44:34,437 [INFO] src.orchestrator.loop: Total improvement: 0.000 -> 0.000 (+0.000)
+2026-04-20 09:44:34,437 [INFO] src.orchestrator.loop: ============================================================
+(EngineCore pid=1048) INFO 04-20 09:44:34 [core.py:1210] Shutdown initiated (timeout=0)
+(EngineCore pid=1048) INFO 04-20 09:44:34 [core.py:1233] Shutdown complete
+[rank0]:[W420 09:44:34.565154432 ProcessGroupNCCL.cpp:1553] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+(main) root@C.35280593:/workspace/RSI$ 

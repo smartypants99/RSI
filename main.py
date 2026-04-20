@@ -174,6 +174,20 @@ def main():
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.85,
                         help="vLLM GPU memory fraction (default: 0.85)")
 
+    # TDQ backend — uses an in-house lattice-quantized .tdq file instead of
+    # vLLM/HF. Activates TDQModelLoader (src/utils/tdq_backend.py) which
+    # decompresses the TDQ file into a real HF AutoModelForCausalLM on load,
+    # then exposes the same generate/train interface as the other loaders.
+    # When set, --use-vllm is ignored. --model should point at the .tdq file.
+    parser.add_argument("--backend", default=None, choices=[None, "tdq"],
+                        help="Alternative model backend. 'tdq' loads a .tdq "
+                             "compressed file via TDQModelHF and runs HF-only "
+                             "(no vLLM). Default: auto (vLLM if --use-vllm).")
+    parser.add_argument("--tdq-inference-dir", default=None,
+                        help="Path to the directory containing td_inference.py "
+                             "and td_decomp.so. Defaults to $TDQ_INFERENCE_DIR "
+                             "or /Users/milannarula/Desktop/ai_quatinization/final.")
+
     # Logging
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
 
@@ -330,8 +344,15 @@ def main():
             synthesis_kwargs["property_consensus_threshold"] = args.property_consensus_threshold
         config.synthesis = SynthesisConfig(**synthesis_kwargs)
 
+    # TDQ backend selected: short-circuit vLLM setup, point env at td_inference dir
+    if args.backend == "tdq":
+        config.backend = "tdq"
+        config.use_vllm = False
+        if args.tdq_inference_dir:
+            import os as _os
+            _os.environ["TDQ_INFERENCE_DIR"] = args.tdq_inference_dir
     # vLLM mode
-    if args.use_vllm:
+    elif args.use_vllm:
         config.use_vllm = True
         config.vllm = VLLMConfig(
             model_path=args.model,

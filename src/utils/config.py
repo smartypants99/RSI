@@ -606,6 +606,18 @@ class OrchestratorConfig:
     # Rescore + prune cadence for verifier adequacy library (consumed by the
     # adequacy module when a registry-side owner wires it in).
     verifier_adequacy_rescore_every: int = 10
+    # MoE conversion (src/trainer/moe_conversion.py). Post-hoc dense-to-sparse
+    # upcycling of FFN layers via MegaBlocks-style block-sparse experts. Fires
+    # during growth events as an alternative to layer expansion. Off by default;
+    # per gemini consult, SOTA uses clustering-based init + shared-expert
+    # architecture, so expect to tune num_experts / top_k / shared_experts
+    # together. Flag also gates the MoE path out of test runs.
+    moe_conversion_enabled: bool = False
+    moe_num_experts: int = 4
+    moe_top_k: int = 2
+    moe_shared_experts: int = 1
+    moe_init_method: str = "clustering"  # "copy_perturb" | "slice" | "clustering"
+    moe_router_noise_std: float = 0.02
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -739,6 +751,21 @@ class SynthesisConfig:
     # the first cycle lands fast; cycle>=2 falls back to tasks_per_cycle.
     synthesis_tasks_per_cycle_bootstrap: int = 15
 
+    # Reasoning-strategy library (Task #1B). Model-authored reasoning templates
+    # stored as system-prompt prefixes, A/B-tested on a held-out slice, winners
+    # re-injected as few-shot prefixes for future propose/solve cycles.
+    strategy_library_enabled: bool = False
+    strategy_ab_holdout_size: int = 4
+    strategy_library_path: str = "outputs/reasoning_strategies.jsonl"
+    strategy_library_k_few_shot: int = 2
+
+    # Peer-LLM jury verification (Task #1A). Route candidates through multiple
+    # independent CLI-accessible LLMs (codex, gemini) and require ≥2/3 consensus.
+    peer_jury_enabled: bool = False
+    peer_jury_cache_path: str = "outputs/peer_jury_cache.jsonl"
+    peer_jury_timeout_s: int = 30
+    peer_jury_min_agree: int = 2
+
     def __post_init__(self):
         if not (0.0 <= self.frontier_fraction <= 1.0):
             raise ValueError(
@@ -780,6 +807,23 @@ class SynthesisConfig:
             raise ValueError(
                 f"synthesis_tasks_per_cycle_bootstrap must be >= 1, "
                 f"got {self.synthesis_tasks_per_cycle_bootstrap}"
+            )
+        if self.strategy_ab_holdout_size < 0:
+            raise ValueError(
+                f"strategy_ab_holdout_size must be >= 0, got {self.strategy_ab_holdout_size}"
+            )
+        if self.strategy_library_k_few_shot < 0:
+            raise ValueError(
+                f"strategy_library_k_few_shot must be >= 0, "
+                f"got {self.strategy_library_k_few_shot}"
+            )
+        if not (1 <= self.peer_jury_min_agree <= 3):
+            raise ValueError(
+                f"peer_jury_min_agree must be in [1, 3], got {self.peer_jury_min_agree}"
+            )
+        if self.peer_jury_timeout_s < 1:
+            raise ValueError(
+                f"peer_jury_timeout_s must be >= 1, got {self.peer_jury_timeout_s}"
             )
 
 

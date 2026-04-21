@@ -60,6 +60,12 @@ class GrowthConfig:
     #                  serialize to HF dir, compress to .tdq, and load via
     #                  TDQModelLoader for streaming inference thereafter.
     #   "auto"       — pick vram if budget permits, else tdq_stream.
+    # Architecture search (arch_search.py). When enabled the orchestrator
+    # asks the search loop to propose structural motif changes every N
+    # cycles; accepted motifs mutate the skeleton used by next grow.
+    arch_search_enabled: bool = False
+    arch_search_every: int = 30
+    arch_search_min_delta: float = 0.005
     storage_backend: str = "vram"
     vram_safety_margin_gb: float = 4.0
     # If None at runtime, read from torch.cuda.get_device_properties(0).total_memory.

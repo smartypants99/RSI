@@ -534,6 +534,15 @@ class OrchestratorConfig:
     # distill_epochs, abort_if_worse_by, …) is constructed by the caller in
     # growth.py; this field only gates WHEN the growth step fires. 0 = off.
     grow_every: int = 0
+    # Self-editing pipeline (Task #2, self-edit). Every N cycles the model
+    # proposes a unified diff against self_edit_candidate_path, which is
+    # applied in a worktree sandbox and smoke-evaluated for smoke_cycles
+    # before merging only if held-out delta >= min_improvement. 0 = off.
+    self_edit_every: int = 0
+    self_edit_max_diff_lines: int = 40
+    self_edit_min_improvement: float = 0.005
+    self_edit_smoke_cycles: int = 2
+    self_edit_candidate_path: str = "src/generator/data_generator.py"
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -557,6 +566,18 @@ class OrchestratorConfig:
         if self.grow_every < 0:
             raise ValueError(
                 f"grow_every must be >= 0 (0=disabled), got {self.grow_every}"
+            )
+        if self.self_edit_every < 0:
+            raise ValueError(
+                f"self_edit_every must be >= 0 (0=disabled), got {self.self_edit_every}"
+            )
+        if self.self_edit_max_diff_lines < 1:
+            raise ValueError(
+                f"self_edit_max_diff_lines must be >= 1, got {self.self_edit_max_diff_lines}"
+            )
+        if self.self_edit_smoke_cycles < 1:
+            raise ValueError(
+                f"self_edit_smoke_cycles must be >= 1, got {self.self_edit_smoke_cycles}"
             )
 
 

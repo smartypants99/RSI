@@ -94,7 +94,7 @@ class VLLMModelLoader:
         self._sampling_params_cls = SamplingParams
 
         logger.info(f"Loading model with vLLM: {self._current_model_path}")
-        self._llm = LLM(
+        llm_kwargs = dict(
             model=self._current_model_path,
             dtype=self.dtype,
             max_model_len=self.max_model_len,
@@ -102,6 +102,19 @@ class VLLMModelLoader:
             trust_remote_code=self.allow_remote_code,
             disable_log_stats=True,
         )
+        # vLLM-side bitsandbytes 4-bit. Without this a 32B model can't
+        # fit inference on a 48 GB GPU. The `load_format='bitsandbytes'`
+        # tells vLLM to read pre-quantized .safetensors shards (as
+        # published by unsloth's `-bnb-4bit` repos); for a raw fp16 model
+        # vLLM would quantize on-the-fly but take much longer to start.
+        qc = self.quantization_config
+        if qc and qc.get("load_in_4bit"):
+            llm_kwargs["quantization"] = "bitsandbytes"
+            llm_kwargs["load_format"] = "bitsandbytes"
+        elif qc and qc.get("load_in_8bit"):
+            llm_kwargs["quantization"] = "bitsandbytes"
+            llm_kwargs["load_format"] = "bitsandbytes"
+        self._llm = LLM(**llm_kwargs)
         self._tokenizer = self._llm.get_tokenizer()
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token

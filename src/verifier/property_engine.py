@@ -953,8 +953,52 @@ def builtin_properties(independence_class: Optional[str] = None) -> list[Propert
 # or end of string.
 _RE_FENCE = re.compile(r"```(?:python|py)?[ \t]*\n?(.*?)(?:```|\Z)", re.DOTALL)
 _RE_DEFCLASS = re.compile(r"(?:^|\n)((?:def|class|import|from|@)\s+.*)", re.DOTALL)
+# DeepSeek-R1 and other reasoning models emit <think>...</think> before the
+# final answer. Extractor must strip those blocks first — otherwise we pick
+# up scratch code inside the thinking (often with wrong names) or return
+# empty when the model only thought and ran out of tokens before answering.
+_RE_THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_RE_THINK_OPEN = re.compile(r"<think>.*?\Z", re.DOTALL | re.IGNORECASE)
 _CODE_TIMEOUT = 5
 _CODE_MEM_MB = 256
+
+
+def _strip_reasoning_trace(text: str) -> str:
+    """Remove <think>...</think> blocks (closed AND unclosed/truncated)."""
+    if not text:
+        return text
+    text = _RE_THINK.sub("", text)
+    text = _RE_THINK_OPEN.sub("", text)
+    return text
+
+
+def _alias_entry_point(code: str, entry: str) -> str:
+    """Ensure `code` exposes a callable named `entry`.
+
+    Reasoning models frequently ignore "your function must be named X" and
+    emit `def can_reach_sum(...)` when X=='solve'. Rather than reject the
+    candidate (which may be correct), append an alias `solve = can_reach_sum`
+    so the test harness can call it. If the code already defines `entry`,
+    no change. If the code defines zero functions, return unchanged (the
+    harness will fail with a clearer NameError). Pick the LAST top-level
+    def as the alias target — it's usually the main function with helpers
+    above it.
+    """
+    if not code or not entry:
+        return code
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    top_defs = [
+        n.name for n in tree.body
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    if entry in top_defs:
+        return code
+    if not top_defs:
+        return code
+    return code.rstrip() + f"\n{entry} = {top_defs[-1]}\n"
 
 
 def _is_valid_python(src: str) -> bool:
@@ -995,17 +1039,17 @@ def _extract_code(solution: Any) -> Optional[str]:
     if solution is None:
         return None
     if isinstance(solution, str):
-        texts = [solution]
+        texts = [_strip_reasoning_trace(solution)]
     else:
         texts = []
         resp = getattr(solution, "response", None)
         if resp:
-            texts.append(resp)
+            texts.append(_strip_reasoning_trace(resp))
         chain = getattr(solution, "reasoning_chain", None) or []
         if chain:
             last = getattr(chain[-1], "content", None)
             if last:
-                texts.append(last)
+                texts.append(_strip_reasoning_trace(last))
     for t in texts:
         if not t:
             continue
@@ -1098,6 +1142,10 @@ def _b_executes(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    try:
+        code = _alias_entry_point(code, entry)
+    except NameError:
+        pass
     ok, detail = run_python_sandboxed(code, _CODE_TIMEOUT, _CODE_MEM_MB)
     return (True, "") if ok else (False, f"sandbox: {detail[:600]}")
 
@@ -1116,6 +1164,10 @@ def _b_passes_provided_tests(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    try:
+        code = _alias_entry_point(code, entry)
+    except NameError:
+        pass
     test_block = "\n".join(
         t if t.strip().startswith(("assert ", "assert(")) else f"assert ({t})"
         for t in tests if t.strip()
@@ -1143,6 +1195,10 @@ def _b_passes_generated_edge_cases(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    try:
+        code = _alias_entry_point(code, entry)
+    except NameError:
+        pass
     # Parse edge inputs in the HOST via ast.literal_eval (no eval() needed in
     # the sandbox, which blocks eval anyway). Only well-formed Python
     # literals survive; malformed strings are skipped.
@@ -1209,6 +1265,10 @@ def _b_output_type_matches_signature(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    try:
+        code = _alias_entry_point(code, entry)
+    except NameError:
+        pass
     # Same _call dispatch as _b_passes_generated_edge_cases: unpack
     # list/tuple/dict inputs so multi-arg signatures work.
     harness = (
@@ -1249,6 +1309,10 @@ def _b_no_exceptions_on_empty_input(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    try:
+        code = _alias_entry_point(code, entry)
+    except NameError:
+        pass
     harness = (
         f"{code}\n"
         f"try:\n"
@@ -1276,6 +1340,10 @@ def _b_idempotent_where_applicable(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    try:
+        code = _alias_entry_point(code, entry)
+    except NameError:
+        pass
     harness = (
         f"{code}\n"
         f"_once = {entry}({sample!r}); _twice = {entry}(_once)\n"
@@ -1395,6 +1463,10 @@ def _b_trivial_case_correct(problem, candidate):
     code = _extract_code(candidate)
     if not code:
         return False, "no extractable Python code"
+    try:
+        code = _alias_entry_point(code, entry)
+    except NameError:
+        pass
     inp = trivial["input"]
     exp = trivial["expected"]
     harness = (

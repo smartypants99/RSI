@@ -1415,11 +1415,12 @@ class TaskSynthesizer:
         for p in proposals:
             entry = (p.problem_ctx or {}).get("entry_point") or "solve"
             prompts.append(
+                "<think>\n\n</think>\n\n"
                 "Solve the following problem by defining a Python function. "
                 "Output ONLY a Python code block with the function "
                 "definition — no prose, no explanation.\n\n"
                 f"PROBLEM: {p.problem_text}\n\n"
-                f"Your function must be named `{entry}`.\n\n"
+                f"Your function MUST be named exactly `{entry}`.\n\n"
                 "```python\n"
             )
         try:
@@ -1550,12 +1551,21 @@ class TaskSynthesizer:
                 out[pid].append(ref)
             # Queue (k - len(refs)) sampled slots for this problem.
             entry = (p.problem_ctx or {}).get("entry_point") or "solve"
+            # `<think>\n\n</think>` prefill: DeepSeek-R1 and other reasoning
+            # models interpret this as "thinking already done, emit final
+            # answer now". Without it R1 consumes the entire max_new_tokens
+            # budget on a <think> block and never emits code. Harmless for
+            # non-reasoning models (they see extra markers that look like
+            # XML they ignore). Enables R1 to write code on the first try.
             prompt = (
+                "<think>\n\n</think>\n\n"
                 "Solve the following problem by defining a Python function. "
                 "Output ONLY a Python code block with the function definition — "
                 "no prose, no explanation.\n\n"
                 f"PROBLEM: {p.problem_text}\n\n"
-                f"Your function must be named `{entry}`.\n\n"
+                f"Your function MUST be named exactly `{entry}` (not any other "
+                "name based on the problem topic — the automated tests call "
+                f"it as `{entry}(...)`).\n\n"
                 "```python\n"
             )
             need = max(0, k - len(out[pid]))

@@ -689,7 +689,12 @@ def verify(
         verdicts: list[PropertyVerdict] = [_run_one(p) for p in props_to_run]
     else:
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=min(4, len(props_to_run))) as _ex:
+        # max_workers bumped 4→8: each _run_one spawns a sandbox subprocess
+        # and blocks on Popen, so the thread holds no meaningful CPU. On a
+        # typical candidate with 5-8 properties, 4 workers serialized half of
+        # them; 8 lets the whole bundle fan out. If props_to_run is small the
+        # min() caps us; we never spin up more workers than work items.
+        with ThreadPoolExecutor(max_workers=min(8, len(props_to_run))) as _ex:
             verdicts = list(_ex.map(_run_one, props_to_run))
 
     pass_count = sum(1 for v in verdicts if v.verdict == "PASS")

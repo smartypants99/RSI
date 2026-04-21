@@ -1196,3 +1196,17 @@ score reported), the run is on track. The warmth of the new primitives
 will show in cycles 5-15 (OOD on cycle 12, GRPO auto-switch after plateau).
 
 ─ integration-lead, Task #10, consolidation complete.
+
+─── 2026-04-20 — tdq-stream, Task #5 ────────────────────────────────────
+
+TDQ disk-streaming wired to growth (forward-looking, opt-in). Default
+storage_backend=vram is unchanged; tdq_stream / auto only activate when
+estimated fp16 size exceeds the VRAM budget.
+
+ENV NOTE for CI / non-default machines: src/utils/tdq_bridge.py defaults
+TDQ_INFERENCE_DIR to /Users/milannarula/Desktop/ai_quatinization/final
+(hardcoded absolute path from dev machine). Other envs must set
+TDQ_INFERENCE_DIR before invoking grow_and_stream(). The import is
+deferred and sys.path.append'd (not prepended), so it won't shadow stdlib.
+
+─ tdq-stream, Task #5.

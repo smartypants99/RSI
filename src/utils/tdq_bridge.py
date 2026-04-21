@@ -3,9 +3,10 @@
 When growth produces a model whose fp16 weights would exceed the VRAM
 budget, the trainer must avoid ever instantiating the grown stack on-GPU.
 Instead it saves the grown module to a HF-format directory (safetensors),
-then calls `compress_model_dir_to_tdq` which shells out to the TDQ
-tooling at TDQ_INFERENCE_DIR. The resulting .tdq file is then loaded
-via :class:`src.utils.tdq_backend.TDQModelLoader` for subsequent cycles.
+then calls `compress_model_dir_to_tdq`, which imports td_quant in-process
+from TDQ_INFERENCE_DIR and invokes compress_and_save directly — no
+subprocess, no shell. The resulting .tdq file is then loaded via
+:class:`src.utils.tdq_backend.TDQModelLoader` for subsequent cycles.
 
 External tooling contract (READ-only from our side):
   - ai_quatinization/final/td_quant.py :: compress_and_save(model_id, output_path, config)
@@ -32,8 +33,12 @@ DEFAULT_TDQ_DIR = "/Users/milannarula/Desktop/ai_quatinization/final"
 
 def _import_td_quant():
     tdq_dir = os.environ.get("TDQ_INFERENCE_DIR", DEFAULT_TDQ_DIR)
+    # Append, don't prepend: we don't want the TDQ dir to shadow stdlib or
+    # site-packages on name collisions. td_quant's own relative imports
+    # still resolve fine because they're package-relative / absolute to
+    # modules that live alongside td_quant in the same dir.
     if tdq_dir and tdq_dir not in sys.path:
-        sys.path.insert(0, tdq_dir)
+        sys.path.append(tdq_dir)
     import td_quant  # noqa: F401
     return sys.modules["td_quant"]
 

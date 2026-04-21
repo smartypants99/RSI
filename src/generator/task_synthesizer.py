@@ -1430,30 +1430,49 @@ class TaskSynthesizer:
         if len(blind) < len(prompts):
             blind = list(blind) + [""] * (len(prompts) - len(blind))
 
-        kept: list[ProposedProblem] = []
-        dropped_easy = 0
+        # Build per-proposal harnesses, then run the sandbox subprocess calls
+        # in parallel. Each call is an independent subprocess — CPU-bound at
+        # the OS level, not Python-interpreter-bound — so a ThreadPoolExecutor
+        # gives real speedup (no GIL contention on the waiting threads).
+        # Previously this loop serialized ~20 sandbox runs × ~1-2s each.
+        harnesses: list[tuple[ProposedProblem, str | None]] = []
         for p, raw in zip(proposals, blind):
             ctx = p.problem_ctx or {}
             tests = list(ctx.get("tests") or [])
-            entry = ctx.get("entry_point") or "solve"
-            # Extract the first python code block from the model's output.
             m = re.search(r"```(?:python)?\s*\n(.*?)```", raw, re.DOTALL)
             code = (m.group(1) if m else raw).strip()
             if not code or not tests:
-                # Can't evaluate — keep (conservative).
-                kept.append(p)
+                harnesses.append((p, None))  # skip (conservative keep)
                 continue
             harness_lines = [code, ""]
             for t in tests:
                 harness_lines.append(t)
             harness_lines.append("print('ALL_OK')")
-            harness = "\n".join(harness_lines)
+            harnesses.append((p, "\n".join(harness_lines)))
+
+        def _run_one(h: str | None) -> tuple[bool, str]:
+            if h is None:
+                return False, ""  # signals "keep"
             try:
-                ok, detail = run_python_sandboxed(harness, 5.0, 256)
+                ok, detail = run_python_sandboxed(h, 5.0, 256)
+                return bool(ok), detail or ""
             except Exception:
+                return False, ""
+
+        from concurrent.futures import ThreadPoolExecutor
+        # 8 workers: sandbox subprocesses are largely I/O-wait on the host,
+        # but cap at 8 so we don't fork-bomb on a small machine.
+        max_workers = min(8, max(1, len(harnesses)))
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            results = list(ex.map(_run_one, [h for _, h in harnesses]))
+
+        kept: list[ProposedProblem] = []
+        dropped_easy = 0
+        for (p, h), (ok, detail) in zip(harnesses, results):
+            if h is None:
                 kept.append(p)
                 continue
-            blind_passed = bool(ok) and ("ALL_OK" in (detail or ""))
+            blind_passed = ok and ("ALL_OK" in detail)
             if blind_passed:
                 dropped_easy += 1
                 continue

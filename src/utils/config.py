@@ -602,6 +602,18 @@ class SynthesisConfig:
     # non-zero pass rate; excludes never-tested-adversarially properties.
     library_min_vov_score: float = 1.0
 
+    # Out-of-distribution curriculum (Task #7, curriculum-ood).
+    # OODProposer periodically seeds entirely new problem CATEGORIES (not just
+    # harder instances of known ones) so the solver keeps discovering skills
+    # outside DifficultyTracker's existing subdomain keys. Default-off for BC;
+    # consolidation flip turns ood_enabled=True with period=12.
+    ood_enabled: bool = False
+    ood_period: int = 12
+    ood_domains_per_cycle: int = 3
+    ood_seeds_per_domain: int = 8
+    ood_state_path: str = "outputs/ood_domains.jsonl"
+    ood_mainstream_threshold: float = 0.20
+
     def __post_init__(self):
         if not (0.0 <= self.frontier_fraction <= 1.0):
             raise ValueError(
@@ -623,6 +635,21 @@ class SynthesisConfig:
             raise ValueError(
                 f"property_consensus_threshold must be in (0, 1], "
                 f"got {self.property_consensus_threshold}"
+            )
+        if self.ood_period < 1:
+            raise ValueError(f"ood_period must be >= 1, got {self.ood_period}")
+        if not (1 <= self.ood_domains_per_cycle <= 10):
+            raise ValueError(
+                f"ood_domains_per_cycle must be in [1, 10], got {self.ood_domains_per_cycle}"
+            )
+        if not (1 <= self.ood_seeds_per_domain <= 20):
+            raise ValueError(
+                f"ood_seeds_per_domain must be in [1, 20], got {self.ood_seeds_per_domain}"
+            )
+        if not (0.0 < self.ood_mainstream_threshold <= 1.0):
+            raise ValueError(
+                f"ood_mainstream_threshold must be in (0, 1], "
+                f"got {self.ood_mainstream_threshold}"
             )
 
 

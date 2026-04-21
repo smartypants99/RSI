@@ -46,6 +46,14 @@ DEFAULT_OOD_ALPHA = 0.5
 DEFAULT_MAX_KL = 0.1
 DEFAULT_PLATEAU_WINDOW = 5
 DEFAULT_PLATEAU_MIN_GAIN = 0.003  # 0.3%
+# Significance gate for the paired-held-out plateau spec: a cycle counts
+# as "flat" only if its paired delta is below min_gain AND the evidence
+# for that flatness is reasonable — |delta/SE| < this z-cap. Setting
+# z = 2.0 means we refuse to call a cycle flat when the point estimate
+# is below the gain threshold but the SE is so tight it's a real
+# regression in disguise. Callers with no SE column fall back to the
+# legacy raw-delta criterion.
+DEFAULT_PLATEAU_Z_MAX = 2.0
 
 
 # ---------------------------------------------------------------------------
@@ -340,25 +348,113 @@ class KLDivergenceGuard:
 # ---------------------------------------------------------------------------
 
 def should_switch_to_grpo(
-    heldout_gain_history: list[float],
+    heldout_gain_history: list[float] | list[dict],
     window: int = DEFAULT_PLATEAU_WINDOW,
     min_gain: float = DEFAULT_PLATEAU_MIN_GAIN,
+    z_max: float = DEFAULT_PLATEAU_Z_MAX,
 ) -> bool:
-    """Return True when the last `window` trained cycles all gained < min_gain.
+    """Plateau detector — escalate SFT → GRPO when SFT has stopped moving.
 
-    `heldout_gain_history` is the per-trained-cycle held-out delta (post - pre,
-    signed). Cycles where training was skipped should be omitted by the caller
-    so this function only sees real training outcomes.
+    Accepts two input shapes (backwards-compatible):
 
-    Pure function — safe to call from any layer (orchestrator, meta-controller,
-    or the trainer itself). Integration-lead decides where to wire it.
+    Legacy (list[float]) — raw per-cycle held-out delta (post - pre).
+      Kept working so old call sites do not break, but this form is
+      **not** the recommended criterion: held-out eval at n≈200 has a
+      noise floor of ~0.02 per cycle, so "delta < 0.003 for 5 cycles"
+      can be pure sampling noise indistinguishable from a real plateau.
+
+    Preferred (list[dict]) — per-cycle paired-held-out record::
+
+        {"paired_delta": float,           # mean of per-question d_i
+         "paired_se":    float,           # paired standard error
+         "n":            int              # matched question count
+        }
+
+      (This is the exact shape ``src/diagnostics/paired_eval.PairedDelta``
+      serializes to — one ``.to_dict()`` call at the call site.)
+
+    Formal "flat" spec (when paired records are supplied):
+      A cycle is flat iff ALL of:
+        (1) ``paired_delta < min_gain``       — point estimate below the
+            improvement threshold,
+        (2) ``|z| < z_max`` where z = paired_delta / paired_se — the
+            evidence is actually flat, not a tight-SE regression that
+            would have been flagged elsewhere,
+        (3) ``n >= 2``                         — paired SE is defined.
+
+      A cycle with missing/zero ``paired_se`` (n < 2) falls back to
+      criterion (1) alone so the detector degrades gracefully on
+      truncated evals rather than silently never firing.
+
+      SFT is considered plateaued when every cycle in the last
+      ``window`` trained cycles is flat under this spec.
+
+    Why paired, not raw:
+      The paired estimator cancels the per-question difficulty variance
+      term, reducing SE by 3–5× on typical held-out banks (see
+      ``diagnostics/paired_eval.py``). That is enough resolution to
+      distinguish a real 0.3% gain from an 0.3% noise wiggle; the raw
+      held-out delta is not.
+
+    ``heldout_gain_history`` is the per-trained-cycle record. Cycles
+    where training was skipped should be omitted by the caller so this
+    function only sees real training outcomes.
+
+    Pure function — safe to call from any layer (orchestrator,
+    meta-controller, or the trainer itself).
     """
     if window < 1:
         raise ValueError(f"window must be >= 1, got {window}")
     if len(heldout_gain_history) < window:
         return False
     recent = heldout_gain_history[-window:]
-    return all(g < min_gain for g in recent)
+    return all(_cycle_is_flat(r, min_gain=min_gain, z_max=z_max) for r in recent)
+
+
+def _cycle_is_flat(
+    record,
+    *,
+    min_gain: float,
+    z_max: float,
+) -> bool:
+    """Apply the formal flat-cycle spec to one history entry.
+
+    Accepts float (legacy) or dict (paired). See ``should_switch_to_grpo``
+    for the full spec text.
+    """
+    if isinstance(record, (int, float)):
+        return float(record) < min_gain
+
+    if not isinstance(record, dict):
+        raise TypeError(
+            f"heldout_gain_history entries must be float or dict, got {type(record).__name__}"
+        )
+
+    try:
+        delta = float(record["paired_delta"])
+    except (KeyError, TypeError, ValueError):
+        # No paired delta at all — behave as if the cycle was skipped:
+        # can't call it flat without evidence, so it's NOT flat.
+        return False
+    if not math.isfinite(delta):
+        return False
+
+    if delta >= min_gain:
+        return False
+
+    n = int(record.get("n", 0) or 0)
+    se = record.get("paired_se")
+    try:
+        se_f = float(se) if se is not None else 0.0
+    except (TypeError, ValueError):
+        se_f = 0.0
+
+    if n < 2 or se_f <= 0.0 or not math.isfinite(se_f):
+        # SE undefined → fall back to point-estimate criterion only.
+        return True
+
+    z = abs(delta) / se_f
+    return z < z_max
 
 
 # ---------------------------------------------------------------------------

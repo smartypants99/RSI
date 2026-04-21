@@ -167,6 +167,49 @@ def test_plateau_window_must_be_positive():
 
 
 # ---------------------------------------------------------------------------
+# Paired-held-out plateau spec (v2)
+# ---------------------------------------------------------------------------
+
+def _paired(delta, se, n=200):
+    return {"paired_delta": delta, "paired_se": se, "n": n}
+
+
+def test_plateau_paired_fires_when_all_flat():
+    hist = [_paired(0.001, 0.0005) for _ in range(5)]
+    # delta < min_gain=0.003 and |z|=2.0 is at the boundary; use smaller se to
+    # be safely below z_max.
+    hist = [_paired(0.0005, 0.001) for _ in range(5)]
+    assert should_switch_to_grpo(hist) is True
+
+
+def test_plateau_paired_blocks_when_tight_se_regression():
+    # delta is below min_gain but it's a statistically-significant regression:
+    # delta = -0.01, se=0.001 → |z| = 10. That's NOT flat, it's regression —
+    # should refuse to fire the plateau alarm.
+    hist = [_paired(-0.01, 0.001) for _ in range(5)]
+    assert should_switch_to_grpo(hist) is False
+
+
+def test_plateau_paired_blocked_by_single_real_gain():
+    hist = [_paired(0.001, 0.002) for _ in range(4)]
+    hist.append(_paired(0.02, 0.003))  # real gain — breaks plateau
+    assert should_switch_to_grpo(hist) is False
+
+
+def test_plateau_paired_degrades_when_se_missing():
+    # n<2 / missing SE → falls back to point-estimate criterion.
+    hist = [{"paired_delta": 0.001, "paired_se": 0.0, "n": 1} for _ in range(5)]
+    assert should_switch_to_grpo(hist) is True
+
+
+def test_plateau_paired_missing_delta_is_not_flat():
+    # A record with no paired_delta cannot be declared flat.
+    hist = [_paired(0.001, 0.002) for _ in range(4)]
+    hist.append({"n": 0})  # skipped / missing
+    assert should_switch_to_grpo(hist) is False
+
+
+# ---------------------------------------------------------------------------
 # KL guard install/uninstall
 # ---------------------------------------------------------------------------
 

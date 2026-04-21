@@ -1714,6 +1714,13 @@ class ImprovementLoop:
                                     "[RSI tick %d] vLLM reload after regression failed: %s",
                                     cycle, exc,
                                 )
+                        # Promote this cycle's admitted candidates to the VoV
+                        # adversarial bank — they cleared quorum yet training
+                        # on them regressed the held-out score.
+                        self._bank_admitted_as_adversarial(
+                            cycle, result,
+                            reason=f"quick_probe_regression impr={result.improvement:.3f}",
+                        )
                     else:
                         if self._use_vllm:
                             ckpt_root = self.config.orchestrator.output_dir / "checkpoints"

@@ -98,6 +98,105 @@ class LRBandit:
 
 
 @dataclass
+class DimensionBandit:
+    """Thompson-sampling bandit over a discrete integer-valued hyperparameter.
+
+    Each cycle:
+      - `pick()` samples an arm and clamps the value to within ±30% of the
+        current running best (the arm with the highest mean held-out delta
+        across the rolling window).
+      - `observe(value, delta)` records the (value, delta) pair into a per-arm
+        rolling window of size `window_size`; the arm's Beta posterior is
+        updated with success=(delta>0).
+    """
+    name: str
+    values: list[int] = field(default_factory=list)
+    arms: list[BanditArm] = field(default_factory=list)
+    # Per-arm rolling window of last N held-out deltas for running-best calc.
+    history: list[list[float]] = field(default_factory=list)
+    window_size: int = 10
+    last_pulled: int | None = None
+
+    @classmethod
+    def from_range(cls, name: str, lo: int, hi: int, step: int = 1) -> "DimensionBandit":
+        vals = list(range(lo, hi + 1, step))
+        return cls(
+            name=name,
+            values=vals,
+            arms=[BanditArm(value=float(v)) for v in vals],
+            history=[[] for _ in vals],
+        )
+
+    def _best_value(self, current: int | None) -> int:
+        """Arm with highest mean delta over its rolling window; fall back to current/mid."""
+        best_mean = None
+        best_val = None
+        for v, h in zip(self.values, self.history):
+            if not h:
+                continue
+            m = sum(h) / len(h)
+            if best_mean is None or m > best_mean:
+                best_mean, best_val = m, v
+        if best_val is not None:
+            return best_val
+        if current is not None and current in self.values:
+            return current
+        return self.values[len(self.values) // 2]
+
+    def pick(self, rng: random.Random, current: int | None = None) -> int:
+        if not self.arms:
+            raise ValueError(f"DimensionBandit[{self.name}] has no arms")
+        best_idx, best_sample = 0, -1.0
+        for i, arm in enumerate(self.arms):
+            s = arm.sample(rng)
+            if s > best_sample:
+                best_idx, best_sample = i, s
+        picked = self.values[best_idx]
+        # Bound to within ±30% of running best (per task spec).
+        anchor = self._best_value(current)
+        lo = max(self.values[0], int(round(anchor * (1 - MAX_STEP_FRAC))))
+        hi = min(self.values[-1], int(round(anchor * (1 + MAX_STEP_FRAC))))
+        if lo > hi:
+            lo, hi = hi, lo
+        clamped = min(self.values, key=lambda v: (
+            0 if lo <= v <= hi else 1, abs(v - picked)
+        ))
+        self.last_pulled = clamped
+        return clamped
+
+    def observe(self, value: int, delta: float) -> None:
+        for i, v in enumerate(self.values):
+            if v == value:
+                self.arms[i].update(success=(delta > 0))
+                h = self.history[i]
+                h.append(float(delta))
+                if len(h) > self.window_size:
+                    del h[0 : len(h) - self.window_size]
+                return
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "values": list(self.values),
+            "arms": [{"value": a.value, "alpha": a.alpha, "beta": a.beta} for a in self.arms],
+            "history": [list(h) for h in self.history],
+            "window_size": self.window_size,
+            "last_pulled": self.last_pulled,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DimensionBandit":
+        return cls(
+            name=d["name"],
+            values=list(d.get("values", [])),
+            arms=[BanditArm(**a) for a in d.get("arms", [])],
+            history=[list(h) for h in d.get("history", [])],
+            window_size=int(d.get("window_size", 10)),
+            last_pulled=d.get("last_pulled"),
+        )
+
+
+@dataclass
 class PromptVariant:
     """A candidate generator template with track record."""
     template: str
@@ -149,6 +248,20 @@ class MetaController:
         self.lr_bandit: LRBandit | None = (
             LRBandit.around(initial_lr) if initial_lr is not None else None
         )
+        # Dimension bandits — discrete integer hyperparameters the meta layer
+        # tunes in addition to LR. Ranges match the spec in Task #5.
+        self.dimension_bandits: dict[str, DimensionBandit] = {
+            "lora_rank": DimensionBandit.from_range("lora_rank", 8, 64, step=8),
+            "num_epochs": DimensionBandit.from_range("num_epochs", 1, 4, step=1),
+            "min_train_samples": DimensionBandit.from_range(
+                "min_train_samples", 5, 50, step=5
+            ),
+            "gradient_accumulation_steps": DimensionBandit.from_range(
+                "gradient_accumulation_steps", 1, 8, step=1
+            ),
+        }
+        # State file for dimension-bandit persistence (complements the JSONL log).
+        self.state_path = self.log_path.parent / "meta_state.json"
         self.prompt_variants: list[PromptVariant] = []
         # Weights start uniform; updated via regression on accepted-sample signal.
         self.verifier_weights: dict[str, float] = {}
@@ -253,6 +366,13 @@ class MetaController:
         if self.lr_bandit is not None and lr_used is not None and delta is not None:
             self.lr_bandit.observe(lr_used, success=(delta > 0))
 
+        # Feed dimension bandits (integer hyperparameters).
+        if delta is not None:
+            for field_name, bandit in self.dimension_bandits.items():
+                v = config_snapshot.get(field_name)
+                if isinstance(v, (int, float)):
+                    bandit.observe(int(v), float(delta))
+
         # Revert decision is delegated to tracker.recent_regressions() via
         # get_revert_target() — called by the loop next cycle.
 
@@ -283,6 +403,10 @@ class MetaController:
             "learning_rate": None,
             "verifier_check_weights": None,
             "generator_template": None,
+            "lora_rank": None,
+            "num_epochs": None,
+            "min_train_samples": None,
+            "gradient_accumulation_steps": None,
             "reasoning": reasoning,
             "applied": False,
         }
@@ -367,20 +491,42 @@ class MetaController:
                         )
         # else "neutral": freeze, no proposal.
 
+        # 4. Dimension bandits — always pick (exploration), bounded ±30% of best.
+        _dim_fields = (
+            "lora_rank", "num_epochs", "min_train_samples",
+            "gradient_accumulation_steps",
+        )
+        for field_name in _dim_fields:
+            bandit = self.dimension_bandits.get(field_name)
+            if bandit is None:
+                continue
+            cur = current_config.get(field_name)
+            cur_int = int(cur) if isinstance(cur, (int, float)) else None
+            picked = bandit.pick(self._rng, current=cur_int)
+            if cur_int is None or picked != cur_int:
+                proposal[field_name] = picked
+                reasoning.append(
+                    f"{field_name} bandit: picked {picked} (from {cur_int}), "
+                    f"bounded to ±{int(MAX_STEP_FRAC*100)}% of running best"
+                )
+
         # Nothing to apply? Still return a valid proposal with applied=False.
+        _all_proposal_keys = (
+            "learning_rate", "verifier_check_weights", "generator_template",
+            *_dim_fields,
+        )
         proposal["applied"] = any(
-            proposal[k] is not None for k in
-            ("learning_rate", "verifier_check_weights", "generator_template")
+            proposal[k] is not None for k in _all_proposal_keys
         )
         if proposal["applied"]:
             self._last_pre_revert_state = {
                 "learning_rate": current_config.get("learning_rate"),
                 "verifier_check_weights": dict(current_config.get("verifier_check_weights") or {}),
                 "generator_template": current_config.get("generator_template"),
+                **{f: current_config.get(f) for f in _dim_fields},
             }
             self._last_proposal = {
-                k: proposal[k] for k in
-                ("learning_rate", "verifier_check_weights", "generator_template")
+                k: proposal[k] for k in _all_proposal_keys
             }
             self._log_decision({
                 "cycle": len(self.records) + 1,
@@ -542,6 +688,9 @@ class MetaController:
         return {
             "records": [asdict(r) for r in self.records],
             "lr_bandit": self.lr_bandit.to_dict() if self.lr_bandit else None,
+            "dimension_bandits": {
+                name: b.to_dict() for name, b in self.dimension_bandits.items()
+            },
             "prompt_variants": [asdict(v) for v in self.prompt_variants],
             "verifier_weights": dict(self.verifier_weights),
             "cov": dict(getattr(self, "_cov", {})),
@@ -554,6 +703,12 @@ class MetaController:
         self.records = [MetaCycleRecord(**r) for r in state.get("records", [])]
         if state.get("lr_bandit"):
             self.lr_bandit = LRBandit.from_dict(state["lr_bandit"])
+        dim = state.get("dimension_bandits") or {}
+        for name, d in dim.items():
+            try:
+                self.dimension_bandits[name] = DimensionBandit.from_dict(d)
+            except Exception as e:
+                logger.warning(f"meta: failed to restore dim bandit {name}: {e}")
         self.prompt_variants = [
             PromptVariant(**v) for v in state.get("prompt_variants", [])
         ]
@@ -562,6 +717,20 @@ class MetaController:
         self._n_obs = state.get("n_obs", 0)
         self._last_proposal = state.get("last_proposal")
         self._last_pre_revert_state = state.get("last_pre_revert_state")
+
+    def persist_state(self) -> None:
+        """Write `meta_state.json` — dimension bandits + LR bandit snapshot.
+
+        Call at end of cycle so a mid-run crash doesn't lose bandit posteriors.
+        The main checkpoint still contains the full `to_dict()` blob; this file
+        is the standalone, human-readable view requested by Task #5.
+        """
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.state_path, "w") as f:
+                json.dump(self.to_dict(), f, indent=2, default=str)
+        except OSError as e:
+            logger.warning(f"meta: failed to write state file: {e}")
 
     # ---------------------------------------------------------------
     # Logging

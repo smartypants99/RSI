@@ -57,6 +57,14 @@ HARD_DENY_LIST: tuple[str, ...] = (
     "tests/*",                          # can't weaken tests
     "run.sh",
     ".github/*",
+    # Measurement infrastructure — NEVER unlockable at any self-edit tier.
+    # A patch that could rewrite the eval partition, external benchmarks,
+    # the regression-revert threshold, the held-out eval phase, or the
+    # anchor-score aggregation would let the model corrupt the empirical
+    # record while reporting green numbers.
+    "src/diagnostics/eval_partition.py",
+    "src/utils/external_benchmarks.py",
+    "src/diagnostics/solution_diversity.py",
 )
 
 MAX_DIFF_LINES_DEFAULT = 40

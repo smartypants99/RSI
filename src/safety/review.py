@@ -25,9 +25,33 @@ FORBIDDEN_IMPORTS = (
 )
 
 # Paths the safety module owns — patches must never touch these (no self-elevation).
+# Second layer of defense beyond self_edit.HARD_DENY_LIST: even if the allow-list
+# is somehow widened, safety.review still refuses these paths. Keep in sync with
+# self_edit.HARD_DENY_LIST for the measurement-infrastructure entries.
 SELF_PROTECTED = (
     "src/safety/",
     "tests/test_safety",
+    # Measurement infrastructure (task #4). A self-edit that rewrites any of
+    # these could corrupt the empirical record while reporting green numbers.
+    "src/diagnostics/eval_partition.py",
+    "src/diagnostics/solution_diversity.py",
+    "src/utils/external_benchmarks.py",
+)
+
+# Names of config fields that form the measurement contract. Added lines in a
+# patch that redefine any of these (e.g. `regression_revert_threshold = 99.0`)
+# are rejected. Substring match on the whole added-lines blob — if the patch
+# targets only allow-listed files, it has no business redefining these.
+MEASUREMENT_CONTRACT_TOKENS = (
+    "regression_revert_threshold",
+    "anchor_eval_enabled",
+    "anchor_eval_benchmarks",
+    "verifier_capture_alarm_threshold",
+    "heldout_questions_per_domain",
+    "heldout_repetitions",
+    "PARTITION_SEED",
+    "HELD_OUT_ONLY",
+    "SMOKE_EVAL",
 )
 
 # Code areas off-limits to auto-generated patches.
@@ -148,6 +172,14 @@ def review_patch(patch_text: str, allow_list: Sequence[str]) -> ReviewResult:
     for escape in ("eval(", "exec(", "__import__(", "compile("):
         if escape in added:
             reasons.append(f"forbidden dynamic-exec primitive: {escape.rstrip('(')}")
+
+    # Measurement-contract tokens: a patch targeting only allow-listed
+    # (generator/verifier) code has no reason to mention these. If an added
+    # line does, treat it as an attempt to re-define the measurement surface
+    # from outside its owning modules.
+    for tok in MEASUREMENT_CONTRACT_TOKENS:
+        if tok in added:
+            reasons.append(f"patch redefines measurement-contract token: {tok}")
 
     return ReviewResult(ok=len(reasons) == 0, reasons=reasons)
 

@@ -315,15 +315,21 @@ def _hard_deny_from_self_edit() -> tuple[str, ...]:
 
 
 def _glob_overlaps_deny(glob: str, deny: Iterable[str]) -> bool:
-    """Conservative check: if a tier glob would obviously collide with a
-    HARD_DENY prefix, flag it. Used defensively to ensure future tier edits
-    don't silently contradict HARD_DENY."""
+    """Return True only when a deny rule would swallow the ENTIRE tier glob.
+
+    A deny rule covering one file *inside* a directory glob (e.g.
+    `src/diagnostics/eval_partition.py` vs `src/diagnostics/*.py`) does not
+    collide the whole glob — self_edit.validate_patch still rejects the one
+    file per-patch. We only filter the tier glob when the deny rule is at
+    least as broad (e.g. `src/diagnostics/*` would swallow `src/diagnostics/*.py`).
+    """
     import fnmatch as _fn
     for d in deny:
-        # If the deny entry itself matches the tier glob's static prefix,
-        # we consider the tier glob dangerous.
-        static_prefix = glob.split("*", 1)[0]
-        if static_prefix and (_fn.fnmatch(static_prefix.rstrip("/"), d) or _fn.fnmatch(d, glob)):
+        # Whole-directory deny (trailing /* or /*.ext etc) subsumes the tier glob.
+        if ("*" in d or "?" in d) and _fn.fnmatch(glob, d):
+            return True
+        # Exact-path deny where the tier glob is also that exact file.
+        if "*" not in d and "?" not in d and d == glob:
             return True
     return False
 

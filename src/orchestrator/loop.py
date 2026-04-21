@@ -168,6 +168,12 @@ class ImprovementLoop:
     def __init__(self, config: SystemConfig):
         self.config = config
         self._use_vllm = config.use_vllm
+        # Measurement-corruption global halt (task #4 baseline-drift canary).
+        # Set to True if the cycle_0 anchor re-eval drifts by more than
+        # BASELINE_DRIFT_EPS; latches for the rest of the run.
+        self._self_edit_halted: bool = False
+        self._self_edit_halted_at: int | None = None
+        self._cycle0_anchor_score: float | None = None
         self._backend = getattr(config, "backend", None)
 
         if self._backend == "tdq":
@@ -1469,6 +1475,38 @@ class ImprovementLoop:
         logger.info("[RSI tick %d] Step 3: solve phase took %.1fs",
                     cycle, result.phase_times["rsi_step3_solve"])
 
+        # ── STEP 3b: solution-diversity tracker (task #4) ───────────────────
+        # Leading indicator for mode collapse: if the k-candidate set per
+        # problem collapses onto one canonical answer, the held-out benchmark
+        # will degrade 10-20 cycles later. Compute once per cycle, stash on
+        # CycleResult.diversity_stats, and append a jsonl row.
+        try:
+            from ..diagnostics.solution_diversity import compute_diversity
+            div_report = compute_diversity(cycle, candidates_by_problem)
+            result.diversity_stats = {
+                "mean": div_report.diversity_mean,
+                "variance": div_report.diversity_variance,
+                "n_problems": div_report.n_problems,
+                "n_collapsed": div_report.n_problems_above_threshold,
+                "fraction_collapsed": div_report.fraction_above_threshold,
+                "mode_collapse_alarm": div_report.mode_collapse_alarm,
+                "embedding_backend": div_report.embedding_backend,
+            }
+            try:
+                out_dir = self.config.orchestrator.output_dir / "cycle_metrics"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                with open(out_dir / "diversity.jsonl", "a") as _f:
+                    _f.write(json.dumps({
+                        "cycle": cycle,
+                        **result.diversity_stats,
+                        "timestamp": time.time(),
+                    }) + "\n")
+            except Exception as _exc:
+                logger.debug("diversity.jsonl write failed: %s", _exc)
+        except Exception as exc:
+            logger.warning("[RSI tick %d] diversity tracker failed (%s): %s",
+                           cycle, type(exc).__name__, exc)
+
         # ── STEP 4: verify (per-candidate quorum) ───────────────────────────
         logger.info("[RSI tick %d] Step 4: VERIFY candidates", cycle)
         phase_start = time.time()
@@ -1878,7 +1916,14 @@ class ImprovementLoop:
                                 )
 
                         _sse = int(getattr(self.config.orchestrator, "self_edit_every", 0))
-                        if _sse > 0 and cycle % _sse == 0:
+                        if getattr(self, "_self_edit_halted", False):
+                            logger.warning(
+                                "[RSI tick %d] self-edit HALTED globally "
+                                "(measurement-corruption alarm raised at cycle %s) — "
+                                "skipping meta-cycle.",
+                                cycle, getattr(self, "_self_edit_halted_at", "?"),
+                            )
+                        elif _sse > 0 and cycle % _sse == 0:
                             try:
                                 from .self_edit import (
                                     should_run_meta_cycle,
@@ -2173,6 +2218,60 @@ class ImprovementLoop:
                     "  anchor eval: %.3f (n=%d) per_bench=%s",
                     result.anchor_score, summary["n"], summary["per_benchmark"],
                 )
+                # Baseline-drift canary (task #4). The cycle_0 anchor score
+                # is frozen here; every 10 cycles we compare the current
+                # anchor to that baseline. If drift > ±0.01 we HALT self-edit
+                # globally: either the anchor bank changed under our feet,
+                # or the model is gaming the measurement surface — in either
+                # case, self-edit must stop until a human audits.
+                #
+                # The canary assumes the anchor bank + scorer are
+                # deterministic w.r.t. model-id; if the model did not change
+                # since cycle_0 (e.g. cycle_0 itself re-evaluated), drift
+                # would be exactly 0. We use ±0.01 to absorb generator
+                # noise for anchor benchmarks with small n.
+                BASELINE_DRIFT_EPS = 0.01
+                if cycle == 0 and self._cycle0_anchor_score is None:
+                    self._cycle0_anchor_score = result.anchor_score
+                    logger.info(
+                        "  baseline-drift canary: cycle_0 anchor=%.4f frozen",
+                        self._cycle0_anchor_score,
+                    )
+                elif (
+                    self._cycle0_anchor_score is not None
+                    and cycle > 0
+                    and cycle % 10 == 0
+                    and not self._self_edit_halted
+                ):
+                    drift = result.anchor_score - self._cycle0_anchor_score
+                    logger.info(
+                        "  baseline-drift canary: cycle_%d anchor=%.4f vs cycle_0=%.4f drift=%+.4f",
+                        cycle, result.anchor_score, self._cycle0_anchor_score, drift,
+                    )
+                    if abs(drift) > BASELINE_DRIFT_EPS:
+                        logger.error(
+                            "  MEASUREMENT-CORRUPTION ALARM: cycle_0 anchor "
+                            "drifted by %+.4f (> ±%.4f). Halting self-edit "
+                            "globally. Human audit required.",
+                            drift, BASELINE_DRIFT_EPS,
+                        )
+                        self._self_edit_halted = True
+                        self._self_edit_halted_at = cycle
+                        result.verifier_capture_alarm = True
+                        try:
+                            alarm_dir = self.config.orchestrator.output_dir / "cycle_metrics"
+                            alarm_dir.mkdir(parents=True, exist_ok=True)
+                            with open(alarm_dir / "measurement_corruption.jsonl", "a") as _af:
+                                _af.write(json.dumps({
+                                    "cycle": cycle,
+                                    "cycle0_anchor": self._cycle0_anchor_score,
+                                    "current_anchor": result.anchor_score,
+                                    "drift": drift,
+                                    "threshold": BASELINE_DRIFT_EPS,
+                                    "timestamp": time.time(),
+                                }) + "\n")
+                        except Exception as _aexc:
+                            logger.debug("measurement_corruption.jsonl write failed: %s", _aexc)
                 prev_anchor = next(
                     (r.anchor_score for r in reversed(self.history)
                      if getattr(r, "anchor_score", None) is not None),

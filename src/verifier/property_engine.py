@@ -751,6 +751,85 @@ def verify(
     )
 
 
+# ═════════════════════════════════════════════════════════════════════════
+# Peer-jury fallback (task #9 — wire-verify)
+# ═════════════════════════════════════════════════════════════════════════
+
+def peer_jury_fallback(
+    record: "VerificationRecord",
+    *,
+    problem_text: str,
+    candidate_text: str,
+    reasoning_chain: str = "",
+    peers: tuple[str, ...] = ("codex", "gemini"),
+    min_agree: int = 2,
+    cache_path: str = "outputs/peer_jury_cache.jsonl",
+    timeout_s: int = 30,
+) -> "VerificationRecord":
+    """Run peer-LLM jury when formal verifiers couldn't reach a verdict.
+
+    Fires only if ``record`` was rejected because all formal verdicts ERRORed
+    OR every verdict was FAIL (i.e. the formal layer is either broken for this
+    candidate or unanimously negative but possibly on synthesized tests). A
+    PEER_REVIEW PropertyVerdict row is appended; if the jury PASSes, ``accepted``
+    flips True and reject_reason is cleared. The jury CANNOT resurrect a bundle
+    that was rejected for duplicate-author or min-properties reasons.
+    """
+    if record is None:
+        return record
+    only_errors = record.quorum_n > 0 and record.error_count == record.quorum_n
+    only_fails = record.quorum_n > 0 and record.fail_count == record.quorum_n
+    if not (only_errors or only_fails):
+        return record
+    try:
+        from .peer_jury import jury_verdict, PEER_VOTE_VALID, PEER_VOTE_INVALID
+    except ImportError as exc:
+        logger.debug("peer_jury_fallback: peer_jury import failed: %s", exc)
+        return record
+
+    ours = PEER_VOTE_VALID if only_errors else PEER_VOTE_INVALID
+    try:
+        jr = jury_verdict(
+            problem_id=record.problem_id,
+            problem=problem_text,
+            candidate_response=candidate_text,
+            reasoning_chain=reasoning_chain,
+            ours_vote=ours,
+            peers=peers,
+            min_agree=min_agree,
+            cache_path=cache_path,
+            timeout_s=timeout_s,
+        )
+    except Exception as exc:
+        logger.debug("peer_jury_fallback: jury_verdict failed: %s", exc)
+        return record
+
+    verdict = "PASS" if jr.passed else "FAIL"
+    jury_row = PropertyVerdict(
+        property_id=f"peer_jury:{record.problem_id}",
+        verdict=verdict,
+        independence_class="peer.consensus",
+        author="builtin:peer_jury",
+        name="peer_review_consensus",
+        reason=jr.rationale,
+    )
+    new_per = list(record.per_property) + [jury_row]
+    new_accepted = record.accepted
+    new_reason = record.reject_reason
+    if jr.passed and only_errors:
+        new_accepted = True
+        new_reason = ""
+    record = dataclasses.replace(
+        record,
+        per_property=new_per,
+        accepted=new_accepted,
+        reject_reason=new_reason,
+        pass_count=record.pass_count + (1 if jr.passed else 0),
+        fail_count=record.fail_count + (0 if jr.passed else 1),
+    )
+    return record
+
+
 def property_to_payload(prop: Property) -> dict[str, Any]:
     """Helper for integrator's PropertyRegistry.append_property payload field."""
     return prop.to_dict()
@@ -1575,12 +1654,34 @@ _register_builtin(
 )
 
 
+def _b_peer_review_consensus(problem: dict, candidate: Any) -> tuple[bool, str]:
+    """Task #9: PEER_REVIEW builtin — meant as a FALLBACK verifier.
+
+    Not invoked in the quorum fan-out (which runs formal verifiers only); the
+    orchestrator calls ``peer_jury_fallback(record, ...)`` after verify() when
+    the formal layer errored out or unanimously failed. This builtin exists so
+    PEER_REVIEW is present in the admitted-property taxonomy; if it ever does
+    get pulled into a bundle, it returns ERROR (not wired for direct use).
+    """
+    return False, "peer_review: invoke via peer_jury_fallback(), not quorum"
+
+
+_register_builtin(
+    name="peer_review_consensus", kind=PropertyKind.PEER_REVIEW,
+    description="Peer-LLM jury fallback — ≥2/3 consensus across independent peers.",
+    independence_class="peer.consensus",
+    check_fn=_b_peer_review_consensus,
+    deterministic=False,
+)
+
+
 __all__ = [
     # v0.2.1 canonical
     "Property", "PropertyKind", "INDEPENDENCE_CLASSES", "LegacyProperty",
     "build_property", "is_trusted",
     "admit", "AdmissionResult", "SandboxExecutor", "SandboxedExecutor", "MockExecutor", "Verdict",
     "verify", "VerificationRecord", "PropertyVerdict", "CalibrationView",
+    "peer_jury_fallback",
     "property_to_payload", "write_admitted_bundle",
     "builtin_properties", "get_property",
     "stash_problem_ctx", "get_problem_ctx", "clear_problem_ctx",

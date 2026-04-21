@@ -62,6 +62,7 @@ from .data_generator import (
 from ..diagnostics.engine import DiagnosticResult
 from ..diagnostics.ground_truth import GroundTruthQuestion
 from ..utils.config import SynthesisConfig
+from .reasoning_strategies import ReasoningStrategy, StrategyLibrary
 from ..verifier.verifier_of_verifiers import (
     verify_properties_trustworthy,
     VerifierTrustReport,
@@ -1003,6 +1004,12 @@ class TaskSynthesizer:
         # set_registries(regs) once so propose_batch_code can rank admitted
         # properties and high-accept-count problems to inject as prompt prefix.
         self._registries: Any = None
+        # Reasoning-strategy library (Task #11). Loaded lazily on first use
+        # and only when config.strategy_library_enabled. Each call to
+        # propose_batch_code / solve_batch that consumes `_strategy_prefix()`
+        # also records the top strategy names for later accept-rate tracking.
+        self._strategy_library: Optional[StrategyLibrary] = None
+        self._last_strategy_names: list[str] = []
 
     # -- cross-cycle library wiring -----------------------------------------
 
@@ -1052,6 +1059,62 @@ class TaskSynthesizer:
                 type(exc).__name__, exc,
             )
             return ""
+
+    # -- reasoning-strategy library (Task #11) ------------------------------
+
+    def _get_strategy_library(self) -> Optional[StrategyLibrary]:
+        if not getattr(self.config, "strategy_library_enabled", False):
+            return None
+        if self._strategy_library is None:
+            try:
+                lib = StrategyLibrary(
+                    path=getattr(
+                        self.config, "strategy_library_path",
+                        "outputs/reasoning_strategies.jsonl",
+                    ),
+                    ab_holdout_size=int(getattr(
+                        self.config, "strategy_ab_holdout_size", 4)),
+                    k_few_shot=int(getattr(
+                        self.config, "strategy_library_k_few_shot", 2)),
+                )
+                lib.load()
+                self._strategy_library = lib
+            except Exception as exc:
+                logger.warning("strategy library load failed: %s", exc)
+                return None
+        return self._strategy_library
+
+    def _strategy_prefix(self) -> str:
+        """Prefix (few-shot prefix from top-k strategies) to prepend to system
+        prompts. Empty string when disabled / library empty. Also caches the
+        top strategy names so record_strategy_result() can credit them later.
+        """
+        lib = self._get_strategy_library()
+        if lib is None:
+            self._last_strategy_names = []
+            return ""
+        try:
+            top = lib.top_k()
+            self._last_strategy_names = [s.name for s in top]
+            return lib.few_shot_prefix() or ""
+        except Exception as exc:
+            logger.debug("strategy prefix build failed: %s", exc)
+            self._last_strategy_names = []
+            return ""
+
+    def record_strategy_result(self, success: bool, *, holdout: bool = False) -> None:
+        """Public hook: credit the strategies last surfaced by ``_strategy_prefix``
+        with one accept/reject trial. No-op if strategy library is disabled
+        or no prefix was used on the last propose/solve call.
+        """
+        lib = self._get_strategy_library()
+        if lib is None or not self._last_strategy_names:
+            return
+        try:
+            for name in self._last_strategy_names:
+                lib.record_result(name, success=success, holdout=holdout)
+        except Exception as exc:
+            logger.debug("record_strategy_result failed: %s", exc)
 
     # -- LLM access ----------------------------------------------------------
 
@@ -1377,6 +1440,9 @@ class TaskSynthesizer:
         # per prompt). Empty string when the library is too small (< cfg
         # library_min_admitted) or the synthesizer has no registries attached.
         library_prefix = self._compute_library_prefix()
+        strategy_prefix = self._strategy_prefix()
+        if strategy_prefix:
+            library_prefix = strategy_prefix + library_prefix
 
         prompts: list[str] = []
         for i in range(max(0, n)):
@@ -1646,6 +1712,9 @@ class TaskSynthesizer:
         if not problems or k <= 0:
             return out
 
+        # Task #11: prepend reasoning-strategy few-shot prefix when enabled.
+        strategy_prefix = self._strategy_prefix()
+
         # Seed each problem's candidate list with the reference.
         prompts: list[str] = []
         slot_owner: list[str] = []  # parallel: index → problem_id
@@ -1668,6 +1737,7 @@ class TaskSynthesizer:
             # fence, and the function name is guaranteed to match `entry`
             # regardless of what R1 would have chosen naturally.
             prompt = (
+                f"{strategy_prefix}"
                 "<think>\n\n</think>\n\n"
                 "Write a Python function to solve this problem.\n\n"
                 f"PROBLEM: {p.problem_text}\n\n"

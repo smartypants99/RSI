@@ -582,6 +582,21 @@ class OrchestratorConfig:
     ])
     anchor_eval_cache_dir: str = "outputs/external_benchmarks"
 
+    # Consolidation flips (Team RSI-Trust v1). Each gates an opt-in feature
+    # module added this round; defaults True so the consolidated pipeline
+    # runs with all trust-layer features ON.
+    #  - verifier_adequacy_enforce: src/verifier/adequacy.py scores each
+    #    verifier property on a curated triple bundle (TPR/TNR) and prunes
+    #    library entries that fall below the gate.
+    #  - eval_partition_strict: enforce the 4-way HELD_OUT/PROPOSER/TRAIN/
+    #    SMOKE partition; proposer and training pools cannot touch held-out.
+    #  - meta_meta_enabled: src/orchestrator/meta_meta.py attributes held-out
+    #    deltas to per-component contributions and graduates the self-edit
+    #    allow-list tier as confidence rises.
+    verifier_adequacy_enforce: bool = True
+    eval_partition_strict: bool = True
+    meta_meta_enabled: bool = True
+
     def __post_init__(self):
         if self.max_cycles < 1:
             raise ValueError(f"max_cycles must be >= 1, got {self.max_cycles}")

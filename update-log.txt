@@ -1210,3 +1210,75 @@ TDQ_INFERENCE_DIR before invoking grow_and_stream(). The import is
 deferred and sys.path.append'd (not prepended), so it won't shadow stdlib.
 
 ─ tdq-stream, Task #5.
+
+─── 2026-04-20 — integration-lead, Team RSI-Trust v1 consolidation ──────
+
+All 5 feature agents shipped. This is the consolidation commit that flips
+the four trust-layer default flags ON and documents the restart path.
+
+CONSOLIDATION FLAGS FLIPPED (OrchestratorConfig defaults, src/utils/config.py)
+  - anchor_eval_enabled            = True   # Task #1 ground-truth
+  - verifier_adequacy_enforce      = True   # Task #2 verifier adequacy
+  - eval_partition_strict          = True   # Task #3 eval isolation
+  - meta_meta_enabled              = True   # Task #4 meta-meta tracking
+  (tdq_stream Task #5 is opt-in via GrowthConfig.storage_backend="auto";
+  not a default-flip — activates forward-looking when model fp16 exceeds
+  VRAM budget minus margin.)
+
+GREEN TESTS: pytest -q → 550 passed, 2 skipped, 1 warning.
+
+RESTART RUNBOOK (GPU host)
+  1. `git pull && git log -1` — confirm HEAD contains this consolidation.
+  2. Dependencies unchanged; no package bumps required this round.
+     If missing: `pip install -e .` and verify import paths for
+     src.utils.external_benchmarks, src.verifier.adequacy,
+     src.orchestrator.meta_meta.
+  3. External benchmark cache: first run of anchor_eval will populate
+     outputs/external_benchmarks/ (humaneval, mbpp, gsm8k, math). If
+     offline, the module falls back to shipped offline fixtures. To warm
+     the cache before the run:
+        python3 -c "from src.utils.external_benchmarks import load_benchmark; \
+          [load_benchmark(b) for b in ('humaneval','mbpp','gsm8k','math')]"
+  4. Confirm 4-way eval partition files exist under outputs/partitions/
+     (eval-isolation commit 6014012 bootstraps them on first run if missing).
+  5. Confirm outputs/meta_meta_history.jsonl directory is writable; the
+     meta_meta module appends per-cycle contribution rows here.
+  6. Launch as normal: `bash run_deepseek.sh` (no new CLI flags required —
+     defaults pick up all four flips).
+  7. Cycle 1 smoke check: look for the log line
+        `anchor eval: <score> (n=<N>) per_bench={...}`
+     in the first _eval_phase. N should be 200 (anchor_eval_size) and
+     per_bench should include all four benchmarks.
+  8. Verifier-capture canary: after cycle 2 and beyond, if internal held-out
+     delta > +0.01 while anchor delta < -0.005, `fire_capture_alarm`
+     appends a line to update-log.txt and sets result.verifier_capture_alarm.
+     Tail update-log.txt during runs.
+
+OPERATIONAL NOTES
+  - run_deepseek.sh unchanged — no new CLI flags (defaults suffice).
+  - tdq-stream: src/utils/tdq_bridge.py has a dev-host path pinned via
+    TDQ_INFERENCE_DIR. GPU host must export TDQ_INFERENCE_DIR before
+    any grow_and_stream call (currently unreachable under default
+    grow_every=0, but set it proactively for safety).
+  - lean_verifier remains OFF — lean4 binary still not installed on GPU.
+  - z3 + sim verifier backends: already ON from v0.2.1; no change.
+
+WHAT TO WATCH IN THE FIRST 3 CYCLES
+  1. anchor_score ≥ 0.20 on cycle 1 (R1-32B should score well on
+     humaneval/gsm8k). A score <0.10 means anchor benchmarks didn't load
+     correctly — check outputs/external_benchmarks/ cache.
+  2. No verifier_capture_alarm in cycles 1-3 on a fresh run (alarms should
+     be rare early; frequent alarms mean ground truth and self-grading
+     have diverged before training has done much).
+  3. meta_meta_history.jsonl grows by one row per cycle.
+  4. Partition files under outputs/partitions/ never list a HELD_OUT
+     problem_id inside the PROPOSER or TRAIN set.
+
+ROLLBACK
+  If anything misbehaves, disable via CLI overrides (main.py ignores
+  these today; edit config.py temporarily):
+     anchor_eval_enabled=False verifier_adequacy_enforce=False
+     eval_partition_strict=False meta_meta_enabled=False
+  All four flags are independent — disable only the one that's noisy.
+
+─ integration-lead, Team RSI-Trust v1 consolidation complete.

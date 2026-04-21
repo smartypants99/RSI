@@ -280,6 +280,23 @@ class ImprovementLoop:
         # and less memorization risk.
         self._rsi_pending_pool: list = []
         self._rsi_pool_accumulated_cycles: int = 0
+        # Fast-start (Task #11): pre-stash prior-session training samples so
+        # cycle 1 has a non-empty pool without waiting for a full synthesis
+        # round. Guarded by config flag + try/except so a cold start with
+        # no prior outputs just falls through to normal cold-cycle behavior.
+        if self._synthesis_enabled and getattr(config.orchestrator, "prestash_prior_samples", False):
+            try:
+                from ..utils.fast_start import prestash_prior_training_samples
+                _sid = self._registries.sid if self._registries else ""
+                prior = prestash_prior_training_samples(
+                    config.orchestrator.output_dir, _sid,
+                    max_samples=int(getattr(config.orchestrator, "prestash_max_samples", 30)),
+                )
+                self._rsi_pending_pool.extend(prior)
+                if prior:
+                    logger.info("fast_start: pre-stashed %d prior training samples", len(prior))
+            except Exception as exc:
+                logger.warning("fast_start pre-stash failed (%s): %s", type(exc).__name__, exc)
         # Speed knob: diagnostic result cache. Step 0 of rsi_tick runs a
         # 240-prompt diagnostic every cycle (~56s). Weights only change on
         # training cycles, so the mastery profile is stale-but-valid across
@@ -1229,7 +1246,9 @@ class ImprovementLoop:
         result = CycleResult(cycle)
         reg = self._registries
         synth = self._task_synthesizer
-        ts = self.config.synthesis.tasks_per_cycle
+        # Fast-start (Task #11): cycle 1 uses a smaller propose budget.
+        from ..utils.fast_start import bootstrap_tasks_per_cycle
+        ts = bootstrap_tasks_per_cycle(self.config.synthesis, cycle)
 
         # ── STEP 0: prime synthesizer with current diagnostics ───────────────
         # Speed: reuse cached DiagnosticResult across non-training cycles.
@@ -1257,6 +1276,13 @@ class ImprovementLoop:
         try:
             if use_cached_diag:
                 diag_result = self._rsi_diag_cache
+            elif cycle == 1 and getattr(self.config.orchestrator, "skip_first_diagnostics", False):
+                # Fast-start (Task #11): cycle 1 uses a uniform-default
+                # WeaknessReport to save ~6 min on a cold start. Intentionally
+                # do NOT populate the cache, so cycle 2 triggers a real probe.
+                from ..utils.fast_start import default_weakness_diag
+                diag_result = default_weakness_diag(self.config.diagnostics.domains, cycle=cycle)
+                logger.info("[RSI tick %d] skip_first_diagnostics=True — using uniform default diag", cycle)
             else:
                 diag_result = self.diagnostics.run(cycle)
                 self._rsi_diag_cache = diag_result

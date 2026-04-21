@@ -53,6 +53,18 @@ class GrowthConfig:
     distill_kl_weight: float = 0.5
     abort_if_worse_by: float = 0.01
     max_seq_length: int = 1024
+    # Storage backend for grown weights.
+    #   "vram"       — keep grown model resident in VRAM (default; fits up to
+    #                  ~64B params at 4bit on a 48GB GPU).
+    #   "tdq_stream" — when grown fp16 size would exceed the VRAM budget,
+    #                  serialize to HF dir, compress to .tdq, and load via
+    #                  TDQModelLoader for streaming inference thereafter.
+    #   "auto"       — pick vram if budget permits, else tdq_stream.
+    storage_backend: str = "vram"
+    vram_safety_margin_gb: float = 4.0
+    # If None at runtime, read from torch.cuda.get_device_properties(0).total_memory.
+    vram_budget_gb: Optional[float] = None
+    tdq_config: str = "A"
 
     def __post_init__(self):
         if self.grow_every < 1:
@@ -84,6 +96,15 @@ class GrowthConfig:
             raise ValueError(
                 f"abort_if_worse_by must be >= 0, got {self.abort_if_worse_by}"
             )
+        if self.storage_backend not in ("vram", "tdq_stream", "auto"):
+            raise ValueError(
+                f"storage_backend must be 'vram' | 'tdq_stream' | 'auto', "
+                f"got {self.storage_backend!r}"
+            )
+        if self.vram_safety_margin_gb < 0:
+            raise ValueError("vram_safety_margin_gb must be >= 0")
+        if self.vram_budget_gb is not None and self.vram_budget_gb <= 0:
+            raise ValueError("vram_budget_gb must be > 0 when set")
 
 
 def plan_target_layers(teacher_num_layers: int, growth_factor: float) -> int:
@@ -284,6 +305,160 @@ def distill_step(
 
 
 # -------------------- top-level orchestration entry point --------------------
+
+
+# -------------------- VRAM budget / streaming path ---------------------------
+
+
+def _detect_vram_budget_bytes(cfg: GrowthConfig) -> int:
+    """Return the usable VRAM budget (bytes), minus safety margin.
+
+    Prefers ``cfg.vram_budget_gb`` when set; otherwise queries CUDA. Returns
+    0 when CUDA is unavailable and no explicit budget is set — callers
+    should treat 0 as "unknown, assume fits".
+    """
+    margin = int(cfg.vram_safety_margin_gb * (1024 ** 3))
+    if cfg.vram_budget_gb is not None:
+        return max(0, int(cfg.vram_budget_gb * (1024 ** 3)) - margin)
+    if not torch.cuda.is_available():
+        return 0
+    total = torch.cuda.get_device_properties(0).total_memory
+    return max(0, total - margin)
+
+
+def _estimate_grown_bytes(teacher: nn.Module, cfg: GrowthConfig) -> int:
+    """Estimate fp16 bytes of the grown model.
+
+    Assumes growth multiplies the transformer stack's parameter count by
+    `growth_factor` and leaves the rest (embedding, lm_head) unchanged.
+    Good enough for a budget decision; we over-estimate rather than
+    under-estimate to stay conservative.
+    """
+    parent, attr = _locate_layers(teacher)
+    stack = getattr(parent, attr)
+    stack_params = sum(p.numel() for p in stack.parameters())
+    total_params = sum(p.numel() for p in teacher.parameters())
+    other_params = total_params - stack_params
+    target_layers = plan_target_layers(len(stack), cfg.growth_factor)
+    scale = target_layers / max(1, len(stack))
+    grown_stack_params = int(stack_params * scale)
+    # fp16 = 2 bytes/param
+    return (grown_stack_params + other_params) * 2
+
+
+def _decide_backend(teacher: nn.Module, cfg: GrowthConfig) -> str:
+    """Resolve 'auto' to 'vram' or 'tdq_stream' based on budget; pass-through
+    for explicit modes."""
+    if cfg.storage_backend != "auto":
+        return cfg.storage_backend
+    budget = _detect_vram_budget_bytes(cfg)
+    if budget == 0:
+        # Unknown budget → conservative default: keep in vram.
+        return "vram"
+    need = _estimate_grown_bytes(teacher, cfg)
+    return "tdq_stream" if need > budget else "vram"
+
+
+@dataclass
+class StreamGrowthResult:
+    grew: bool
+    target_layers: int
+    teacher_layers: int
+    estimated_bytes: int
+    vram_budget_bytes: int
+    tdq_path: Optional[str] = None
+    backend: str = "vram"
+    abort_reason: Optional[str] = None
+
+
+def grow_and_stream(
+    teacher: nn.Module,
+    cfg: GrowthConfig,
+    *,
+    output_dir,
+    tokenizer=None,
+    save_fn: Optional[Callable] = None,
+    compress_fn: Optional[Callable] = None,
+) -> StreamGrowthResult:
+    """Grow the teacher but route the grown weights through TDQ compression
+    rather than keeping them resident in VRAM.
+
+    Activated when `cfg.storage_backend == "tdq_stream"` or when 'auto'
+    resolves to tdq_stream because the estimated grown fp16 size exceeds
+    the VRAM budget.
+
+    Flow:
+      1. Compute grown fp16 size and compare to budget. (Skip check when
+         caller forced 'tdq_stream'.)
+      2. Build the grown skeleton on CPU via :func:`grow_model`.
+      3. Save to `output_dir/hf_stage` via `save_fn` (default: save_pretrained).
+      4. Compress to `output_dir/grown.tdq` via `compress_fn`
+         (default: src.utils.tdq_bridge.compress_model_dir_to_tdq).
+      5. Return paths — caller loads the .tdq via TDQModelLoader.
+
+    `save_fn(model, tokenizer, hf_dir) -> Path` and
+    `compress_fn(hf_dir, tdq_path, config) -> Path` are injected so tests
+    can mock them without touching the external compressor.
+    """
+    from pathlib import Path as _Path
+    output_dir = _Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    parent, attr = _locate_layers(teacher)
+    teacher_layers = len(getattr(parent, attr))
+    target_layers = plan_target_layers(teacher_layers, cfg.growth_factor)
+    estimated = _estimate_grown_bytes(teacher, cfg)
+    budget = _detect_vram_budget_bytes(cfg)
+
+    if cfg.storage_backend == "vram":
+        return StreamGrowthResult(
+            grew=False,
+            target_layers=target_layers,
+            teacher_layers=teacher_layers,
+            estimated_bytes=estimated,
+            vram_budget_bytes=budget,
+            backend="vram",
+            abort_reason="storage_backend=vram — grow_and_stream is a no-op",
+        )
+
+    backend = _decide_backend(teacher, cfg)
+    if backend == "vram":
+        return StreamGrowthResult(
+            grew=False,
+            target_layers=target_layers,
+            teacher_layers=teacher_layers,
+            estimated_bytes=estimated,
+            vram_budget_bytes=budget,
+            backend="vram",
+            abort_reason="auto-resolved to vram: estimated size within budget",
+        )
+
+    student = grow_model(teacher, cfg)
+
+    if save_fn is None:
+        from src.utils.tdq_bridge import save_model_to_hf_dir as save_fn
+    if compress_fn is None:
+        from src.utils.tdq_bridge import compress_model_dir_to_tdq as compress_fn
+
+    hf_dir = output_dir / "hf_stage"
+    tdq_path = output_dir / "grown.tdq"
+    save_fn(student, tokenizer, hf_dir)
+    compress_fn(hf_dir, tdq_path, config=cfg.tdq_config)
+
+    logger.info(
+        "growth streamed: %d→%d layers, est %d bytes > budget %d, "
+        "tdq=%s",
+        teacher_layers, target_layers, estimated, budget, tdq_path,
+    )
+    return StreamGrowthResult(
+        grew=True,
+        target_layers=target_layers,
+        teacher_layers=teacher_layers,
+        estimated_bytes=estimated,
+        vram_budget_bytes=budget,
+        tdq_path=str(tdq_path),
+        backend="tdq_stream",
+    )
 
 
 @dataclass

@@ -442,9 +442,41 @@ class VLLMModelLoader:
         return {}
 
     def save_checkpoint(self, path: Path, cycle: int) -> None:
-        """Save model checkpoint (only works in HF mode)."""
+        """Save model checkpoint (only works in HF mode).
+
+        QLoRA-4bit note: bnb-quantized HF models raise NotImplementedError
+        on save_pretrained() because packed 4bit weights can't round-trip
+        through safetensors shard save. Since merge_lora also skips 4bit
+        (packed bytes ≠ dense delta), the checkpoint would be identical to
+        the base model anyway — no point writing it, and a failed partial
+        save leaves a corrupt dir that vLLM reload chokes on. Skip entirely
+        when the HF model is quantized; vLLM reloads from original base.
+        """
         if self._hf_model is None:
             logger.warning("Cannot save checkpoint — HF model not loaded")
+            return
+        # Detect bnb quantized base via hf_quantizer or model config.
+        is_4bit = bool(
+            getattr(self._hf_model, "is_loaded_in_4bit", False)
+            or getattr(self._hf_model, "is_quantized", False)
+            or (self.quantization_config and self.quantization_config.get("load_in_4bit"))
+            or (self.quantization_config and self.quantization_config.get("load_in_8bit"))
+        )
+        if is_4bit:
+            logger.info(
+                "save_checkpoint: skipping for bnb-quantized base "
+                "(save_pretrained would raise NotImplementedError; merge_lora "
+                "already skipped so checkpoint == base). vLLM will reload base."
+            )
+            # Drop a marker dir so the swap_to_vllm_after_training guard
+            # sees .incomplete and falls back to the base model path rather
+            # than trying to load a nonexistent checkpoint.
+            save_path = path / f"cycle_{cycle}"
+            try:
+                save_path.mkdir(parents=True, exist_ok=True)
+                (save_path / ".incomplete").touch()
+            except OSError:
+                pass
             return
         save_path = path / f"cycle_{cycle}"
         save_path.mkdir(parents=True, exist_ok=True)

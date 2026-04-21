@@ -506,7 +506,10 @@ class OrchestratorConfig:
     # on average vs period=3. Cache still invalidates after every training step,
     # so staleness is bounded to non-training cycles where mastery is stable.
     # Set to 1 to disable caching.
-    rsi_diagnostic_refresh_every: int = 5
+    # Task #12 (warm-speed): bumped 5 → 7 to further cut diagnostic miss rate
+    # from 1/5 to 1/7 without meaningfully increasing staleness on
+    # non-training cycles.
+    rsi_diagnostic_refresh_every: int = 7
     # Quick regression probe size (per domain) — 5 is enough to detect the
     # -0.2+ drops that trigger revert. Default was 8; 5 saves ~5s per training
     # cycle without changing revert semantics.

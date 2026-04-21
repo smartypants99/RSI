@@ -1015,3 +1015,17 @@ Model loaded fast (02:10 launch → 02:15 ready). Cycle 1 in progress:
 No training yet. If later proposals keep failing on reasoning-trace
 preamble, add a `</think>`-boundary strip to the parser. Not a fix
 yet — waiting for first cycle to complete end-to-end.
+
+=== 2026-04-21 02:43 UTC — cron iter — fixed DoRA/4bit crash ===
+First DeepSeek cycle crashed at train step:
+  RuntimeError: tensor a (13107200) must match tensor b (5120)
+  13107200 = 2560 * 5120 = packed bnb-4bit uint8 storage.
+DoRA's _dora_scale_factor reads `original_layer.weight.float()`
+assuming dense [out, in], but Linear4bit stores Params4bit (packed).
+
+Fix 7be2d0b: auto-disable DoRA when base module is Linear4bit /
+Linear8bitLt. Standard QLoRA is plain LoRA on quantized frozen base.
+
+Restart 02:42 UTC with fix. Model loaded cached weights fast. Cycle
+1 in flight. Next cron should see cycle 1 propose/solve/verify and
+whether training fires cleanly.

@@ -101,6 +101,13 @@ class VLLMModelLoader:
             gpu_memory_utilization=self.gpu_memory_utilization,
             trust_remote_code=self.allow_remote_code,
             disable_log_stats=True,
+            # Explicit: propose/solve prompts share a long system-prompt prefix
+            # ("<think>\n\n</think>\n\n" + chat template + task intro). With
+            # prefix caching the attn KV for that shared prefix is computed once
+            # per cycle and reused across all N candidate generations — a large
+            # steady-state win. vLLM defaults this on in recent versions, but we
+            # set it explicitly so the optimization survives version drift.
+            enable_prefix_caching=True,
         )
         # vLLM-side bitsandbytes 4-bit. Without this a 32B model can't
         # fit inference on a 48 GB GPU. The `load_format='bitsandbytes'`

@@ -1768,16 +1768,30 @@ class ImprovementLoop:
                     revert_threshold = float(getattr(
                         self.config.trainer, "regression_revert_threshold", 0.10,
                     ))
-                    try:
-                        post_score = self._quick_regression_probe(cycle)
-                    except Exception as exc:
-                        logger.warning(
-                            "[RSI tick %d] regression probe raised (%s); "
-                            "skipping revert check (may let a bad checkpoint "
-                            "through this cycle): %s",
-                            cycle, type(exc).__name__, exc,
-                        )
-                        post_score = result.pre_score  # treat as no-change
+                    # On vLLM, skip the quick HF-path probe entirely — it was
+                    # OOM'ing on 32B-4bit post-training (48 prompts through
+                    # HF with no VRAM headroom). Swap to vLLM first with the
+                    # merged weights, then let the full Phase 5b eval (which
+                    # runs via vLLM and uses the stronger eval-isolation
+                    # partition anyway) determine regression. If it regresses,
+                    # the post-Phase-5b revert guard at the eval-phase site
+                    # swaps back. We set a neutral post_score here so we don't
+                    # block the swap path; the real decision happens in
+                    # _eval_phase.
+                    skip_quick_probe = bool(getattr(self, "_use_vllm", False))
+                    if skip_quick_probe:
+                        post_score = result.pre_score  # neutral — defer to Phase 5b
+                    else:
+                        try:
+                            post_score = self._quick_regression_probe(cycle)
+                        except Exception as exc:
+                            logger.warning(
+                                "[RSI tick %d] regression probe raised (%s); "
+                                "skipping revert check (may let a bad checkpoint "
+                                "through this cycle): %s",
+                                cycle, type(exc).__name__, exc,
+                            )
+                            post_score = result.pre_score  # treat as no-change
                     result.post_score = post_score
                     result.improvement = result.post_score - result.pre_score
 

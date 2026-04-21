@@ -510,6 +510,14 @@ class OrchestratorConfig:
     # regression or flatline epoch is skipped. Set to 0 to disable entirely.
     merge_into_base_every: int = 10
     substrate_merge_min_improvement: float = 0.005
+    # Stable session id for append-only registries under outputs/<kind>/<sid>.jsonl.
+    # Previously unset → RSIRegistries.open fell back to uuid.uuid4()[:12] every
+    # process restart, siloing each run's artifacts into a fresh file. That
+    # meant the property + proposer few-shot banks could NEVER accumulate
+    # across restarts — defeating the point of RSI library growth. Default
+    # "rsi" gives one stable bank per output_dir; set a unique value when
+    # you want isolated runs (e.g. A/B experiments sharing output_dir).
+    run_id: str = "rsi"
 
     def __post_init__(self):
         if self.max_cycles < 1:

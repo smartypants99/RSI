@@ -999,6 +999,59 @@ class TaskSynthesizer:
         # these each tick via set_frontier_hint() / set_difficulty_floor().
         self._frontier_skill: str = ""
         self._difficulty_floor_override: Optional[float] = None
+        # Cross-cycle few-shot banks (property_library). Orchestrator calls
+        # set_registries(regs) once so propose_batch_code can rank admitted
+        # properties and high-accept-count problems to inject as prompt prefix.
+        self._registries: Any = None
+
+    # -- cross-cycle library wiring -----------------------------------------
+
+    def set_registries(self, registries: Any) -> None:
+        """Attach an RSIRegistries instance so propose_batch_code can draw few-shot
+        exemplars from prior cycles. Orchestrator wires this during rsi_tick
+        setup; unit tests leave it unset (=> library prefix is always empty).
+        """
+        self._registries = registries
+
+    def _compute_library_prefix(self) -> str:
+        """Build the cross-cycle few-shot prefix for the code-proposal prompt.
+
+        Returns "" when (a) use_property_library is False, (b) registries
+        aren't attached, or (c) the PropertyRegistry has fewer than
+        library_min_admitted distinct admitted property_ids (cold-start
+        guard — rendering a tiny bank is noise that only distracts).
+        """
+        if not getattr(self.config, "use_property_library", True):
+            return ""
+        regs = self._registries
+        if regs is None:
+            return ""
+        try:
+            from .property_library import build_library_prefix
+        except ImportError:
+            logger.debug("property_library not importable; skipping prefix")
+            return ""
+        try:
+            return build_library_prefix(
+                property_registry=getattr(regs, "property_registry", None),
+                verification_log=getattr(regs, "verification_log", None),
+                problem_registry=getattr(regs, "problem_registry", None),
+                training_pool=getattr(regs, "training_pool", None),
+                min_admitted_for_gate=int(
+                    getattr(self.config, "library_min_admitted", 20)
+                ),
+                k_properties=int(getattr(self.config, "library_k_properties", 5)),
+                k_proposer=int(getattr(self.config, "library_k_proposer", 3)),
+                min_vov_score=float(
+                    getattr(self.config, "library_min_vov_score", 1.0)
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "library prefix build failed (%s: %s) — skipping",
+                type(exc).__name__, exc,
+            )
+            return ""
 
     # -- LLM access ----------------------------------------------------------
 
@@ -1318,6 +1371,13 @@ class TaskSynthesizer:
         if frontier_skill and frontier_fraction > 0:
             n_frontier = int(round(max(0, n) * frontier_fraction))
 
+        # Library prefix: top-k admitted properties + high-quorum-accept
+        # proposer exemplars from prior cycles. Computed once per batch
+        # (reading append-only JSONL is cheap but O(N); no need to recompute
+        # per prompt). Empty string when the library is too small (< cfg
+        # library_min_admitted) or the synthesizer has no registries attached.
+        library_prefix = self._compute_library_prefix()
+
         prompts: list[str] = []
         for i in range(max(0, n)):
             if failed_questions:
@@ -1326,9 +1386,10 @@ class TaskSynthesizer:
             else:
                 base = CODE_PROPOSAL_TEMPLATE
             if i < n_frontier and frontier_skill:
-                prompts.append(_splice_frontier_hint(base, frontier_skill))
-            else:
-                prompts.append(base)
+                base = _splice_frontier_hint(base, frontier_skill)
+            # Library prefix goes ABOVE everything (above the frontier-hint
+            # and above the canonical PROBLEM: example) per task-#2 ordering.
+            prompts.append(_prepend_library_prefix(base, library_prefix))
         if not prompts:
             return []
         raws = self._generate_many(prompts)
@@ -2846,6 +2907,20 @@ def _build_failure_seeded_prompt(failed_question: str) -> str:
     if idx == -1:
         return base + insertion
     return base[:idx] + insertion + "\n" + base[idx:]
+
+
+def _prepend_library_prefix(base: str, library_prefix: str) -> str:
+    """Prepend the property + proposer few-shot bank to the top of the prompt.
+
+    Placed ABOVE everything (including frontier-hint and the canonical
+    PROBLEM: example) so the model sees "here are patterns that earned trust"
+    before it sees the task format. Both this block and the frontier-hint
+    therefore land before the canonical PROBLEM: — matching team-lead's
+    ordering guidance. No-op when library_prefix is empty.
+    """
+    if not library_prefix:
+        return base
+    return library_prefix.rstrip() + "\n\n" + base
 
 
 def _splice_frontier_hint(base: str, skill_pair: str) -> str:

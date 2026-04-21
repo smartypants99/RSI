@@ -1042,3 +1042,18 @@ trend before acting.
 Parallel agents landed 7 speed commits (afb9722/d9e640f/8ea90e4/
 3f45945/3adc817/f9a735b/ad9f4b9) — take effect on NEXT restart.
 Live run still on old code. Won't disturb until it crashes or plateaus.
+
+=== 2026-04-21 04:08 UTC — cron — cycle 1 complete post-R1-budget-fix ===
+Accept: 3/114 (2.6%) — barely better than 2.4% pre-fix. max_new_tokens
+2048 didn't help; solve generated only 215 tokens/candidate on avg so
+R1 is finishing early WITHOUT code. Need structural prefill (end prompt
+with "def {entry}(" so model MUST continue from signature).
+
+Backed off applying the prefill fix — Team RSI (5 agents) is editing
+task_synthesizer.py concurrently. Will apply after they complete.
+
+Team RSI tasks in_progress: #1 curriculum, #2 library, #3 adversarial,
+#4 substrate, #5 meta. Estimated 30-60 min for all to land.
+
+Current run continues cycle 2. Pool=3, below min_batch=5, still no
+training. ~25min/cycle cold, ~15min warm.

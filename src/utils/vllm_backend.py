@@ -121,7 +121,20 @@ class VLLMModelLoader:
         elif qc and qc.get("load_in_8bit"):
             llm_kwargs["quantization"] = "bitsandbytes"
             llm_kwargs["load_format"] = "bitsandbytes"
-        self._llm = LLM(**llm_kwargs)
+        # enable_prefix_caching has been a vLLM kwarg since 0.3.x, but guard
+        # against older/forked vLLM that rejects the kwarg. On TypeError we
+        # retry without it; vLLM will still default-enable it where supported.
+        try:
+            self._llm = LLM(**llm_kwargs)
+        except TypeError as _e:
+            if "enable_prefix_caching" in str(_e):
+                logger.warning(
+                    "vLLM LLM() rejected enable_prefix_caching — retrying without it"
+                )
+                llm_kwargs.pop("enable_prefix_caching", None)
+                self._llm = LLM(**llm_kwargs)
+            else:
+                raise
         self._tokenizer = self._llm.get_tokenizer()
         if self._tokenizer.pad_token is None:
             self._tokenizer.pad_token = self._tokenizer.eos_token

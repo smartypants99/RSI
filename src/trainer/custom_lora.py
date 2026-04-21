@@ -106,15 +106,39 @@ class LoRALayer(nn.Module):
         self.use_rslora = use_rslora
         self.init_method = init_method
         self.use_dora = bool(use_dora)
-        # Auto-disable DoRA when base is bitsandbytes-4bit: DoRA's magnitude
-        # scale needs the dense [out, in] weight to compute ‖W + scaling·BA‖_c,
-        # but Linear4bit stores .weight as a packed uint8 Params4bit (1D-ish
-        # flat shape). Dequantizing every forward pass would defeat 4-bit's
-        # VRAM saving, and plain LoRA on quantized base is the canonical
-        # QLoRA recipe anyway.
+        # Auto-disable DoRA when base is bitsandbytes-4bit or 8bit: DoRA's
+        # magnitude scale needs the dense [out, in] weight to compute
+        # ‖W + scaling·BA‖_c, but bnb quantized layers store .weight as a
+        # packed Params4bit/Int8Params (1D-ish flat shape). Dequantizing
+        # every forward pass would defeat quantization's VRAM savings, and
+        # plain LoRA on quantized base is the canonical QLoRA recipe anyway.
+        #
+        # Detection is ATTRIBUTE-based, not class-name-based: various wrappers
+        # (Qwen2's quant modules, transformers' Linear4bit subclasses, vLLM-
+        # integrated paths, etc.) have different class names but all expose
+        # `weight.quant_state` (bnb-4bit) or `weight.CB` / `weight.SCB`
+        # (bnb-8bit). Class-name checks miss these and we saw the exact same
+        # packed-weight crash on DeepSeek-R1-Distill-Qwen-32B-bnb-4bit.
+        w = getattr(original_layer, "weight", None)
+        self._base_is_4bit = (
+            w is not None and (
+                hasattr(w, "quant_state")
+                or type(w).__name__ in ("Params4bit",)
+            )
+        )
+        self._base_is_8bit = (
+            w is not None and (
+                hasattr(w, "CB") or hasattr(w, "SCB")
+                or type(w).__name__ in ("Int8Params",)
+            )
+        )
+        # Backstop: also check class name for environments where bnb's private
+        # attrs were renamed.
         cls_name = type(original_layer).__name__
-        self._base_is_4bit = cls_name in ("Linear4bit", "LinearFP4", "LinearNF4")
-        self._base_is_8bit = cls_name == "Linear8bitLt"
+        if cls_name in ("Linear4bit", "LinearFP4", "LinearNF4"):
+            self._base_is_4bit = True
+        if cls_name == "Linear8bitLt":
+            self._base_is_8bit = True
         if self.use_dora and (self._base_is_4bit or self._base_is_8bit):
             self.use_dora = False
         self.weakness_scale = weakness_scale

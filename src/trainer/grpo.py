@@ -53,17 +53,31 @@ DEFAULT_PLATEAU_MIN_GAIN = 0.003  # 0.3%
 # ---------------------------------------------------------------------------
 
 def _extract_category_novelty(sample: "TrainingSample") -> float:
-    """Read category_novelty ∈ [0,1] off a TrainingSample.
+    """Read OOD novelty ∈ [0,1] off a TrainingSample.
 
-    Falls back to 0.0 when curriculum-ood hasn't populated the field yet — so
-    reward shaping is a no-op on in-distribution samples and stays backward
-    compatible with the current TrainingSample dataclass.
+    Source-of-truth contract (curriculum-ood, Task #7): TrainingSample.meta
+    carries the dict emitted by OODSeedBatch.metadata_for(...):
+      {ood: True, ood_domain, domain_maturity ∈ [0,1], cycle_proposed}
+    Novelty = 1 - domain_maturity; non-OOD samples (meta["ood"] != True) get 0.
+
+    Fallback for samples that predate the meta contract: read
+    getattr(sample, "category_novelty", None). Missing everywhere → 0.0
+    (reward shaping degrades to plain quorum pass rate, non-breaking).
     """
+    meta = getattr(sample, "meta", None)
+    if isinstance(meta, dict) and meta.get("ood") is True:
+        maturity = meta.get("domain_maturity")
+        if maturity is not None:
+            try:
+                m = float(maturity)
+            except (TypeError, ValueError):
+                m = None
+            if m is not None and math.isfinite(m):
+                return max(0.0, min(1.0, 1.0 - m))
+    # Legacy / direct-field path.
     val = getattr(sample, "category_novelty", None)
-    if val is None:
-        meta = getattr(sample, "meta", None)
-        if isinstance(meta, dict):
-            val = meta.get("category_novelty")
+    if val is None and isinstance(meta, dict):
+        val = meta.get("category_novelty")
     if val is None:
         return 0.0
     try:

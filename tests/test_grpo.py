@@ -87,6 +87,41 @@ def test_ood_reads_meta_dict_fallback():
     assert r("p", "c", _MetaSample()) == pytest.approx(1.2)
 
 
+def test_ood_reads_meta_domain_maturity_contract():
+    """Source-of-truth contract from curriculum-ood's OODSeedBatch.metadata_for."""
+    @dataclass
+    class _OODSample:
+        prompt: str = ""
+        response: str = ""
+        domain: str = ""
+        meta: dict = field(default_factory=lambda: {
+            "ood": True, "ood_domain": "graph_theory",
+            "domain_maturity": 0.0, "cycle_proposed": 12,
+        })
+    # Brand-new domain: maturity=0 → novelty=1 → bonus=0.5 → reward=1.5
+    r = make_property_quorum_reward_fn(lambda p, c, s: 1.0, ood_alpha=0.5)
+    assert r("p", "c", _OODSample()) == pytest.approx(1.5)
+
+    # Mainstream domain: maturity=1 → novelty=0 → no bonus
+    mainstream = _OODSample()
+    mainstream.meta = {"ood": True, "domain_maturity": 1.0}
+    assert r("p", "c", mainstream) == pytest.approx(1.0)
+
+
+def test_ood_meta_without_ood_true_is_treated_as_indist():
+    """meta dict lacking ood=True should not trigger novelty bonus."""
+    @dataclass
+    class _PlainSample:
+        prompt: str = ""
+        response: str = ""
+        domain: str = ""
+        meta: dict = field(default_factory=lambda: {
+            "ood": False, "domain_maturity": 0.0,  # would be 1.0 novelty if ood=True
+        })
+    r = make_property_quorum_reward_fn(lambda p, c, s: 1.0, ood_alpha=0.5)
+    assert r("p", "c", _PlainSample()) == pytest.approx(1.0)
+
+
 def test_invalid_alpha_rejected():
     with pytest.raises(ValueError):
         make_property_quorum_reward_fn(lambda p, c, s: 1.0, ood_alpha=-0.1)

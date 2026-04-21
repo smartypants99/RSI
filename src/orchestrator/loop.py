@@ -2074,30 +2074,32 @@ class ImprovementLoop:
         # cycle cached its per-question records, compute a paired delta +
         # SE. Frozen eval holds the question set constant, so pairing by
         # (prompt, expected) matches every question — typical VR is 3-5×.
-        try:
-            prev_per_q = next(
-                (
-                    getattr(r, "_eval_per_rep_per_question", None)
-                    for r in reversed(self.history)
-                    if getattr(r, "_eval_per_rep_per_question", None)
-                ),
-                None,
-            )
-            cur_per_q = per_rep_per_question[-1] if per_rep_per_question else None
-            if prev_per_q and cur_per_q:
-                from ..diagnostics.paired_eval import paired_delta
-                pd = paired_delta(prev_per_q[-1], cur_per_q)
-                if pd is not None:
-                    result.paired_delta = pd.delta
-                    result.paired_delta_se = pd.delta_se
-                    result.paired_delta_n = pd.n
-                    result.paired_variance_reduction = pd.variance_reduction
-                    logger.info(
-                        "    paired delta: %+.4f ± %.4f (n=%d, z=%.2f, VR=%.1fx)",
-                        pd.delta, pd.delta_se, pd.n, pd.z, pd.variance_reduction,
-                    )
-        except Exception as exc:
-            logger.warning("paired delta computation failed (non-fatal): %s", exc)
+        # Gated on paired_eval_enabled (default True, consolidation flip).
+        if getattr(self.config.orchestrator, "paired_eval_enabled", True):
+            try:
+                prev_per_q = next(
+                    (
+                        getattr(r, "_eval_per_rep_per_question", None)
+                        for r in reversed(self.history)
+                        if getattr(r, "_eval_per_rep_per_question", None)
+                    ),
+                    None,
+                )
+                cur_per_q = per_rep_per_question[-1] if per_rep_per_question else None
+                if prev_per_q and cur_per_q:
+                    from ..diagnostics.paired_eval import paired_delta
+                    pd = paired_delta(prev_per_q[-1], cur_per_q)
+                    if pd is not None:
+                        result.paired_delta = pd.delta
+                        result.paired_delta_se = pd.delta_se
+                        result.paired_delta_n = pd.n
+                        result.paired_variance_reduction = pd.variance_reduction
+                        logger.info(
+                            "    paired delta: %+.4f ± %.4f (n=%d, z=%.2f, VR=%.1fx)",
+                            pd.delta, pd.delta_se, pd.n, pd.z, pd.variance_reduction,
+                        )
+            except Exception as exc:
+                logger.warning("paired delta computation failed (non-fatal): %s", exc)
 
         # Anchor eval (Task #1, ground-truth). Ground-truth external
         # benchmarks — detects verifier capture when internal loop improves
@@ -2202,6 +2204,36 @@ class ImprovementLoop:
             )
         except Exception as exc:
             logger.debug("difficulty_tracker post-eval update failed: %s", exc)
+
+        # meta_meta cycle record (Task #4). Appends one row per cycle to the
+        # JSONL history with the components-active snapshot + held-out delta,
+        # so component_contributions / effective_allow_list can attribute
+        # future improvements. Gated on meta_meta_enabled (default True).
+        if getattr(self.config.orchestrator, "meta_meta_enabled", True) and delta is not None:
+            try:
+                from pathlib import Path as _P
+                from .meta_meta import record_cycle as _mm_record
+                ocfg = self.config.orchestrator
+                scfg = self.config.synthesis
+                components_active = {
+                    "fast_student": False,  # not wired into propose/solve yet
+                    "ood": bool(getattr(scfg, "ood_enabled", False)),
+                    "curriculum_ratchet": bool(
+                        getattr(self.config.diagnostics, "difficulty_curriculum", False)
+                    ),
+                    "growth": int(getattr(ocfg, "grow_every", 0)) > 0,
+                    "self_edit": int(getattr(ocfg, "self_edit_every", 0)) > 0,
+                    "grpo": self.config.trainer.training_mode == "grpo",
+                }
+                _mm_record(
+                    _P(ocfg.meta_meta_history_path),
+                    cycle_id=cycle,
+                    components_active=components_active,
+                    held_out_delta=float(delta),
+                    self_edit_tier=None,
+                )
+            except Exception as exc:
+                logger.debug("meta_meta record_cycle failed (non-fatal): %s", exc)
 
     def _meta_step(self, cycle: int, result: CycleResult) -> None:
         """End-of-cycle: record outcome into MetaController and apply bounded proposals.

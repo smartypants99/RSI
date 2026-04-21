@@ -1282,3 +1282,70 @@ ROLLBACK
   All four flags are independent — disable only the one that's noisy.
 
 ─ integration-lead, Team RSI-Trust v1 consolidation complete.
+
+─── 2026-04-20 — integration-lead, Team RSI-Trust v2 consolidation ──────
+
+SUPERSEDES the Team RSI-Trust v1 runbook above. All 5 feature agents +
+safety-gate reviews signed off. Scope of this pass: add paired-eval gate,
+wire meta_meta record_cycle, expose history path + rescore cadence.
+
+CONSOLIDATION FLAGS (OrchestratorConfig, src/utils/config.py)
+  - anchor_eval_enabled                 = True
+  - verifier_adequacy_enforce           = True
+  - eval_partition_strict               = True
+  - meta_meta_enabled                   = True
+  - paired_eval_enabled                 = True     (new this pass)
+  - meta_meta_history_path              = "outputs/meta_meta_history.jsonl"
+  - verifier_adequacy_rescore_every     = 10
+  - heldout_questions_per_domain        = 540      (from prior pass, confirmed)
+
+ORCHESTRATOR WIRING — STATE BY FEATURE
+  - ground-truth: run_anchor_eval is called inside _eval_phase after the
+    internal held-out; detect_verifier_capture + fire_capture_alarm fire
+    when internal_up & anchor_down. Surfaced on CycleResult.anchor_score
+    and .verifier_capture_alarm and in curriculum.jsonl.
+  - eval-isolation: 4-way partition already enforced from commit 6014012.
+    Paired-sample delta/SE (commit abbcb06) now gated on paired_eval_enabled
+    and logged as `paired delta: ±SE (n=…, z=…, VR=…x)` in _eval_phase.
+  - meta-meta: record_cycle(history_path, cycle_id, components_active,
+    held_out_delta) is called at the end of _eval_phase when delta is
+    computable. components_active reflects live config (ood, curriculum,
+    growth, self_edit, grpo). self_edit_tier is None today — tier flow
+    graduates via self_edit.run_self_edit_meta_cycle once the
+    model_propose/smoke_eval plumbing lands (stub-wired).
+  - verifier-adequacy: adequacy scoring lives in src/verifier/adequacy.py
+    but is NOT yet driven from the orchestrator loop: rescore_and_prune
+    operates on LibraryEntry objects keyed by domain fixtures, and the
+    current PropertyRegistry surface does not yet expose that shape.
+    verifier_adequacy_rescore_every=10 is surfaced here so the registry-
+    side wiring can read it when landed; the flag verifier_adequacy_enforce
+    is consumed by the adequacy module's own call sites.
+
+GREEN TESTS: pytest -q → 550 passed, 2 skipped, 1 warning.
+
+RESTART RUNBOOK (GPU host)
+  1. `git pull && git log -1` — confirm HEAD contains this consolidation.
+  2. Dependencies unchanged; `pip install -e .` if a fresh checkout.
+  3. Warm external benchmark cache (first run does this lazily too):
+        python3 -c "from src.utils.external_benchmarks import load_benchmark; \
+          [load_benchmark(b) for b in ('humaneval','mbpp','gsm8k','math')]"
+  4. Ensure outputs/meta_meta_history.jsonl's parent is writable.
+  5. Launch: `bash run_deepseek.sh` (no new CLI flags).
+  6. Cycle-1 smoke: expect log lines
+        paired delta: +0.0XXX ± 0.00YY (n=…, z=…, VR=…x)
+        anchor eval: 0.XXX (n=200) per_bench={…}
+  7. Tail update-log.txt — verifier_capture alarms append here.
+
+WHAT TO WATCH IN CYCLES 1-5
+  - paired delta SE should be 3-5× smaller than raw delta spread across
+    heldout_repetitions — that's the variance-reduction payoff.
+  - meta_meta_history.jsonl grows by one line per cycle.
+  - anchor_score stabilizes >0.20 for R1-32B on the mixed bundle.
+  - No verifier_capture_alarm in the first 3 cycles on a clean run.
+
+ROLLBACK
+  Individually disable flags in config.py; each is independent:
+    anchor_eval_enabled, verifier_adequacy_enforce, eval_partition_strict,
+    meta_meta_enabled, paired_eval_enabled.
+
+─ integration-lead, Team RSI-Trust v2 consolidation complete.

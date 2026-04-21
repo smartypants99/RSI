@@ -596,6 +596,16 @@ class OrchestratorConfig:
     verifier_adequacy_enforce: bool = True
     eval_partition_strict: bool = True
     meta_meta_enabled: bool = True
+    # Paired-sample held-out variance reduction (eval-isolation commit
+    # abbcb06). Loop pairs current vs previous cycle's per-question records
+    # and reports mean delta ± paired SE.
+    paired_eval_enabled: bool = True
+    # meta_meta append-only history (src/orchestrator/meta_meta.py). Written
+    # each cycle when meta_meta_enabled.
+    meta_meta_history_path: str = "outputs/meta_meta_history.jsonl"
+    # Rescore + prune cadence for verifier adequacy library (consumed by the
+    # adequacy module when a registry-side owner wires it in).
+    verifier_adequacy_rescore_every: int = 10
 
     def __post_init__(self):
         if self.max_cycles < 1:

@@ -969,3 +969,23 @@ case is small positive deltas stacked on top of cycle_7's 0.576.
 
 If any regression fires the (now-tight) revert guard, the log will say
 `reverted` and the model will snap back to the last good checkpoint.
+
+=== 2026-04-21 01:10 UTC — resume bugs, now running from cycle_7 ===
+Resume attempt 1 (00:54 UTC) crashed: `_resume` rejects resume paths
+outside output_dir for traversal safety. Fix: mv cycle_7 physically
+into /workspace/RSI/outputs/checkpoints/.
+
+Also bumped early_stop_loss 0.50 → 0.15 (d957b0a) so training gets
+>2 steps per cycle. Paired with the tight revert guard (0.03), any
+training that makes things worse gets reverted automatically.
+
+Run restarted 01:10 UTC. vLLM loading cycle_7 (0.576 held-out) as
+base. 40-cycle budget. Target: show AT LEAST ONE additional training
+cycle that either improves on 0.576 or gets cleanly reverted. That
+would prove RSI stacks, not just fires.
+
+Outstanding for "fully working":
+  - Multiple sequential trained-better cycles (we have 1 so far)
+  - DeepSeek-32B TDQ training path (needs user's adapter training
+    flow; not touched overnight since peft+TDQModel don't compose)
+  - Acceptance stability (currently 0-12/cycle, noisy)

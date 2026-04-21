@@ -796,10 +796,20 @@ class CustomLoRATrainer:
         model = self.model_loader.model
         tokenizer = self.model_loader.tokenizer
 
+        # Use train_max_seq_length (default 1024) to cap padding — model
+        # max_seq_length (4096) is for generation and far exceeds typical
+        # property-verified code sample length (~500 toks). Padding to
+        # 4096 wasted ~16x attention compute per step. Clamped to the
+        # model cap so a misconfig never over-runs available positions.
+        _train_cap = min(
+            getattr(self.config, "train_max_seq_length",
+                    self.model_loader.config.max_seq_length),
+            self.model_loader.config.max_seq_length,
+        )
         dataset = TrainingDataset(
             verified_samples,
             tokenizer,
-            max_length=self.model_loader.config.max_seq_length,
+            max_length=_train_cap,
         )
         samples_rejected = len(verified_samples) - len(dataset)
         if samples_rejected > 0:
@@ -1204,8 +1214,15 @@ class CustomLoRATrainer:
         model = self.model_loader.model
         tokenizer = self.model_loader.tokenizer
 
+        # See SFT path: cap padding at train_max_seq_length to avoid paying
+        # 4096-token attention for ~500-token samples. Clamped to model cap.
+        _train_cap = min(
+            getattr(self.config, "train_max_seq_length",
+                    self.model_loader.config.max_seq_length),
+            self.model_loader.config.max_seq_length,
+        )
         dataset = PreferenceDataset(
-            pairs, tokenizer, max_length=self.model_loader.config.max_seq_length,
+            pairs, tokenizer, max_length=_train_cap,
         )
         rejected_count = len(pairs) - len(dataset)
         if rejected_count > 0:

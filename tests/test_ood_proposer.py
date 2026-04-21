@@ -249,4 +249,31 @@ def test_seed_batch_metadata_reflects_maturity():
     assert meta["ood"] is True
     assert meta["ood_domain"] == "graph_theory"
     assert meta["domain_maturity"] == pytest.approx(1.0)
+    assert meta["category_novelty"] == pytest.approx(0.0)
     assert meta["cycle_proposed"] == 12
+
+
+def test_metadata_brand_new_domain_has_novelty_one():
+    tracker = OODDomainTracker()
+    tracker.register("cryptanalysis", cycle=24)
+    batch = OODSeedBatch(cycle=24, domain="cryptanalysis", problems=["x"])
+    meta = batch.metadata_for("x", tracker)
+    assert meta["domain_maturity"] == pytest.approx(0.0)
+    assert meta["category_novelty"] == pytest.approx(1.0)
+
+
+def test_record_outcome_batched_mode(tmp_path):
+    t = OODDomainTracker(state_path=tmp_path / "ood.jsonl")
+    t.register("graph_theory", cycle=0)
+    t.record_outcome("graph_theory", proposals=10, accepts=3)
+    rec = t.get("graph_theory")
+    assert rec.cumulative_proposals == 10
+    assert rec.cumulative_accepts == 3
+    assert rec.accept_rate == pytest.approx(0.3)
+
+
+def test_record_outcome_rejects_accepts_exceeding_proposals(tmp_path):
+    t = OODDomainTracker(state_path=tmp_path / "ood.jsonl")
+    t.register("graph_theory", cycle=0)
+    with pytest.raises(ValueError):
+        t.record_outcome("graph_theory", proposals=2, accepts=5)

@@ -121,13 +121,35 @@ class OODDomainTracker:
             self._domains[key] = rec
         return rec
 
-    def record_outcome(self, domain: str, accepted: bool, proposals: int = 1) -> DomainRecord:
+    def record_outcome(
+        self,
+        domain: str,
+        accepted: bool = True,
+        proposals: int = 1,
+        *,
+        accepts: Optional[int] = None,
+    ) -> DomainRecord:
+        """Record proposal outcomes for a domain.
+
+        Two call shapes:
+          * Per-outcome (default): ``record_outcome(d, accepted=True)`` →
+            +1 proposal, +1 accept iff ``accepted`` is truthy.
+          * Batched: ``record_outcome(d, proposals=N, accepts=K)`` → +N
+            proposals, +K accepts. In batched mode the positional
+            ``accepted`` arg is ignored.
+        """
         key = _normalize_domain(domain)
         rec = self._domains.get(key)
         if rec is None:
             raise KeyError(f"unknown domain {domain!r}; call register() first")
-        rec.cumulative_proposals += int(max(0, proposals))
-        if accepted:
+        n_props = int(max(0, proposals))
+        rec.cumulative_proposals += n_props
+        if accepts is not None:
+            n_acc = int(max(0, accepts))
+            if n_acc > n_props:
+                raise ValueError(f"accepts={n_acc} > proposals={n_props}")
+            rec.cumulative_accepts += n_acc
+        elif accepted:
             rec.cumulative_accepts += 1
         return rec
 
@@ -244,12 +266,16 @@ class OODSeedBatch:
     problems: list[str] = field(default_factory=list)
 
     def metadata_for(self, problem: str, tracker: OODDomainTracker) -> dict:
+        # `problem` is reserved for future per-problem novelty refinement
+        # (e.g. embedding-distance to known bank). Currently unused.
+        del problem
         rec = tracker.get(self.domain)
         maturity = rec.domain_maturity if rec else 0.0
         return {
             "ood": True,
             "ood_domain": _normalize_domain(self.domain),
             "domain_maturity": round(maturity, 4),
+            "category_novelty": round(1.0 - maturity, 4),
             "cycle_proposed": self.cycle,
         }
 

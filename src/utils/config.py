@@ -518,6 +518,12 @@ class OrchestratorConfig:
     # "rsi" gives one stable bank per output_dir; set a unique value when
     # you want isolated runs (e.g. A/B experiments sharing output_dir).
     run_id: str = "rsi"
+    # True weight growth (Task #1, weight-growth). Every N trained cycles,
+    # distill the current model into a 1.5N-param student via
+    # src/trainer/growth.py::grow_and_distill. Full GrowthConfig (growth_factor,
+    # distill_epochs, abort_if_worse_by, …) is constructed by the caller in
+    # growth.py; this field only gates WHEN the growth step fires. 0 = off.
+    grow_every: int = 0
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -537,6 +543,10 @@ class OrchestratorConfig:
         if self.substrate_merge_min_improvement < 0:
             raise ValueError(
                 f"substrate_merge_min_improvement must be >= 0, got {self.substrate_merge_min_improvement}"
+            )
+        if self.grow_every < 0:
+            raise ValueError(
+                f"grow_every must be >= 0 (0=disabled), got {self.grow_every}"
             )
 
 

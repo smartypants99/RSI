@@ -152,6 +152,16 @@ class VerifierConfig:
     # external structural verification — any outside checker can audit each step.
     atomic_mode: bool = False
 
+    # External-solver verifier backends (Tasks #3/#4/#5). When enabled, the
+    # task synthesizer stamps the corresponding Property kinds onto eligible
+    # problems (theorem → lean, SMT → z3, physics/chemistry → sim). Each
+    # backend ships graceful-skip behavior if its dependency (lean4/z3/scipy)
+    # is unavailable, so flipping on is safe even without the binary installed.
+    # Default-off for BC; consolidation flip enables lean+z3+sim together.
+    lean_verifier_enabled: bool = False
+    z3_verifier_enabled: bool = False
+    sim_verifier_enabled: bool = False
+
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):
             raise ValueError(f"min_confidence_for_accept must be in [0, 1], got {self.min_confidence_for_accept}")

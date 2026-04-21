@@ -993,6 +993,12 @@ class TaskSynthesizer:
         # frontier). Toggle off for tests that don't want the extra
         # generate call.
         self._frontier_self_solve_gate: bool = True
+        # Curriculum escalation: current skill-pair the orchestrator's
+        # DifficultyTracker identified as the frontier ("domain/subdomain"),
+        # and the ratcheted minimum proposal difficulty. Orchestrator sets
+        # these each tick via set_frontier_hint() / set_difficulty_floor().
+        self._frontier_skill: str = ""
+        self._difficulty_floor_override: Optional[float] = None
 
     # -- LLM access ----------------------------------------------------------
 
@@ -1105,6 +1111,24 @@ class TaskSynthesizer:
             self._session_id = session_id
         if run_id:
             self._run_id = run_id
+
+    def set_frontier_hint(self, skill_pair: str) -> None:
+        """Set the frontier skill-pair (e.g. "code/implementation") that the
+        DifficultyTracker identified as the easiest zone currently failing.
+        propose_batch_code splices this into a fraction of prompts.
+        """
+        self._frontier_skill = str(skill_pair or "")
+
+    def set_difficulty_floor(self, floor: Optional[float]) -> None:
+        """Override the minimum self-reported DIFFICULTY: a proposal must
+        declare. None restores the module-default floor.
+        """
+        if floor is None:
+            self._difficulty_floor_override = None
+        else:
+            self._difficulty_floor_override = float(
+                max(0.0, min(0.9, floor))
+            )
 
     def propose_batch(
         self,
@@ -1283,13 +1307,28 @@ class TaskSynthesizer:
         import random as _random
         rng = _random.Random(hash(self._session_id or "code") & 0xFFFF_FFFF)
 
+        # Frontier-sampling fraction: a configurable fraction of the batch
+        # gets a skill-pair hint spliced into the prompt so the model aims
+        # its proposal at the DifficultyTracker's current frontier.
+        frontier_fraction = float(
+            getattr(self.config, "frontier_fraction", 0.5) or 0.0
+        )
+        frontier_skill = (self._frontier_skill or "").strip()
+        n_frontier = 0
+        if frontier_skill and frontier_fraction > 0:
+            n_frontier = int(round(max(0, n) * frontier_fraction))
+
         prompts: list[str] = []
-        for _ in range(max(0, n)):
+        for i in range(max(0, n)):
             if failed_questions:
                 seed = rng.choice(failed_questions)
-                prompts.append(_build_failure_seeded_prompt(seed))
+                base = _build_failure_seeded_prompt(seed)
             else:
-                prompts.append(CODE_PROPOSAL_TEMPLATE)
+                base = CODE_PROPOSAL_TEMPLATE
+            if i < n_frontier and frontier_skill:
+                prompts.append(_splice_frontier_hint(base, frontier_skill))
+            else:
+                prompts.append(base)
         if not prompts:
             return []
         raws = self._generate_many(prompts)
@@ -1305,8 +1344,13 @@ class TaskSynthesizer:
         # understand why PROBLEM: isn't landing.
         first_failed_preview: str = ""
 
+        effective_floor = (
+            self._difficulty_floor_override
+            if self._difficulty_floor_override is not None
+            else _MIN_CODE_PROPOSAL_DIFFICULTY
+        )
         for i, raw in enumerate(raws):
-            parse = parse_code_proposal(raw)
+            parse = parse_code_proposal(raw, difficulty_floor=effective_floor)
             if not parse.ok:
                 for iss in parse.issues:
                     issue_tally[iss] += 1
@@ -2804,6 +2848,27 @@ def _build_failure_seeded_prompt(failed_question: str) -> str:
     return base[:idx] + insertion + "\n" + base[idx:]
 
 
+def _splice_frontier_hint(base: str, skill_pair: str) -> str:
+    """Splice a frontier-skill hint before the YOUR OUTPUT marker.
+
+    ``skill_pair`` comes from DifficultyTracker.frontier() — a string
+    like "code/implementation" or "math/calculus". The hint anchors the
+    model's proposal at a zone it currently fails in, rather than at a
+    skill it already masters.
+    """
+    hint = (
+        "\nFRONTIER SKILL: Design a problem that primarily requires the "
+        f"skill `{skill_pair.strip()}` — the model CURRENTLY FAILS here, "
+        "so push toward this capability zone (do not drift into unrelated "
+        "areas). Keep all other rules above.\n"
+    )
+    marker = "YOUR OUTPUT:"
+    idx = base.rfind(marker)
+    if idx == -1:
+        return base + hint
+    return base[:idx] + hint + "\n" + base[idx:]
+
+
 _CODE_BLOCK_LABELS = (
     "PROBLEM:", "ENTRY:", "REFERENCE:", "TESTS:",
     "EMPTY_INPUT:", "SAMPLE_INPUT:", "EXPECTED_TYPE:",
@@ -2852,7 +2917,11 @@ class _CodeProposalParse:
         )
 
 
-def parse_code_proposal(raw: str) -> _CodeProposalParse:
+def parse_code_proposal(
+    raw: str,
+    *,
+    difficulty_floor: Optional[float] = None,
+) -> _CodeProposalParse:
     """Parse the simplified code-proposal format. Forgiving — only problem,
     entry, reference, and ≥2 tests are hard-required; the rest default.
 
@@ -2964,10 +3033,15 @@ def parse_code_proposal(raw: str) -> _CodeProposalParse:
         out.issues.append("missing_reference")
     if len(out.tests) < 2:
         out.issues.append("too_few_tests")
-    if out.difficulty < _MIN_CODE_PROPOSAL_DIFFICULTY:
+    floor = (
+        difficulty_floor
+        if difficulty_floor is not None
+        else _MIN_CODE_PROPOSAL_DIFFICULTY
+    )
+    if out.difficulty < floor:
         out.issues.append(
             f"difficulty_below_frontier:{out.difficulty:.2f}"
-            f"<{_MIN_CODE_PROPOSAL_DIFFICULTY:.2f}"
+            f"<{floor:.2f}"
         )
     return out
 

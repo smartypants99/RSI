@@ -579,11 +579,35 @@ class SynthesisConfig:
     # here"). Remaining prompts use the canonical / failure-seeded template
     # unchanged. 0.0 disables frontier biasing; 1.0 frontier-samples every slot.
     frontier_fraction: float = 0.5
+    # Cross-cycle property + proposer few-shot banks (src/generator/property_library).
+    # Gated at call time: takes effect only when the PropertyRegistry carries
+    # ≥library_min_admitted distinct admitted property_ids, so cold-start
+    # cycle-1 prompt (no library yet) is unchanged. Default True because the
+    # whole point of RSI is that the pipeline itself improves across cycles —
+    # this is the mechanism.
+    use_property_library: bool = True
+    library_min_admitted: int = 20
+    library_k_properties: int = 5
+    library_k_proposer: int = 3
+    # Score floor for property inclusion (rejected_adversarial_count *
+    # confirmer_pass_rate). 1.0 = at least one corruption caught with a
+    # non-zero pass rate; excludes never-tested-adversarially properties.
+    library_min_vov_score: float = 1.0
 
     def __post_init__(self):
         if not (0.0 <= self.frontier_fraction <= 1.0):
             raise ValueError(
                 f"frontier_fraction must be in [0, 1], got {self.frontier_fraction}"
+            )
+        if self.library_min_admitted < 0:
+            raise ValueError(
+                f"library_min_admitted must be >= 0, got {self.library_min_admitted}"
+            )
+        if self.library_k_properties < 0 or self.library_k_proposer < 0:
+            raise ValueError("library_k_* must be >= 0")
+        if self.library_min_vov_score < 0:
+            raise ValueError(
+                f"library_min_vov_score must be >= 0, got {self.library_min_vov_score}"
             )
         if self.tasks_per_cycle < 1:
             raise ValueError(f"tasks_per_cycle must be >= 1, got {self.tasks_per_cycle}")

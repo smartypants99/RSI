@@ -39,13 +39,17 @@ class VLLMModelLoader:
     def __init__(self, model_path: str, dtype: str = "bfloat16",
                  max_model_len: int = 4096, gpu_memory_utilization: float = 0.90,
                  allow_remote_code: bool = False,
-                 quantization_config: dict | None = None):
+                 quantization_config: dict | None = None,
+                 enable_lora: bool = False,
+                 max_lora_rank: int = 64):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
         self.gpu_memory_utilization = gpu_memory_utilization
         self.allow_remote_code = bool(allow_remote_code)
         self.quantization_config = quantization_config
+        self.enable_lora = bool(enable_lora)
+        self.max_lora_rank = int(max_lora_rank)
         self._llm = None
         self._tokenizer = None
         self._sampling_params_cls = None
@@ -54,6 +58,10 @@ class VLLMModelLoader:
         self._hf_tokenizer = None
         # Track the current model path (changes after checkpoint save)
         self._current_model_path = model_path
+        # Active PEFT adapter (used on vLLM inference when set).
+        self._lora_adapter_path: str | None = None
+        self._lora_adapter_id: int = 0
+        self._lora_adapter_name: str = "rsi_adapter"
         # Expose a config-like object so components that read model_loader.config
         # (e.g., CustomLoRATrainer accessing config.max_seq_length) work uniformly.
         from .config import ModelConfig
@@ -121,17 +129,23 @@ class VLLMModelLoader:
         elif qc and qc.get("load_in_8bit"):
             llm_kwargs["quantization"] = "bitsandbytes"
             llm_kwargs["load_format"] = "bitsandbytes"
+        if self.enable_lora:
+            llm_kwargs["enable_lora"] = True
+            llm_kwargs["max_lora_rank"] = self.max_lora_rank
         # enable_prefix_caching has been a vLLM kwarg since 0.3.x, but guard
         # against older/forked vLLM that rejects the kwarg. On TypeError we
         # retry without it; vLLM will still default-enable it where supported.
         try:
             self._llm = LLM(**llm_kwargs)
         except TypeError as _e:
-            if "enable_prefix_caching" in str(_e):
-                logger.warning(
-                    "vLLM LLM() rejected enable_prefix_caching — retrying without it"
-                )
-                llm_kwargs.pop("enable_prefix_caching", None)
+            msg = str(_e)
+            recovered = False
+            for kw in ("enable_prefix_caching", "enable_lora", "max_lora_rank"):
+                if kw in msg and kw in llm_kwargs:
+                    logger.warning(f"vLLM LLM() rejected {kw} — retrying without it")
+                    llm_kwargs.pop(kw, None)
+                    recovered = True
+            if recovered:
                 self._llm = LLM(**llm_kwargs)
             else:
                 raise
@@ -292,7 +306,11 @@ class VLLMModelLoader:
             if stop:
                 sp_kwargs["stop"] = list(stop)
             params = self._sampling_params_cls(**sp_kwargs)
-            outputs = self._llm.generate(prompts, params)
+            gen_kwargs = {}
+            lora_req = self._build_lora_request()
+            if lora_req is not None:
+                gen_kwargs["lora_request"] = lora_req
+            outputs = self._llm.generate(prompts, params, **gen_kwargs)
             return [o.outputs[0].text for o in outputs]
         else:
             # HF fallback (during training phase eval)
@@ -333,6 +351,49 @@ class VLLMModelLoader:
         finally:
             self._hf_tokenizer.padding_side = original_side
 
+    def _build_lora_request(self):
+        """Construct a vLLM LoRARequest for the active adapter, if any.
+
+        Returns None when no adapter is registered or LoRARequest import fails
+        (older vLLM without LoRA support) — caller falls back to plain generate.
+        """
+        if not self._lora_adapter_path or not self.enable_lora:
+            return None
+        try:
+            from vllm.lora.request import LoRARequest
+        except ImportError:
+            return None
+        return LoRARequest(
+            self._lora_adapter_name,
+            self._lora_adapter_id,
+            self._lora_adapter_path,
+        )
+
+    def set_lora_adapter(self, adapter_path: str | None) -> None:
+        """Register a PEFT adapter directory for subsequent vLLM generate calls.
+
+        Passing None clears the adapter (fall back to base-only inference).
+        Increments the int id each time so vLLM's cache invalidates when the
+        adapter directory contents change cycle-to-cycle.
+        """
+        if adapter_path is None:
+            self._lora_adapter_path = None
+            return
+        p = Path(adapter_path)
+        required = ("adapter_model.safetensors", "adapter_config.json")
+        if not p.is_dir() or not all((p / f).exists() for f in required):
+            logger.warning(
+                f"set_lora_adapter: {adapter_path} missing PEFT files "
+                f"({required}); skipping registration."
+            )
+            self._lora_adapter_path = None
+            return
+        self._lora_adapter_path = str(p)
+        self._lora_adapter_id += 1
+        logger.info(
+            f"Registered LoRA adapter id={self._lora_adapter_id} at {p}"
+        )
+
     # ---- Training swap interface ----
 
     def swap_to_hf_for_training(self) -> None:
@@ -340,7 +401,8 @@ class VLLMModelLoader:
         self._unload_vllm()
         self._load_hf()
 
-    def swap_to_vllm_after_training(self, checkpoint_path: str | None = None) -> None:
+    def swap_to_vllm_after_training(self, checkpoint_path: str | None = None,
+                                    adapter_path: str | None = None) -> None:
         """Unload HF, reload vLLM with merged weights. Falls back to HF on failure.
 
         Validates ``_current_model_path`` before loading. A local directory
@@ -381,6 +443,14 @@ class VLLMModelLoader:
                 )
                 self._current_model_path = self.model_path
                 self.config.model_path = self.model_path
+
+        # If the caller provided an adapter dir, enable LoRA on this reload and
+        # register it so _build_lora_request returns it on generate(). Adapter
+        # persistence matters most on bnb-4bit bases where merge_lora no-ops —
+        # without this, every cycle evaluates the untrained base.
+        if adapter_path is not None:
+            self.enable_lora = True
+            self.set_lora_adapter(adapter_path)
 
         try:
             self._load_vllm()

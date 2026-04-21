@@ -532,6 +532,14 @@ class OrchestratorConfig:
     # regression or flatline epoch is skipped. Set to 0 to disable entirely.
     merge_into_base_every: int = 10
     substrate_merge_min_improvement: float = 0.005
+    # QLoRA adapter persistence. On bnb-4bit bases, merge_lora no-ops (packed
+    # weights ≠ dense delta) AND save_checkpoint no-ops (save_pretrained
+    # raises). Without adapter persistence every cycle evaluates the untrained
+    # base. When True (default) and base is 4bit, each cycle writes a PEFT-
+    # format adapter and vLLM loads it at inference via LoRARequest. Auto-
+    # gated by base quantization — setting True on a full-precision base is
+    # harmless (the gate returns False and this has no effect).
+    use_lora_adapter_persistence: bool = True
     # Stable session id for append-only registries under outputs/<kind>/<sid>.jsonl.
     # Previously unset → RSIRegistries.open fell back to uuid.uuid4()[:12] every
     # process restart, siloing each run's artifacts into a fresh file. That

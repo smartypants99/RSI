@@ -168,6 +168,22 @@ class CycleResult:
 class ImprovementLoop:
     """Orchestrates the recursive self-improvement loop."""
 
+    def _base_is_4bit(self) -> bool:
+        """True when the base model is bnb-4bit/8bit quantized.
+
+        On bnb-4bit bases, merge_lora no-ops (packed weights can't absorb
+        dense deltas) AND save_checkpoint no-ops (save_pretrained raises on
+        quantized bases). Without adapter persistence, training effectively
+        evaporates each cycle. This predicate gates the PEFT-adapter path.
+        """
+        qc = getattr(getattr(self.model_loader, "config", None),
+                     "quantization_config", None)
+        if not qc:
+            qc = getattr(self.model_loader, "quantization_config", None)
+        if not qc:
+            return False
+        return bool(qc.get("load_in_4bit") or qc.get("load_in_8bit"))
+
     def __init__(self, config: SystemConfig):
         self.config = config
         self._use_vllm = config.use_vllm
@@ -1177,20 +1193,35 @@ class ImprovementLoop:
         _log_peak_memory("train")
         logger.info(f"  Training done: {metrics.steps} steps, final loss: {metrics.final_loss:.4f}")
 
-        # 5. Save LoRA weights BEFORE merge (merge destroys them), then evaluate
+        # 5. Save LoRA weights BEFORE merge (merge destroys them), then evaluate.
+        # save_lora_weights ALSO emits a PEFT-format adapter dir — when the
+        # base is bnb-4bit, merge_lora no-ops (packed weights ≠ dense delta),
+        # so this adapter is the ONLY thing that persists training across
+        # cycles. vLLM loads it at inference via LoRARequest.
         logger.info(f"[Cycle {cycle}] Phase 5: EVALUATE")
-        self.trainer.save_lora_weights(
+        adapter_path = self.trainer.save_lora_weights(
             self.config.orchestrator.output_dir / "lora_weights", cycle
         )
         self.trainer.merge_lora()
+        use_adapter = bool(
+            adapter_path is not None
+            and getattr(self.config.orchestrator, "use_lora_adapter_persistence", True)
+            and self._base_is_4bit()
+        )
 
         if self._use_vllm:
             ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
             self.model_loader.save_checkpoint(ckpt_root, cycle)
             tmp_ckpt = ckpt_root / f"cycle_{cycle}"
-            if not (tmp_ckpt / "config.json").exists() or not any(
-                tmp_ckpt.glob("*.safetensors")
-            ):
+            ckpt_ok = (
+                (tmp_ckpt / "config.json").exists()
+                and any(tmp_ckpt.glob("*.safetensors"))
+            )
+            # On bnb-4bit, save_checkpoint correctly skips (marker .incomplete
+            # is dropped) because the base weights can't round-trip. Don't fail
+            # the swap — adapter persistence covers us. Fall back to the base
+            # model path and attach the adapter.
+            if not ckpt_ok and not use_adapter:
                 raise RuntimeError(
                     f"checkpoint at {tmp_ckpt} is incomplete "
                     f"(missing config.json or *.safetensors); refusing vLLM swap"
@@ -1203,7 +1234,13 @@ class ImprovementLoop:
                 and getattr(self.config.vllm, "skip_reload_after_training", False)
             )
             if not skip_reload:
-                self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
+                swap_kwargs = {}
+                if use_adapter:
+                    swap_kwargs["adapter_path"] = str(adapter_path)
+                swap_ckpt = str(tmp_ckpt) if ckpt_ok else None
+                self.model_loader.swap_to_vllm_after_training(
+                    swap_ckpt, **swap_kwargs
+                )
         # Run post-training diagnostics on the SAME questions as pre-training.
         # Different cycle arg = different RNG seed = different questions, which
         # made `improvement = post - pre` compare apples to oranges.
@@ -1817,10 +1854,18 @@ class ImprovementLoop:
                     )
                     self.trainer.strip_lora()
                 else:
-                    self.trainer.save_lora_weights(
+                    rsi_adapter_path = self.trainer.save_lora_weights(
                         self.config.orchestrator.output_dir / "lora_weights", cycle
                     )
                     self.trainer.merge_lora()
+                    rsi_use_adapter = bool(
+                        rsi_adapter_path is not None
+                        and getattr(
+                            self.config.orchestrator,
+                            "use_lora_adapter_persistence", True,
+                        )
+                        and self._base_is_4bit()
+                    )
 
                     # Regression-revert guard: do a FAST probe (not a full
                     # diagnostic run) before swapping vLLM over. Previous
@@ -1903,7 +1948,17 @@ class ImprovementLoop:
                             ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
                             self.model_loader.save_checkpoint(ckpt_root, cycle)
                             tmp_ckpt = ckpt_root / f"cycle_{cycle}"
-                            self.model_loader.swap_to_vllm_after_training(str(tmp_ckpt))
+                            swap_kwargs = {}
+                            if rsi_use_adapter:
+                                swap_kwargs["adapter_path"] = str(rsi_adapter_path)
+                            tmp_ok = (
+                                (tmp_ckpt / "config.json").exists()
+                                and any(tmp_ckpt.glob("*.safetensors"))
+                            )
+                            swap_ckpt = str(tmp_ckpt) if tmp_ok else None
+                            self.model_loader.swap_to_vllm_after_training(
+                                swap_ckpt, **swap_kwargs
+                            )
                         logger.info(
                             "[RSI tick %d] training done: %d steps, score %+.3f",
                             cycle, metrics.steps, result.improvement,

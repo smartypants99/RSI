@@ -1979,10 +1979,18 @@ class CustomLoRATrainer:
 
         return LambdaLR(optimizer, lr_lambda)
 
-    def save_lora_weights(self, path: Path, cycle: int) -> None:
-        """Save only the LoRA weights."""
+    def save_lora_weights(self, path: Path, cycle: int) -> Path | None:
+        """Save only the LoRA weights.
+
+        Writes the native `lora_weights.pt` (used by `load_lora_weights` to
+        resume training in-process) AND a PEFT-compatible adapter directory
+        (`adapter_model.safetensors` + `adapter_config.json`) so vLLM can
+        load this adapter at inference time via LoRARequest.
+
+        Returns the PEFT adapter directory path on success, else None.
+        """
         if not self._lora_layers:
-            return
+            return None
         save_path = path / f"lora_cycle_{cycle}"
         save_path.mkdir(parents=True, exist_ok=True)
         # Check disk space before writing — 100MB headroom for LoRA weights.
@@ -1990,7 +1998,7 @@ class CustomLoRATrainer:
             free = shutil.disk_usage(save_path).free
             if free < 100 * 1024 * 1024:
                 logger.error(f"Disk nearly full ({free // 1024 // 1024}MB free) — skipping LoRA weight save")
-                return
+                return None
         except OSError as e:
             logger.warning(f"Could not check disk space: {e}")
         state_dict = {}
@@ -2003,6 +2011,90 @@ class CustomLoRATrainer:
             state_dict[f"{name}.rank"] = torch.tensor(layer.rank)
             state_dict[f"{name}.weakness_scale"] = torch.tensor(layer.weakness_scale)
         torch.save(state_dict, save_path / "lora_weights.pt")
+
+        # Also emit PEFT-format adapter so vLLM --enable-lora can load it.
+        try:
+            return self._save_peft_adapter(save_path)
+        except Exception as e:
+            logger.warning(f"PEFT adapter export failed ({type(e).__name__}: {e}); "
+                           f"native lora_weights.pt still saved")
+            return None
+
+    def _save_peft_adapter(self, save_path: Path) -> Path:
+        """Write PEFT-compatible adapter_model.safetensors + adapter_config.json.
+
+        PEFT key convention: `base_model.model.<module_path>.lora_A.weight`
+        and `.lora_B.weight`. vLLM 0.19 loads this via LoRARequest.
+
+        NOTE: weakness_scale, rsLoRA, DoRA, per-layer weakness-adaptive rank,
+        and PiSSA residual-subtraction are native-LoRA-only features that
+        PEFT doesn't model. The exported adapter preserves the raw A/B
+        matrices — enough for vLLM to apply `scaling·(B@A)` — but the
+        base weights at inference must match the base weights used during
+        training. DoRA/PiSSA bases differ from the original (residual or
+        magnitude-adjusted), so this export is ONLY safe for plain LoRA on
+        a bnb-4bit base (the QLoRA persistence path).
+        """
+        import json
+
+        try:
+            from safetensors.torch import save_file
+        except ImportError as e:
+            raise RuntimeError("safetensors not installed — can't write PEFT adapter") from e
+
+        # Collect per-layer ranks to compute one global r for the config.
+        # vLLM expects a single rank; per-layer rank variation maps to the
+        # `rank_pattern` field (PEFT 0.6+).
+        ranks: dict[str, int] = {}
+        target_modules_set: set[str] = set()
+        peft_state: dict[str, torch.Tensor] = {}
+        for name, layer in self._lora_layers.items():
+            key_A = f"base_model.model.{name}.lora_A.weight"
+            key_B = f"base_model.model.{name}.lora_B.weight"
+            # vLLM expects bfloat16 adapter weights (same dtype as base compute).
+            peft_state[key_A] = layer.lora_A.data.cpu().to(torch.bfloat16).contiguous()
+            peft_state[key_B] = layer.lora_B.data.cpu().to(torch.bfloat16).contiguous()
+            ranks[name] = int(layer.rank)
+            target_modules_set.add(name.split(".")[-1])
+
+        save_file(peft_state, str(save_path / "adapter_model.safetensors"))
+
+        # Rank config: pick majority rank as the default `r`, keep the rest
+        # in rank_pattern (PEFT reads these per-module).
+        from collections import Counter
+        rank_counts = Counter(ranks.values())
+        default_r = rank_counts.most_common(1)[0][0] if rank_counts else int(self.config.lora_rank)
+        rank_pattern = {n: r for n, r in ranks.items() if r != default_r}
+
+        base_model_path = ""
+        try:
+            base_model_path = str(getattr(self.model_loader.config, "model_path", "") or "")
+        except Exception:
+            pass
+
+        adapter_config = {
+            "peft_type": "LORA",
+            "task_type": "CAUSAL_LM",
+            "r": default_r,
+            "lora_alpha": int(self.config.lora_alpha),
+            "lora_dropout": float(self.config.lora_dropout),
+            "bias": "none",
+            "target_modules": sorted(target_modules_set),
+            "rank_pattern": rank_pattern,
+            "alpha_pattern": {},
+            "fan_in_fan_out": False,
+            "inference_mode": True,
+            "base_model_name_or_path": base_model_path,
+            "use_rslora": bool(getattr(self.config, "use_rslora", False)),
+        }
+        with open(save_path / "adapter_config.json", "w") as f:
+            json.dump(adapter_config, f, indent=2)
+        logger.info(
+            f"Wrote PEFT adapter at {save_path} "
+            f"(r={default_r}, {len(self._lora_layers)} layers, "
+            f"targets={sorted(target_modules_set)})"
+        )
+        return save_path
 
     def load_lora_weights(self, path: Path | str) -> None:
         """Load saved LoRA weights and inject them into the model.

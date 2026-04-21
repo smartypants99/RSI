@@ -1029,3 +1029,16 @@ Linear8bitLt. Standard QLoRA is plain LoRA on quantized frozen base.
 Restart 02:42 UTC with fix. Model loaded cached weights fast. Cycle
 1 in flight. Next cron should see cycle 1 propose/solve/verify and
 whether training fires cleanly.
+
+=== 2026-04-21 03:02 UTC — cron — cycle 1 completed ===
+DeepSeek-32B cycle 1: 2/84 accepted (2.4%). Pool < 5 min_batch,
+no training fired. Cycle 2 propose running now.
+Timing: propose 8min (R1 emits long reasoning), solve 2min, verify 7s.
+Cold cycle total ~16min; warm cycles (cache hit) projected ~10-11min.
+Accept rate 2.4% lower than hoped. Root cause TBD (R1 format drift?
+Quorum too strict for R1 output style?). Need 2-3 more cycles to
+trend before acting.
+
+Parallel agents landed 7 speed commits (afb9722/d9e640f/8ea90e4/
+3f45945/3adc817/f9a735b/ad9f4b9) — take effect on NEXT restart.
+Live run still on old code. Won't disturb until it crashes or plateaus.

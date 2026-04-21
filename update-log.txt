@@ -1057,3 +1057,19 @@ Team RSI tasks in_progress: #1 curriculum, #2 library, #3 adversarial,
 
 Current run continues cycle 2. Pool=3, below min_batch=5, still no
 training. ~25min/cycle cold, ~15min warm.
+2026-04-20 — integration-lead (Task #10) online. Baseline pytest on clean HEAD: 1 expected fail (src/safety/ in-progress from safety-gate). Broadcast sent to all 9 teammates: ping me with field-add requests (name, type, default-off, validation, target dataclass). Final consolidation commit bumps defaults to 'on' only after all 9 agents TaskUpdate=completed. Will wire run_deepseek.sh flags, run full pytest, write restart runbook here. Standing by.
+
+2026-04-20 — verifier-lean (Task #3) — Lean4 backend landed.
+  New: src/verifier/lean_backend.py, tests/test_lean_backend.py.
+  Augmented src/verifier/external_solver.py (additive: SubprocessOutcome
+  + run_subprocess_verifier helper, shared w/ verifier-z3 & verifier-sim).
+  property_engine gains PropertyKind.LEAN_PROOF + independence class
+  "proof.formal". Builtin `lean_proof_valid` auto-registers on import;
+  gracefully defers if enum/classes missing. Hosts without lean → ERROR
+  (quorum skip), no silent PASS.
+  RUN_FIRST on GPU host:
+    curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf \
+      | sh -s -- -y --default-toolchain leanprover/lean4:stable
+    source $HOME/.elan/env && lean --version
+  Pytest: 397 passed + 11 new; pre-existing 3 test_rsi_actual failures
+  (enum-length==10) shared with tasks #4/#5 — integration-lead owns.

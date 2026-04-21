@@ -2007,6 +2007,33 @@ class ImprovementLoop:
         """
         reps = max(1, int(getattr(self.config.orchestrator, "heldout_repetitions", 1)))
         logger.info(f"[Cycle {cycle}] Phase 5b: HELD-OUT EVAL (x{reps})")
+
+        # Ensure vLLM is resident before Phase 5b. After training (Step 8),
+        # HF is loaded and vLLM is unloaded; if the post-train swap path
+        # didn't run (e.g. trainer guard skipped because 0 steps, or
+        # save_checkpoint raised silently), we'd end up running 1200-question
+        # eval through HF — which on 32B-4bit OOMs and enters endless retry.
+        # Guarantee vLLM is up here no matter what happened in Step 8.
+        if getattr(self, "_use_vllm", False) and getattr(self.model_loader, "_llm", None) is None:
+            logger.info(
+                "[Cycle %d] Phase 5b: vLLM not resident (training path skipped "
+                "swap-back); reloading from current model_path before eval.",
+                cycle,
+            )
+            try:
+                # Prefer the latest saved checkpoint if present; else base.
+                ckpt_root = self.config.orchestrator.output_dir / "checkpoints"
+                candidate = ckpt_root / f"cycle_{cycle}"
+                if candidate.exists() and (candidate / "config.json").exists():
+                    self.model_loader.swap_to_vllm_after_training(str(candidate))
+                else:
+                    self.model_loader.swap_to_vllm_after_training(None)
+            except Exception as exc:
+                logger.warning(
+                    "[Cycle %d] vLLM pre-eval reload failed (%s) — eval may "
+                    "fall back to HF path. Error: %s",
+                    cycle, type(exc).__name__, exc,
+                )
         eval_diag = None
         scores: list[float] = []
         per_rep_domain_scores: list[dict] = []

@@ -501,6 +501,15 @@ class OrchestratorConfig:
     # -0.2+ drops that trigger revert. Default was 8; 5 saves ~5s per training
     # cycle without changing revert semantics.
     regression_probe_questions_per_domain: int = 5
+    # Substrate update: promote the merged checkpoint to a new base every N
+    # training cycles. LoRA on a frozen 4-bit base has a fixed ceiling (the
+    # only trainable params are the low-rank adapters); periodically snapshot
+    # the current merged weights as a new base and restart LoRA fresh on top.
+    # Guardrail: only promote if cumulative held-out improvement since the
+    # last promotion (or baseline) is >= substrate_merge_min_improvement; a
+    # regression or flatline epoch is skipped. Set to 0 to disable entirely.
+    merge_into_base_every: int = 10
+    substrate_merge_min_improvement: float = 0.005
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -513,6 +522,14 @@ class OrchestratorConfig:
             raise ValueError(f"heldout_repetitions must be >= 1, got {self.heldout_repetitions}")
         if self.mode not in ("classic", "rsi"):
             raise ValueError(f"orchestrator.mode must be 'classic' or 'rsi', got {self.mode!r}")
+        if self.merge_into_base_every < 0:
+            raise ValueError(
+                f"merge_into_base_every must be >= 0 (0=disabled), got {self.merge_into_base_every}"
+            )
+        if self.substrate_merge_min_improvement < 0:
+            raise ValueError(
+                f"substrate_merge_min_improvement must be >= 0, got {self.substrate_merge_min_improvement}"
+            )
 
 
 @dataclass
@@ -556,8 +573,18 @@ class SynthesisConfig:
     # to emit property source code, which it can't do reliably. Set False
     # to force the legacy path on stronger models.
     use_builtin_code_path: bool = True
+    # Curriculum escalation: fraction of per-cycle code proposals whose
+    # prompt is augmented with a frontier-skill hint from DifficultyTracker
+    # ("Design a problem requiring skill X — the model currently fails
+    # here"). Remaining prompts use the canonical / failure-seeded template
+    # unchanged. 0.0 disables frontier biasing; 1.0 frontier-samples every slot.
+    frontier_fraction: float = 0.5
 
     def __post_init__(self):
+        if not (0.0 <= self.frontier_fraction <= 1.0):
+            raise ValueError(
+                f"frontier_fraction must be in [0, 1], got {self.frontier_fraction}"
+            )
         if self.tasks_per_cycle < 1:
             raise ValueError(f"tasks_per_cycle must be >= 1, got {self.tasks_per_cycle}")
         if not (0.0 < self.property_consensus_threshold <= 1.0):

@@ -103,6 +103,10 @@ class CycleResult:
         self.candidates_accepted: int = 0
         self.candidates_rejected_by_adversarial: int = 0
         self.classes_suspended: int = 0
+        # Candidates admitted by §1.4 quorum this cycle — captured so the
+        # orchestrator can bank them as adversarial examples if post-training
+        # eval regresses. Each entry: {problem_id, candidate, domain, problem_ctx}.
+        self._admitted_candidates: list[dict] = []
 
     @property
     def improved(self) -> bool:
@@ -272,6 +276,17 @@ class ImprovementLoop:
         self._rsi_diag_cache: "DiagnosticResult | None" = None
         self._rsi_diag_cache_cycle: int = -1
 
+        # Substrate-merge bookkeeping. Every `merge_into_base_every` training
+        # cycles, if cumulative held-out improvement since the last promotion
+        # is >= substrate_merge_min_improvement, we promote the current merged
+        # checkpoint to a new "base" — model_loader.model_path is redirected
+        # to outputs/checkpoints/base_epoch_K so LoRA restarts fresh on top
+        # of substrate that has already absorbed the prior epoch's gains.
+        self._substrate_epoch: int = 0
+        self._substrate_baseline_eval: float | None = None
+        self._substrate_last_merge_cycle: int = 0
+        self._substrate_trained_cycles_since_merge: int = 0
+
         # Meta-improvement layer — learns which config decisions pay off.
         meta_log = config.orchestrator.output_dir / "meta_decisions.jsonl"
         initial_lr = getattr(config.trainer, "learning_rate", None)
@@ -435,6 +450,14 @@ class ImprovementLoop:
                                 "[RSI tick %d] vLLM revert after full-eval regression failed: %s",
                                 cycle, exc,
                             )
+                        # Promote this cycle's admitted candidates to the VoV
+                        # adversarial bank. They cleared §1.4 quorum yet
+                        # correlated with post-training regression — exactly
+                        # the toothless-verifier pattern VoV exists to catch.
+                        self._bank_admitted_as_adversarial(
+                            cycle, result,
+                            reason=f"full_eval_regression drop={full_eval_drop:.3f}",
+                        )
 
                 self.history.append(result)
 
@@ -461,6 +484,9 @@ class ImprovementLoop:
                         lambda: self._write_cycle_samples(cycle, result),
                         result,
                     )
+                self._safe_call("substrate_merge",
+                                lambda: self._maybe_substrate_merge(cycle, result),
+                                result)
                 if cycle % self.config.orchestrator.checkpoint_every == 0:
                     self._safe_call("checkpoint",
                                     lambda: self._save_checkpoint(cycle), result)
@@ -1439,6 +1465,17 @@ class ImprovementLoop:
 
                 if pe_record.accepted:
                     result.candidates_accepted += 1
+                    try:
+                        from ..verifier.property_engine import get_problem_ctx as _get_ctx
+                        _saved_ctx = dict(_get_ctx(pid) or {})
+                    except Exception:
+                        _saved_ctx = {}
+                    result._admitted_candidates.append({
+                        "problem_id": pid,
+                        "candidate": candidate_str,
+                        "domain": getattr(problem, "domain", "code") or "code",
+                        "problem_ctx": _saved_ctx,
+                    })
                     # Bundle passed §1.4 (quorum) — NOW flush staged PropertyRecords
                     # (spec v0.2.1: write-on-bundle-pass; §1.3 admittees that belong
                     # to rejected bundles are never persisted).
@@ -1839,6 +1876,13 @@ class ImprovementLoop:
         cfg_snapshot = {
             "learning_rate": getattr(self.config.trainer, "learning_rate", None),
             "lora_rank": getattr(self.config.trainer, "lora_rank", None),
+            "num_epochs": getattr(self.config.trainer, "num_epochs", None),
+            "min_train_samples": getattr(
+                self.config.trainer, "min_train_samples", None
+            ),
+            "gradient_accumulation_steps": getattr(
+                self.config.trainer, "gradient_accumulation_steps", None
+            ),
             "consistency_threshold": getattr(
                 self.config.verifier, "consistency_threshold", None
             ),
@@ -1885,11 +1929,17 @@ class ImprovementLoop:
                 self.config.verifier.check_weights = dict(revert["verifier_check_weights"])
             if revert.get("generator_template") is not None:
                 self.generator.set_custom_solution_template(revert["generator_template"])
+            for _tf in ("lora_rank", "num_epochs", "min_train_samples",
+                        "gradient_accumulation_steps"):
+                if revert.get(_tf) is not None:
+                    setattr(self.config.trainer, _tf, revert[_tf])
+            self.meta.persist_state()
             return
 
         # Propose updates for next cycle.
         proposal = self.meta.propose_updates(cfg_snapshot)
         if not proposal["applied"]:
+            self.meta.persist_state()
             return
         for line in proposal["reasoning"]:
             logger.info(f"  meta: {line}")
@@ -1900,6 +1950,11 @@ class ImprovementLoop:
         if proposal["generator_template"] is not None:
             tmpl, _vid = proposal["generator_template"]
             self.generator.set_custom_solution_template(tmpl)
+        for _tf in ("lora_rank", "num_epochs", "min_train_samples",
+                    "gradient_accumulation_steps"):
+            if proposal.get(_tf) is not None:
+                setattr(self.config.trainer, _tf, proposal[_tf])
+        self.meta.persist_state()
 
     def _apply_quality_top_k(self, verified: list) -> list:
         """Rank verified samples by quality, keep the top-k.
@@ -2467,6 +2522,125 @@ class ImprovementLoop:
                 except OSError:
                     pass
 
+    def _maybe_substrate_merge(self, cycle: int, result: CycleResult) -> None:
+        """Every `merge_into_base_every` training cycles, promote the current
+        merged checkpoint to a new base — so LoRA on the next cycle starts
+        fresh on substrate that has already absorbed prior gains. This is the
+        mechanism that unblocks substrate updates despite LoRA-on-frozen-4bit.
+
+        Guardrails:
+          - Only counts TRAINED cycles (no-training cycles aren't epochs).
+          - Skipped if cumulative held-out improvement since the last promotion
+            is below substrate_merge_min_improvement (don't snapshot regressions).
+          - Writes an event to update-log.txt and into result.errors (as a
+            structured note) so promotions are visible in run history.
+        """
+        every = int(getattr(self.config.orchestrator, "merge_into_base_every", 0) or 0)
+        if every <= 0:
+            return
+        trained = bool(
+            result.training_metrics
+            and getattr(result.training_metrics, "steps", 0) > 0
+        )
+        # First-ever eval — capture the baseline so cumulative delta is meaningful
+        # even before any training cycles have run.
+        if self._substrate_baseline_eval is None and result.eval_score is not None:
+            self._substrate_baseline_eval = float(result.eval_score)
+        if not trained:
+            return
+        self._substrate_trained_cycles_since_merge += 1
+        if self._substrate_trained_cycles_since_merge < every:
+            return
+
+        min_improvement = float(getattr(
+            self.config.orchestrator, "substrate_merge_min_improvement", 0.005,
+        ))
+        baseline = self._substrate_baseline_eval
+        current = result.eval_score
+        delta = None
+        if current is not None and baseline is not None:
+            delta = float(current) - float(baseline)
+
+        if delta is None or delta < min_improvement:
+            logger.info(
+                "[substrate-merge cycle %d] skipped — cumulative held-out "
+                "improvement since last promotion is %s (< %.3f required). "
+                "Trained-cycle counter NOT reset; will re-check next trained cycle.",
+                cycle,
+                f"{delta:+.3f}" if delta is not None else "unknown",
+                min_improvement,
+            )
+            self._append_update_log(
+                f"[cycle {cycle}] substrate-merge SKIPPED "
+                f"(delta={delta if delta is None else round(delta, 4)} < {min_improvement})"
+            )
+            return
+
+        # Promote: the current merged checkpoint is already saved at
+        # outputs/checkpoints/cycle_{cycle} (by the RSI training path or
+        # _save_checkpoint). Copy its contents to base_epoch_{K+1}/ and
+        # redirect model_loader.model_path so future fallbacks use the new
+        # base. If no cycle checkpoint exists (training wrote none due to
+        # quantized skip etc.), defer.
+        output_dir = self.config.orchestrator.output_dir
+        src_ckpt = output_dir / "checkpoints" / f"cycle_{cycle}"
+        if not src_ckpt.exists() or not (src_ckpt / "config.json").exists():
+            logger.info(
+                "[substrate-merge cycle %d] deferred — no complete cycle "
+                "checkpoint at %s to promote (quantized base may have skipped "
+                "the save). Will retry next trained cycle.",
+                cycle, src_ckpt,
+            )
+            self._append_update_log(
+                f"[cycle {cycle}] substrate-merge DEFERRED (no cycle checkpoint to promote)"
+            )
+            return
+
+        new_epoch = self._substrate_epoch + 1
+        dest = output_dir / "checkpoints" / f"base_epoch_{new_epoch}"
+        try:
+            if dest.exists():
+                shutil.rmtree(dest)
+            shutil.copytree(src_ckpt, dest)
+        except Exception as e:
+            logger.warning(
+                "[substrate-merge cycle %d] copy to %s failed (%s: %s) — "
+                "not promoting this epoch.",
+                cycle, dest, type(e).__name__, e,
+            )
+            return
+
+        # Redirect the loader's fallback base. Don't touch _current_model_path
+        # (that already points at the cycle_{cycle} checkpoint, which is fine);
+        # swap the `model_path` attribute so future failure-fallbacks use the
+        # new substrate instead of the original.
+        try:
+            self.model_loader.model_path = str(dest)
+        except Exception:
+            pass
+
+        self._substrate_epoch = new_epoch
+        self._substrate_baseline_eval = float(current)
+        self._substrate_last_merge_cycle = cycle
+        self._substrate_trained_cycles_since_merge = 0
+
+        msg = (
+            f"[cycle {cycle}] substrate-merge PROMOTED cycle_{cycle} -> "
+            f"base_epoch_{new_epoch} (delta={delta:+.4f}, new baseline={current:.4f})"
+        )
+        logger.info(msg)
+        self._append_update_log(msg)
+        result.escalation_events.append(f"substrate_merge:base_epoch_{new_epoch}")
+
+    def _append_update_log(self, line: str) -> None:
+        """Append a substrate-merge event to update-log.txt at repo root."""
+        try:
+            log = Path("update-log.txt")
+            with log.open("a") as f:
+                f.write(line + "\n")
+        except Exception as e:
+            logger.debug(f"Could not append to update-log.txt: {e}")
+
     def _log_cycle(self, result: CycleResult):
         """Log cycle results to file."""
         log_path = self.config.orchestrator.log_dir / f"cycle_{result.cycle}.json"
@@ -2549,6 +2723,17 @@ class ImprovementLoop:
                 "moved_right_to_wrong": questions_moved_wrong,
             },
             "diversity_stats": result.diversity_stats,
+            "meta": {
+                "picked_lr": getattr(self.config.trainer, "learning_rate", None),
+                "picked_rank": getattr(self.config.trainer, "lora_rank", None),
+                "picked_epochs": getattr(self.config.trainer, "num_epochs", None),
+                "picked_min_train_samples": getattr(
+                    self.config.trainer, "min_train_samples", None
+                ),
+                "picked_grad_accum": getattr(
+                    self.config.trainer, "gradient_accumulation_steps", None
+                ),
+            },
             "phase_times": result.phase_times,
             "errors": [
                 {"phase": e["phase"], "type": e["type"], "message": e["message"]}

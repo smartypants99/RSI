@@ -106,6 +106,17 @@ class LoRALayer(nn.Module):
         self.use_rslora = use_rslora
         self.init_method = init_method
         self.use_dora = bool(use_dora)
+        # Auto-disable DoRA when base is bitsandbytes-4bit: DoRA's magnitude
+        # scale needs the dense [out, in] weight to compute ‖W + scaling·BA‖_c,
+        # but Linear4bit stores .weight as a packed uint8 Params4bit (1D-ish
+        # flat shape). Dequantizing every forward pass would defeat 4-bit's
+        # VRAM saving, and plain LoRA on quantized base is the canonical
+        # QLoRA recipe anyway.
+        cls_name = type(original_layer).__name__
+        self._base_is_4bit = cls_name in ("Linear4bit", "LinearFP4", "LinearNF4")
+        self._base_is_8bit = cls_name == "Linear8bitLt"
+        if self.use_dora and (self._base_is_4bit or self._base_is_8bit):
+            self.use_dora = False
         self.weakness_scale = weakness_scale
         # Track if original is Conv1D (transposed weight) for merge
         self._is_conv1d = _HFConv1D is not None and isinstance(original_layer, _HFConv1D)

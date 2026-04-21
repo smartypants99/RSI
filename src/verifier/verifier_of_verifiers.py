@@ -429,6 +429,7 @@ def verify_properties_trustworthy(
     *,
     seed: int = 0,
     stochastic_replay: bool = True,
+    adversarial_bank: Any = None,
 ) -> VerifierTrustReport:
     """Run the adversarial audit on a set of proposed properties.
 
@@ -556,7 +557,90 @@ def verify_properties_trustworthy(
             rejected_reason=rejected_reason,
         ))
 
+    # Step 2.5: adversarial bank audit. A property that ACCEPTS any entry
+    # from the persistent adversarial bank (candidates implicated in past
+    # post-training regressions) is toothless on real failure modes — reject
+    # it even if it scored well on synthetic corruptions. This is how the
+    # verifier gets harder as the model improves: the bank accumulates the
+    # exact failures the current property repertoire already let through.
+    bank = adversarial_bank
+    if bank is None:
+        try:
+            from .vov_adversarial_bank import get_default_bank
+            bank = get_default_bank()
+        except Exception:
+            bank = None
+    bank_entries = []
+    if bank is not None:
+        try:
+            bank_entries = bank.filter_for_domain(domain)
+        except Exception:
+            bank_entries = []
+    if bank_entries:
+        for prop, ptrust in zip(properties, report.properties):
+            if ptrust.rejected_reason is not None:
+                continue  # already out for another reason
+            accepted_bank_ids: list[str] = []
+            for entry in bank_entries:
+                try:
+                    passed, _ = _run_property(prop, entry.candidate, problem_ctx)
+                except Exception:
+                    passed = False  # a crash on a bank entry is effectively a reject
+                if passed:
+                    accepted_bank_ids.append(entry.bank_id)
+            if accepted_bank_ids:
+                ptrust.rejected_reason = (
+                    f"accepted {len(accepted_bank_ids)} adversarial-bank "
+                    f"entr{'y' if len(accepted_bank_ids) == 1 else 'ies'} "
+                    f"(e.g. {accepted_bank_ids[0]}) — toothless on known regressions"
+                )
+                ptrust.trust_score = 0.0
+                # Mark the triggering bank entries so LRU eviction favors
+                # the still-useful ones.
+                if bank is not None and hasattr(bank, "mark_triggered"):
+                    for bid in accepted_bank_ids:
+                        try:
+                            bank.mark_triggered(bid)
+                        except Exception:
+                            pass
+
     # Step 3: aggregate verdict — only trusted-property kills count.
+    # Recompute caught_by_trusted after the bank audit: a property that just
+    # got rejected for accepting a bank entry no longer credits its kills
+    # toward the aggregate.
+    still_trusted = {
+        p.property_name for p in report.properties if p.rejected_reason is None
+    }
+    caught_by_trusted = [False] * len(corruptions)
+    for prop, ptrust in zip(properties, report.properties):
+        if ptrust.property_name not in still_trusted:
+            continue
+        # Re-derive per-prop kills from the trust record (cheap: we don't
+        # re-run the property; we only know per-prop totals, not the mask).
+        # Fall back to counting kills already recorded; since we lost the
+        # per-index mask after the loop, approximate by using kill_rate >= 1/N
+        # as "this property caught at least one". For aggregate_kill_rate we
+        # use the union of caught_by_any restricted to trusted kills — which
+        # is conservative: if ANY trusted property caught a corruption we
+        # mark it caught. For the pre-bank behavior this matched exactly,
+        # and the bank rejection path strictly shrinks the trusted set.
+        pass
+    # Rebuild from a fresh pass: re-run trusted properties against corruptions.
+    # This is O(trusted × corruptions) — same as step 2, bounded by max 8.
+    for prop, ptrust in zip(properties, report.properties):
+        if ptrust.property_name not in still_trusted:
+            continue
+        for i, corr in enumerate(corruptions):
+            if caught_by_trusted[i]:
+                continue
+            try:
+                passed, _ = _run_property(prop, corr.mutated, problem_ctx)
+                if not passed:
+                    caught_by_trusted[i] = True
+            except Exception:
+                # crash-on-corruption counts as a kill only if ref was accepted
+                if ptrust.reference_passed:
+                    caught_by_trusted[i] = True
     report.corruptions_caught_by_any = sum(caught_by_any)
     report.aggregate_kill_rate = (
         sum(caught_by_trusted) / max(1, report.total_corruptions)

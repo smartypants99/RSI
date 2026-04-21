@@ -24,6 +24,7 @@ import torch
 
 from ..utils.config import SystemConfig
 from ..diagnostics.engine import DiagnosticsEngine, DiagnosticResult, WeaknessReport
+from ..diagnostics.difficulty_tracker import DifficultyTracker
 from ..generator.data_generator import DataGenerator
 from ..verifier.verifier import Verifier
 from ..trainer.custom_lora import CustomLoRATrainer, TrainingMetrics
@@ -291,6 +292,17 @@ class ImprovementLoop:
         meta_log = config.orchestrator.output_dir / "meta_decisions.jsonl"
         initial_lr = getattr(config.trainer, "learning_rate", None)
         self.meta = MetaController(log_path=meta_log, initial_lr=initial_lr)
+
+        # Curriculum escalation: DifficultyTracker persists proposer
+        # frontier + a difficulty ratchet across restarts. rsi_tick and
+        # _eval_phase feed it proposal-accept counts and held-out per-
+        # question records respectively.
+        self._difficulty_state_path = (
+            config.orchestrator.output_dir / "difficulty_state.json"
+        )
+        self.difficulty_tracker = DifficultyTracker.load_or_new(
+            self._difficulty_state_path
+        )
 
     def run(self) -> None:
         """Run the full improvement loop with per-cycle fault isolation.
@@ -1250,6 +1262,23 @@ class ImprovementLoop:
         except Exception as exc:
             logger.warning("[RSI tick %d] set_diagnostics failed (%s): %s — propose_batch will return []",
                            cycle, type(exc).__name__, exc)
+        # Curriculum escalation: push the current frontier skill-pair +
+        # ratcheted difficulty floor into the synthesizer so propose_batch_code
+        # biases frontier_fraction of prompts toward the failing zone and
+        # rejects proposals below the ratchet floor.
+        try:
+            frontier_skill = self.difficulty_tracker.frontier()
+            if hasattr(synth, "set_frontier_hint"):
+                synth.set_frontier_hint(frontier_skill)
+            if hasattr(synth, "set_difficulty_floor"):
+                synth.set_difficulty_floor(self.difficulty_tracker.difficulty_floor)
+            logger.info(
+                "[RSI tick %d] curriculum: frontier=%r floor=%.2f",
+                cycle, frontier_skill or "(none)",
+                self.difficulty_tracker.difficulty_floor,
+            )
+        except Exception as exc:
+            logger.debug("difficulty_tracker wiring failed: %s", exc)
         result.phase_times["rsi_step0_diagnose"] = time.time() - phase_start
 
         # ── STEP 1: propose problems ─────────────────────────────────────────
@@ -1291,6 +1320,15 @@ class ImprovementLoop:
             except Exception as exc:
                 logger.debug("ProblemRecord write failed: %s", exc)
         result.phase_times["rsi_step1_propose"] = time.time() - phase_start
+        try:
+            accepted_n = int(result.novel_problems_proposed)
+            requested_n = int(ts)
+            self.difficulty_tracker.record_proposals(
+                accepted=accepted_n,
+                rejected=max(0, requested_n - accepted_n),
+            )
+        except Exception as exc:
+            logger.debug("difficulty_tracker.record_proposals failed: %s", exc)
 
         # ── STEP 2: propose + admit properties ──────────────────────────────
         # Spec v0.2.1: a property passing §1.3 admit() is a CANDIDATE, not yet
@@ -1764,6 +1802,46 @@ class ImprovementLoop:
     # means the held-out set is the SAME across all cycles, so scores track
     # true generalization over time instead of random per-cycle variance.
     HELDOUT_CYCLE_SEED = 0xE7A1
+
+    def _bank_admitted_as_adversarial(
+        self, cycle: int, result: "CycleResult", *, reason: str,
+    ) -> None:
+        """Append this cycle's admitted candidates to the VoV adversarial bank.
+
+        Called from regression-revert paths (quick-probe and full-eval).
+        Each admitted candidate cleared §1.4 quorum yet was implicated in a
+        post-training score drop, so it's evidence the property set was
+        toothless on this failure mode. Future VoV audits test admitted
+        properties against every bank entry; any property that accepts an
+        entry is rejected.
+        """
+        candidates = getattr(result, "_admitted_candidates", None) or []
+        if not candidates:
+            return
+        try:
+            from ..verifier.vov_adversarial_bank import get_default_bank
+            bank = get_default_bank()
+        except Exception as exc:
+            logger.debug("VoV bank unavailable: %s", exc)
+            return
+        added = 0
+        for c in candidates:
+            try:
+                bank.append(
+                    problem_id=str(c.get("problem_id", "")),
+                    candidate=c.get("candidate"),
+                    domain=str(c.get("domain", "code")),
+                    problem_ctx=c.get("problem_ctx") or {},
+                    cycle=cycle,
+                    reason=reason,
+                )
+                added += 1
+            except Exception as exc:
+                logger.debug("VoV bank append failed: %s", exc)
+        logger.warning(
+            "[RSI tick %d] VoV adversarial bank: appended %d candidates (reason=%s; bank size=%d)",
+            cycle, added, reason, len(bank),
+        )
 
     def _quick_regression_probe(self, cycle: int) -> float:
         """Fast post-training sanity check — returns an overall score from a

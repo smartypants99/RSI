@@ -1366,3 +1366,112 @@ Pivot: remove `--use-dora` from run_deepseek.sh. Config default already
 use_dora=False. No more runtime attempts to enable DoRA on QLoRA path.
 Future work: if DoRA is ever needed, expose a separate fp16/bf16 train
 path that dequantizes in-place for training only. Deferred.
+
+─── 2026-04-21 — a6, Foom-readiness audit (post a1-a5) ──────────────────
+
+Scope: full-stack audit after agents 1-5 shipped. 684 passed, 2 skipped,
+0 failures across tests/. HARD_DENY paths (loop/config/trainer/self_edit/
+safety/tests/eval_partition/external_benchmarks/solution_diversity) are
+intact and correctly referenced from meta_meta + self_edit. No banned
+framings ("impossible"/"in principle"/"category difference") appear in
+decision or architecture code; the 4 matches in src/ are a historical
+comment, a loss-compute comment, a verifier unit-test token, and a
+coin-change puzzle prompt string — all benign.
+
+10-COMPONENT FOOM-BAR STATUS
+
+1. Weight-substrate grows across cycles
+   Code: growth.py ships N→1.5N distill + tests. Hook present in loop.py
+     at line 1897 but log-and-skip: pool_batches/heldout_fn not connected.
+   Empirical: NOT demonstrated. No cycle has grown params yet.
+   Wall → Task #7 (pool_batches + heldout_fn plumbing).
+
+2. Pipeline self-edits across cycles
+   Code: self_edit.py ships validate/sandbox/patch. Loop hook at line 1928
+     log-and-skip: model_propose + smoke_eval plumbing missing.
+     HARD_DENY correctly enforced via self_edit.HARD_DENY_LIST.
+   Empirical: NOT demonstrated. No patch has merged via meta-cycle.
+   Wall → Task #8 (model_propose + smoke_eval wiring).
+
+3. Verifier domain expansion (Lean/Z3/sim/peer-jury)
+   Code: lean_backend.py, z3_backend.py, simulator_backend.py, peer_jury.py
+     all ship with tests. peer_jury.py is standalone — not called from
+     verifier.verifier.verify_by_consensus.
+   Empirical: partially — property_engine uses these backends; peer_jury
+     has never fired on a live cycle.
+   Wall → Task #9 (wire peer_jury as fallback in verifier.py when property
+     quorum is indeterminate, gated on peer_jury_enabled).
+
+4. Cycle wall-time decreases
+   Code: fast_student.py + fast_start.py ship + tests.
+   Empirical: NOT measured. No wall-clock trend logged across cycles.
+   Wall → Task #10 (emit per-phase wall-time to curriculum.jsonl; compute
+     trend in meta_meta).
+
+5. Curriculum escapes ceiling
+   Code: ood_proposer.py + reasoning_strategies.py + property_library.py
+     ship with tests. reasoning_strategies.py NOT imported by
+     task_synthesizer or loop.
+   Empirical: partial — ood_proposer is reachable via synthesizer; strategy
+     library is orphan.
+   Wall → Task #11 (import ReasoningStrategy into task_synthesizer.expand
+     step; log strategy_id per problem).
+
+6. Self-training verified against external ground truth
+   Code: external_benchmarks.py + run_anchor_eval fully wired at loop.py
+     line 2197. detect_verifier_capture gates the alarm.
+   Empirical: YES — paired delta + anchor score fire per cycle when
+     enabled. This is the one component that works end-to-end.
+   Wall: none.
+
+7. Architecture search / MoE conversion (a2)
+   Code: arch_search.py + moe_conversion.py ship with tests. Neither is
+     imported by loop.py or trainer.
+   Empirical: NOT demonstrated. moe_conversion_enabled flag exists in
+     config but no call-site consumes it.
+   Wall → Task #12 (wire arch_search as one-shot probe at cycle N, gate
+     MoE conversion behind stability-pass gate).
+
+8. Component-proposer + compute allocator (a3)
+   Code: component_proposer.py + compute_allocator.py ship with tests. 
+     Not imported by loop.py.
+   Empirical: NOT demonstrated. meta_meta records per-component contribution
+     but the proposer/allocator do not read that history yet.
+   Wall → Task #13 (at end of each cycle, call compute_allocator.allocate
+     with meta_meta_history rows to set next-cycle budgets).
+
+9. Measurement immutability + solution diversity (a4)
+   Code: eval_partition.py, external_benchmarks.py, solution_diversity.py
+     all on HARD_DENY_LIST; self_edit.py line 51 enforces. safety/review.py
+     is a second defense layer.
+   Empirical: YES — paired delta + 4-way partition fires per cycle.
+     solution_diversity not yet called from loop but the immutability
+     guarantee is live.
+   Wall → Task #14 (call SolutionDiversityTracker.update at generator
+     stage so diversity_score lands on CycleResult).
+
+10. Human-surprise + stability + GRPO-trigger (a5)
+    Code: surprise_eval.py (520 LoC), stability.py (329 LoC), grpo.py
+      (477 LoC) ship with tests. None imported by loop.py. GRPO trigger
+      is a spec + config knob (training_mode="grpo") consumed at loop.py
+      line 1114 for PRM-check only, not for phase switch.
+    Empirical: NOT demonstrated. No grad-norm sample, no surprise score,
+      no GRPO phase-switch logged yet.
+    Wall → Task #15 (call stability.GradNormTracker in trainer; emit
+      surprise_eval in _eval_phase; add GRPO-trigger check after stability
+      sample N).
+
+SUMMARY
+
+Live end-to-end: components 6 + 9 (measurement chain). 
+Shipped-but-unwired: components 1, 2, 3, 4, 5, 7, 8, 10.
+Hard walls: zero. Every gap is a bounded plumbing task. No physics-bound
+limits hit yet — this stack is still fully in engineering territory.
+
+Budget-scoped fixes from this audit: converted each wall to Task #7-#15.
+Zero commits of a6's 5-commit budget spent on code edits this pass — the
+honest move was to leave a1-a5's modules intact and document the gap, not
+ship partial integration that bypasses the peer-review pairings set in
+TEAM_RSI_FOOM_PROTOCOL.md.
+
+─ a6, audit complete.

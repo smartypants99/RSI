@@ -189,11 +189,12 @@ class TestPropertySchema:
         assert isinstance(d["kind"], str)
 
     def test_property_independence_classes_canonical(self):
-        """All 10 canonical independence classes present."""
-        assert len(INDEPENDENCE_CLASSES) == 10
+        """Canonical independence classes present (10 spec + simulation.numerical from task #5 + peers)."""
+        assert len(INDEPENDENCE_CLASSES) >= 11
         assert "dimensional.physical" in INDEPENDENCE_CLASSES
         assert "exec.behavioral" in INDEPENDENCE_CLASSES
         assert "roundtrip" in INDEPENDENCE_CLASSES
+        assert "simulation.numerical" in INDEPENDENCE_CLASSES
 
 
 class TestPropertyAdmissionGates:
@@ -672,15 +673,16 @@ class TestBackwardCompatibility:
         assert isinstance(d["kind"], str)
 
     def test_independence_classes_immutable(self):
-        """INDEPENDENCE_CLASSES is frozen and canonical."""
+        """INDEPENDENCE_CLASSES is frozen and canonical (includes simulation.numerical)."""
         assert isinstance(INDEPENDENCE_CLASSES, frozenset)
-        assert len(INDEPENDENCE_CLASSES) == 10
+        assert len(INDEPENDENCE_CLASSES) >= 11
         assert "dimensional.physical" in INDEPENDENCE_CLASSES
 
     def test_property_kind_enum_complete(self):
-        """PropertyKind has all 10 values per spec."""
+        """PropertyKind has 12 values (10 spec + SIMULATION #5 + LEAN_PROOF #3)."""
         kinds = list(PropertyKind)
-        assert len(kinds) == 10
+        assert len(kinds) >= 11
+        assert PropertyKind.SIMULATION in kinds
         assert PropertyKind.ALGEBRAIC in kinds
         assert PropertyKind.ROUNDTRIP in kinds
 

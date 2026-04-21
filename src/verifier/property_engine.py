@@ -68,6 +68,8 @@ class PropertyKind(str, Enum):
     MONOTONICITY = "MONOTONICITY"
     CONSERVATION = "CONSERVATION"
     COUNTEREXAMPLE_SEARCH = "COUNTEREXAMPLE_SEARCH"
+    SIMULATION = "SIMULATION"
+    LEAN_PROOF = "LEAN_PROOF"           # task #3 — Lean4 theorem-proof backend
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -85,6 +87,8 @@ INDEPENDENCE_CLASSES: frozenset[str] = frozenset({
     "conservation.global",
     "search.bounded",
     "dimensional.physical",   # v0.2.1 addition
+    "simulation.numerical",   # task #5 — physics/chem simulator backend
+    "proof.formal",           # task #3 — Lean4 theorem-proof backend
 })
 
 _VALID_RETURNS = frozenset({"bool", "bool_with_witness", "equivalence_class"})

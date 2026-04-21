@@ -1073,3 +1073,126 @@ training. ~25min/cycle cold, ~15min warm.
     source $HOME/.elan/env && lean --version
   Pytest: 397 passed + 11 new; pre-existing 3 test_rsi_actual failures
   (enum-length==10) shared with tasks #4/#5 — integration-lead owns.
+
+================================================================================
+2026-04-20 — GPU RESTART RUNBOOK (post Team RSI-Foom consolidation)
+================================================================================
+
+Consolidation commit: 9dbd34e "feat(foom): Team RSI-Foom consolidation — wire 11 agents"
+Team agents landed (in order): verifier-z3 (#4), safety-gate (#9), verifier-sim (#5),
+  rl-transition (#8), verifier-lean (#3), cycle-accel (#6), curriculum-ood (#7),
+  warm-speed (#12), fast-start (#11), self-edit (#2), weight-growth (#1).
+pytest at consolidation: 483 passed / 2 skipped / 0 failed.
+
+Target GPU: ssh -p 41024 root@82.79.85.125 (A6000 48GB, live vLLM run).
+
+────────────────────────────────────────────────────────────────────────────────
+STEP 1 — Quiesce the current run (team-lead performs this with user)
+────────────────────────────────────────────────────────────────────────────────
+  # Confirm the current run's PID
+  ssh -p 41024 root@82.79.85.125 "pgrep -af 'python main.py' | head"
+
+  # Graceful kill (SIGTERM, then SIGKILL after 60s if still alive)
+  ssh -p 41024 root@82.79.85.125 "pkill -TERM -f 'python main.py' ; sleep 60 ;
+    pgrep -f 'python main.py' && pkill -KILL -f 'python main.py' || true"
+
+  # Confirm GPU is free
+  ssh -p 41024 root@82.79.85.125 "nvidia-smi --query-gpu=memory.used --format=csv"
+
+  # Free any orphaned vLLM workers / shm
+  ssh -p 41024 root@82.79.85.125 "pkill -f vllm || true ; rm -f /dev/shm/vllm* || true"
+
+────────────────────────────────────────────────────────────────────────────────
+STEP 2 — Sync code to GPU
+────────────────────────────────────────────────────────────────────────────────
+  ssh -p 41024 root@82.79.85.125 "cd /root/Recursive-self-improvment &&
+    git fetch origin && git log --oneline HEAD..origin/main | head -20"
+
+  # Expected HEAD after pull: 9dbd34e "feat(foom): Team RSI-Foom consolidation"
+  ssh -p 41024 root@82.79.85.125 "cd /root/Recursive-self-improvment &&
+    git pull --ff-only origin main"
+
+  # Install any new deps (z3-solver and scipy should already be present; noop
+  # if already installed). Do NOT install lean4 — lean_verifier_enabled=False.
+  ssh -p 41024 root@82.79.85.125 "cd /root/Recursive-self-improvment &&
+    pip install --quiet z3-solver scipy 2>&1 | tail -5"
+
+  # Smoke test import — must exit 0
+  ssh -p 41024 root@82.79.85.125 "cd /root/Recursive-self-improvment &&
+    python -c 'import src.orchestrator.loop, src.verifier.z3_backend,
+    src.verifier.simulator_backend, src.trainer.growth, src.orchestrator.self_edit,
+    src.utils.fast_start, src.utils.fast_student; print(\"imports OK\")'"
+
+────────────────────────────────────────────────────────────────────────────────
+STEP 3 — Launch RSI run
+────────────────────────────────────────────────────────────────────────────────
+  # run_deepseek.sh is unchanged (all new behavior is default-flipped in
+  # dataclass defaults: OOD on, z3+sim verifier on, fast-start cold-cycle-1
+  # skip-diagnostics + prestash on, warm-speed parallel verify + prefix
+  # caching on, diagnostic refresh every 7).
+
+  ssh -p 41024 root@82.79.85.125 "cd /root/Recursive-self-improvment &&
+    nohup bash run_deepseek.sh > run_foom_consolidation.log 2>&1 &
+    echo $! > run_foom_consolidation.pid"
+
+  # Verify it's up
+  ssh -p 41024 root@82.79.85.125 "sleep 30 && tail -40 /root/Recursive-self-improvment/run_foom_consolidation.log"
+
+────────────────────────────────────────────────────────────────────────────────
+STEP 4 — First-milestone expectations (flag if you don't see these)
+────────────────────────────────────────────────────────────────────────────────
+  T+00-05 min  : vLLM loads, base diagnostics phase 1 starts.
+  T+05-10 min  : "[RSI tick 1] skip_first_diagnostics=True — using uniform default
+                  diag" — cycle 1 uses uniform weakness (fast-start Task #11).
+                 "fast_start: pre-stashed N prior training samples" if any
+                 outputs/training_pool JSONL existed from prior runs.
+  T+10-18 min  : cycle 1 propose/solve/verify (parallel-verify via warm-speed).
+                 bootstrap_tasks_per_cycle=15 so cycle 1 is smaller.
+  T+18-22 min  : cycle 1 training if pending-pool >= min_train_samples (5)
+                 AFTER including prestashed samples. If it fails on floor,
+                 cycles 2-3 accumulate then train.
+  Steady state : cycle wall time target ≤8 min (warm-speed Task #12).
+                 Diagnostic probe refreshes every 7 cycles.
+  First held-out comparison: after first successful train + checkpoint swap.
+
+────────────────────────────────────────────────────────────────────────────────
+STEP 5 — Monitoring & tripwires
+────────────────────────────────────────────────────────────────────────────────
+  # Watch for OOD proposer firing on cycle 12:
+  grep -iE "ood.*propose|ood_proposer" run_foom_consolidation.log
+
+  # Watch for verifier expansions actually stamping properties (Z3/sim):
+  grep -iE "z3_backend|simulator_backend|property.*(smt|sim)" run_foom_consolidation.log
+
+  # Watch for GRPO auto-switch logic (rl-transition; triggers only after
+  # 5 consecutive trained cycles with <0.3% gain — won't fire early):
+  grep -iE "grpo|should_switch" run_foom_consolidation.log
+
+  # Regression guard — any occurrence is a signal, not a failure:
+  grep -iE "REGRESSION|reverting|revert_threshold" run_foom_consolidation.log
+
+────────────────────────────────────────────────────────────────────────────────
+STEP 6 — Deferred work (known gaps — follow-up commits before next restart)
+────────────────────────────────────────────────────────────────────────────────
+  (a) grow_every / self_edit_every hooks are STUB-WIRED: they log when they
+      would fire, but defer the destructive action. `grow_every=0` and
+      `self_edit_every=0` in defaults. To activate, a follow-up needs:
+        - pool_batches construction + heldout_fn for grow_and_distill
+        - model_propose wrapper on vLLM + smoke_eval callable for self_edit
+      Both are a-few-hours of work and should be driven by post-run signals.
+
+  (b) Fast-student distillation (cycle-accel Task #6) is landed in
+      src/utils/fast_student.py but not yet routed into propose/solve.
+      Routing requires plumbing into model_loader generation path (vLLM vs HF
+      branch). Also a follow-up.
+
+  (c) lean_verifier stays off until lean4 binary is installed on the GPU.
+
+  (d) Per-cycle OOD bucket metrics (rl-transition request): pending wiring
+      in write_cycle_metrics path. Non-blocking for run correctness.
+
+If first 60 minutes look healthy (cycle 1 completes, no crash, held-out
+score reported), the run is on track. The warmth of the new primitives
+will show in cycles 5-15 (OOD on cycle 12, GRPO auto-switch after plateau).
+
+─ integration-lead, Task #10, consolidation complete.

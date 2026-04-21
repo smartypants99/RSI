@@ -215,7 +215,14 @@ class TrainerConfig:
     # damage. At 0.50 we catch the crash on the first batch whose forward-pass
     # loss dips below natural SFT floor (~0.5-0.7), so we stop before more than
     # one full accumulation group lands.
-    early_stop_loss: float = 0.50
+    # Lowered 0.50 → 0.15 for consistency with skip_if_initial_loss_below.
+    # Observed on cycle 20: pre-loss 0.43, first batch loss also ~0.43,
+    # triggered early-stop at step 2 after only 2 optimizer updates.
+    # That's barely training, and it still managed to regress held-out
+    # by 0.051. 0.15 lets training actually land ~5-8 steps of useful
+    # gradient before stopping. The regression_revert_threshold=0.03
+    # guard (cf1e461) catches any training that turns out to hurt.
+    early_stop_loss: float = 0.15
     max_steps_per_cycle: int = 8
     min_steps_per_cycle: int = 1
     # min_train_samples: minimum training-pool size before we actually train.

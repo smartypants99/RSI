@@ -1518,14 +1518,18 @@ class TaskSynthesizer:
         prompts: list[str] = []
         for p in proposals:
             entry = (p.problem_ctx or {}).get("entry_point") or "solve"
+            # Structural prefill: end prompt mid-signature so R1 MUST
+            # continue by completing the function. Without this, R1 often
+            # generated 200-400 tokens of thinking then stopped before
+            # emitting any code fence.
             prompts.append(
                 "<think>\n\n</think>\n\n"
-                "Solve the following problem by defining a Python function. "
-                "Output ONLY a Python code block with the function "
-                "definition — no prose, no explanation.\n\n"
+                "Write a Python function to solve this problem.\n\n"
                 f"PROBLEM: {p.problem_text}\n\n"
-                f"Your function MUST be named exactly `{entry}`.\n\n"
+                f"Requirements: the function MUST be named `{entry}` exactly, "
+                "and be a single self-contained definition.\n\n"
                 "```python\n"
+                f"def {entry}("
             )
         try:
             blind = self._generate_many_code(prompts)
@@ -1645,6 +1649,7 @@ class TaskSynthesizer:
         # Seed each problem's candidate list with the reference.
         prompts: list[str] = []
         slot_owner: list[str] = []  # parallel: index → problem_id
+        slot_entry: dict[str, str] = {}  # pid → entry_point (for re-prepend)
         for p in problems:
             pid = getattr(p, "problem_id", "")
             if not pid:
@@ -1655,23 +1660,23 @@ class TaskSynthesizer:
                 out[pid].append(ref)
             # Queue (k - len(refs)) sampled slots for this problem.
             entry = (p.problem_ctx or {}).get("entry_point") or "solve"
-            # `<think>\n\n</think>` prefill: DeepSeek-R1 and other reasoning
-            # models interpret this as "thinking already done, emit final
-            # answer now". Without it R1 consumes the entire max_new_tokens
-            # budget on a <think> block and never emits code. Harmless for
-            # non-reasoning models (they see extra markers that look like
-            # XML they ignore). Enables R1 to write code on the first try.
+            # Structural prefill: prompt ends mid-function-signature so the
+            # model MUST continue from `def {entry}(`. R1 was finishing
+            # generation after ~200-400 tokens of thinking without emitting a
+            # code fence (48/114 "no extractable Python code" failures per
+            # cycle). With this prefill ANY continuation lands inside the
+            # fence, and the function name is guaranteed to match `entry`
+            # regardless of what R1 would have chosen naturally.
             prompt = (
                 "<think>\n\n</think>\n\n"
-                "Solve the following problem by defining a Python function. "
-                "Output ONLY a Python code block with the function definition — "
-                "no prose, no explanation.\n\n"
+                "Write a Python function to solve this problem.\n\n"
                 f"PROBLEM: {p.problem_text}\n\n"
-                f"Your function MUST be named exactly `{entry}` (not any other "
-                "name based on the problem topic — the automated tests call "
-                f"it as `{entry}(...)`).\n\n"
+                f"Requirements: the function MUST be named `{entry}` exactly, "
+                "and be a single self-contained definition.\n\n"
                 "```python\n"
+                f"def {entry}("
             )
+            slot_entry[pid] = entry
             need = max(0, k - len(out[pid]))
             for _ in range(need):
                 prompts.append(prompt)
@@ -1706,8 +1711,20 @@ class TaskSynthesizer:
         if len(raws) < len(prompts):
             raws = list(raws) + [""] * (len(prompts) - len(raws))
 
+        # Re-prepend the prefilled signature so the extractor sees full code.
+        # vLLM returns only the continuation — without the `def {entry}(`
+        # head, the body alone won't ast.parse and extract_code returns None.
         for pid, raw in zip(slot_owner, raws):
-            out[pid].append(raw)
+            if not raw:
+                out[pid].append(raw)
+                continue
+            entry_for_pid = slot_entry.get(pid) or "solve"
+            # Guard: if the model happened to emit its own def line
+            # (occasionally does despite prefill), don't double-prepend.
+            if raw.lstrip().startswith("def "):
+                out[pid].append(raw)
+            else:
+                out[pid].append(f"def {entry_for_pid}(" + raw)
         return out
 
     def solve(self, problem: ProposedProblem, *, k: int = 6) -> list[str]:
@@ -1751,14 +1768,16 @@ class TaskSynthesizer:
 
         # Candidates 1..k-1: sampled. Slightly higher temperature than
         # the proposal step to get diverse attempts; low enough to stay
-        # coherent.
+        # coherent. Prompt prefilled mid-signature for R1 (see solve_batch).
+        _entry = (problem.problem_ctx or {}).get("entry_point") or "solve"
         prompt = (
-            "Solve the following problem by defining a Python function. "
-            "Output ONLY a Python code block with the function definition — "
-            "no prose, no explanation.\n\n"
+            "<think>\n\n</think>\n\n"
+            "Write a Python function to solve this problem.\n\n"
             f"PROBLEM: {problem.problem_text}\n\n"
-            f"Your function must be named `{(problem.problem_ctx or {}).get('entry_point') or 'solve'}`.\n\n"
+            f"Requirements: the function MUST be named `{_entry}` exactly, "
+            "and be a single self-contained definition.\n\n"
             "```python\n"
+            f"def {_entry}("
         )
         prompts = [prompt] * remaining
         try:

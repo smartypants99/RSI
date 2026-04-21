@@ -185,7 +185,11 @@ DIFFICULTY_REASON: frontier-simulated
     blind_solve = "```python\ndef solve(x):\n    return x\n```\n"
 
     def gen_fn(prompt: str) -> str:
-        if "Solve the following problem" in prompt:
+        # Detect the solve-style prompt via any of the current wordings.
+        if (
+            "Write a Python function to solve" in prompt
+            or "Solve the following problem" in prompt
+        ):
             return blind_solve
         return proposal
 

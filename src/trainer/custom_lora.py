@@ -884,6 +884,19 @@ class CustomLoRATrainer:
         # so the trainable param list has to be recovered from the optimizer.
         lora_params = [p for g in optimizer.param_groups for p in g["params"]]
 
+        # Install GradientNormTracker hook on optimizer.step. Exposes this
+        # cycle's gradient-health summary to meta_meta. Safe no-op when torch
+        # is unavailable; always uninstalled in the finally block.
+        try:
+            from .stability import GradientNormTracker
+            _grad_tracker = GradientNormTracker()
+            _grad_tracker.begin_cycle(cycle, lora_params=lora_params)
+            _grad_tracker.install_on_optimizer(optimizer)
+        except Exception as _e:
+            logger.debug("GradientNormTracker install failed (%s): %s",
+                         type(_e).__name__, _e)
+            _grad_tracker = None
+
         total_batches = len(dataloader) * self.config.num_epochs
         # Adaptive grad-accum: the configured grad_accum assumes larger datasets.
         # With 9 samples and num_epochs=5, grad_accum=1 yields ~25 optimizer steps
@@ -1139,6 +1152,13 @@ class CustomLoRATrainer:
             # In a finally block so model state is restored even if training OOMs —
             # without this, a caught exception leaves the model in train() mode with
             # use_cache=False, wasting VRAM on the next diagnostic phase.
+            if _grad_tracker is not None:
+                try:
+                    _grad_tracker.uninstall_on_optimizer(optimizer)
+                    _grad_summary = _grad_tracker.end_cycle(lora_params=lora_params)
+                    self._last_grad_summary = _grad_summary
+                except Exception as _e:
+                    logger.debug("GradientNormTracker teardown failed: %s", _e)
             try:
                 del optimizer, scheduler
             except UnboundLocalError:
@@ -2063,15 +2083,41 @@ class CustomLoRATrainer:
         weakness correction, over-writing base weights more than intended each cycle.
         """
         skipped = 0
+        # QLoRA 4bit/8bit guard: `orig.data += delta` on a Params4bit/Int8Params
+        # is a shape mismatch (packed bytes ≠ dense [out, in]). The canonical
+        # QLoRA recipe keeps LoRA as a SEPARATE adapter rather than merging.
+        # Detect bnb-quantized base via the SAME attribute check LoRALayer
+        # uses (`_base_is_4bit` / `_base_is_8bit`) and skip in-place merge.
+        # Training remains applied in-memory on the HF model; adapter can be
+        # saved separately for vLLM --enable-lora reload in a later pass.
         for name, lora_layer in self._lora_layers.items():
             with torch.no_grad():
                 is_dora = getattr(lora_layer, "use_dora", False)
+                base_quant = bool(
+                    getattr(lora_layer, "_base_is_4bit", False)
+                    or getattr(lora_layer, "_base_is_8bit", False)
+                )
+                # Additional safety: detect Params4bit/Int8Params by attribute
+                # even if the flag didn't fire, so we never do the bad += on a
+                # packed buffer.
+                orig = lora_layer.original.weight
+                if not base_quant:
+                    base_quant = (
+                        hasattr(orig, "quant_state")
+                        or hasattr(orig, "CB")
+                        or hasattr(orig, "SCB")
+                        or type(orig).__name__ in ("Params4bit", "Int8Params")
+                    )
+                if base_quant:
+                    # Don't merge. LoRA stays in-memory on HF model; stripped
+                    # only at the end (next cycle rebuilds fresh LoRA).
+                    skipped += 1
+                    continue
                 # For plain LoRA: skip if B ≈ 0 (no gradient signal).
                 # For DoRA: even with B=0, magnitude may have moved — still merge.
                 if not is_dora and float(lora_layer.lora_B.detach().abs().max()) < 1e-6:
                     skipped += 1
                     continue
-                orig = lora_layer.original.weight
                 # Cast LoRA params to target dtype BEFORE the matmul to avoid
                 # allocating a full-sized (out_features × in_features) float32 matrix.
                 # For 8192×8192 layers that's 1GB float32 vs 512MB bfloat16.

@@ -649,6 +649,8 @@ class OrchestratorConfig:
     # Architecture search (src/trainer/arch_search.py). Explores small LoRA
     # topology variants during growth events and keeps the winner.
     arch_search_enabled: bool = True
+    arch_search_every: int = 30
+    arch_search_min_delta: float = 0.005
 
     def __post_init__(self):
         if self.max_cycles < 1:

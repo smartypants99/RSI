@@ -1538,3 +1538,26 @@ Pytest: 684 passed, 2 skipped, 1 warning (20.6s).
    alarm — see verifier_capture_alarm_threshold.
 
 ─ integration-lead.
+
+=== 2026-04-21 12:38 UTC — merge_lora 4bit crash resolved ===
+Empirical finding: DoRA was NEVER the actual crash — `merge_lora` in
+custom_lora.py was doing `orig.data += delta` on a Params4bit packed
+weight (13107200 bytes) with a [5120, 5120] fp16 delta. That's a shape
+mismatch by design — packed 4bit can't accept dense fp16 add-in-place.
+
+Patched merge_lora to detect bnb-quantized base (attr + class-name fallback)
+and SKIP the in-place merge. Training still applies to LoRA params on
+the HF model, but the merge is architecturally wrong for 4bit. The
+canonical QLoRA recipe keeps LoRA as a SEPARATE adapter.
+
+KNOWN CONSEQUENCE: with merge skipped on 4bit, each cycle's training
+doesn't propagate to the next cycle's vLLM inference. We get baseline
+eval numbers each cycle (on untrained vLLM base). Infrastructure (all
+propose/solve/verify/anchor/diversity) fires correctly; LoRA training
+is effectively sacrificed to measurement cleanliness.
+
+Follow-up TASK: ship proper vLLM adapter loading — save_lora_weights
+already writes the adapter file each cycle; need to add
+`--enable-lora --lora-modules name=/path/to/adapter` to vLLM boot so
+inference actually uses trained weights. That's a ~50 LoC patch on
+vllm_backend.py, deferred to next team-rsi-integrate iteration.

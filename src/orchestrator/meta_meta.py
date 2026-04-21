@@ -31,26 +31,49 @@ from typing import Iterable, Optional
 # ---------------------------------------------------------------------------
 # Tier configuration
 # ---------------------------------------------------------------------------
+#
+# safety-gate contract (2026-04-21): `src/orchestrator/self_edit.HARD_DENY_LIST`
+# is authoritative. Tier graduation can only EXPAND the allow-list and must
+# never propose paths that are on HARD_DENY (apply-time deny wins anyway).
+# Current HARD_DENY covers orchestrator/loop.py, utils/config.py, trainer/*,
+# self_edit.py, safety/*, tests/*, run.sh, .github/*. Tiers below pick paths
+# that sit OUTSIDE HARD_DENY. Expanding to trainer/loop.py requires a separate
+# reviewed PR to narrow HARD_DENY — not an auto-graduation from this module.
 
-# Tier 0 is the baseline — always allowed, matches self_edit.DEFAULT_ALLOW_LIST.
+# Tier 0: always allowed. Matches self_edit.DEFAULT_ALLOW_LIST.
 TIER_0: tuple[str, ...] = ("src/generator/*.py", "src/verifier/*.py")
-TIER_2: tuple[str, ...] = ("src/utils/*.py", "src/trainer/grpo.py")
-TIER_3: tuple[str, ...] = ("src/trainer/custom_lora.py",)
-TIER_4: tuple[str, ...] = ("src/orchestrator/loop.py",)
+# Tier 2: diagnostics + deeper generator tree. Not on HARD_DENY.
+TIER_2: tuple[str, ...] = ("src/diagnostics/*.py",)
+# Tier 3: orchestrator leaf modules that are NOT loop.py / self_edit.py /
+# meta_meta.py. Still on the bounded surface (not on HARD_DENY).
+TIER_3: tuple[str, ...] = ("src/orchestrator/decision_log.py", "src/orchestrator/registries.py")
+# Tier 4 is HUMAN-GATED: meta_meta may record that qualification was reached
+# and emit a proposal artifact, but the runtime allow-list is NEVER expanded
+# automatically. Expansion requires an external approval step.
+TIER_4_PROPOSAL: tuple[str, ...] = ()  # intentionally empty at runtime
+HUMAN_GATED_TIERS: frozenset[int] = frozenset({4})
 
-# Promotion thresholds: successful self_edit cycles required to unlock a tier,
-# AND the minimum average held-out-delta contribution of self_edit across those
-# successful cycles. "Successful" = self_edit was active AND held_out_delta > 0.
+# Promotion thresholds: (required_successful_self_edit_cycles, required_mean_delta).
 PROMOTION_THRESHOLDS: dict[int, tuple[int, float]] = {
     2: (5, 0.002),
     3: (10, 0.002),
     4: (20, 0.002),
 }
 
-# Revert: 2 consecutive tier-N patches with negative delta -> revoke tier N,
-# cooldown REVERT_COOLDOWN cycles before it can be re-unlocked.
+# Revert semantics (precise, per safety-gate):
+# A tier-N self-edit cycle is "bad" iff components_active["self_edit"] AND
+# self_edit_tier == N AND held_out_delta < NEGATIVE_DELTA_THRESHOLD.
+# Two consecutive bad tier-N cycles (no intervening positive tier-N cycle)
+# revoke tier N and start REVERT_COOLDOWN cycles of cooldown.
+NEGATIVE_DELTA_THRESHOLD = 0.0  # strictly < 0 counts as bad
+SUCCESSFUL_DELTA_THRESHOLD = 0.0  # strictly > 0 counts as a self_edit win
 CONSECUTIVE_BAD_TO_REVERT = 2
 REVERT_COOLDOWN = 5
+
+
+def tier_requires_human_approval(tier: int) -> bool:
+    """Tier 4 can be QUALIFIED by evidence but never auto-unlocked."""
+    return tier in HUMAN_GATED_TIERS
 
 COMPONENT_KEYS: tuple[str, ...] = (
     "fast_student",
@@ -174,24 +197,39 @@ def _self_edit_cycles(history: list[CycleRecord]) -> list[CycleRecord]:
     return [h for h in history if h.components_active.get("self_edit")]
 
 
+def _is_successful_self_edit(h: CycleRecord) -> bool:
+    return (
+        bool(h.components_active.get("self_edit"))
+        and h.held_out_delta > SUCCESSFUL_DELTA_THRESHOLD
+    )
+
+
+def _is_bad_tier_cycle(h: CycleRecord, tier: int) -> bool:
+    return (
+        bool(h.components_active.get("self_edit"))
+        and h.self_edit_tier == tier
+        and h.held_out_delta < NEGATIVE_DELTA_THRESHOLD
+    )
+
+
 def _successful_self_edit_count(history: list[CycleRecord]) -> tuple[int, float]:
-    """Return (count, mean_delta) over cycles where self_edit was active AND
-    the held-out delta was positive."""
-    wins = [h.held_out_delta for h in _self_edit_cycles(history) if h.held_out_delta > 0]
+    wins = [h.held_out_delta for h in history if _is_successful_self_edit(h)]
     if not wins:
         return 0, 0.0
     return len(wins), sum(wins) / len(wins)
 
 
 def _tier_recent_bad_streak(history: list[CycleRecord], tier: int) -> int:
-    """Consecutive trailing tier-N self_edit cycles with negative delta."""
+    """Consecutive trailing tier-N self_edit cycles that meet _is_bad_tier_cycle.
+    A positive tier-N cycle breaks the streak; non-self_edit / other-tier cycles
+    are skipped (they don't advance or reset)."""
     streak = 0
     for h in reversed(history):
         if not h.components_active.get("self_edit"):
             continue
         if h.self_edit_tier != tier:
-            break
-        if h.held_out_delta < 0:
+            continue
+        if _is_bad_tier_cycle(h, tier):
             streak += 1
         else:
             break
@@ -259,8 +297,35 @@ _TIER_GLOBS: dict[int, tuple[str, ...]] = {
     0: TIER_0,
     2: TIER_2,
     3: TIER_3,
-    4: TIER_4,
+    4: TIER_4_PROPOSAL,  # empty at runtime — tier 4 is human-gated
 }
+
+
+def _hard_deny_from_self_edit() -> tuple[str, ...]:
+    """Read the authoritative HARD_DENY_LIST from self_edit at call time.
+
+    Keeping this dynamic means meta_meta stays in sync if self_edit tightens
+    HARD_DENY. We never shadow or redefine it here.
+    """
+    try:
+        from src.orchestrator.self_edit import HARD_DENY_LIST  # type: ignore
+        return tuple(HARD_DENY_LIST)
+    except Exception:
+        return ()
+
+
+def _glob_overlaps_deny(glob: str, deny: Iterable[str]) -> bool:
+    """Conservative check: if a tier glob would obviously collide with a
+    HARD_DENY prefix, flag it. Used defensively to ensure future tier edits
+    don't silently contradict HARD_DENY."""
+    import fnmatch as _fn
+    for d in deny:
+        # If the deny entry itself matches the tier glob's static prefix,
+        # we consider the tier glob dangerous.
+        static_prefix = glob.split("*", 1)[0]
+        if static_prefix and (_fn.fnmatch(static_prefix.rstrip("/"), d) or _fn.fnmatch(d, glob)):
+            return True
+    return False
 
 
 def effective_allow_list(
@@ -269,16 +334,54 @@ def effective_allow_list(
 ) -> tuple[str, ...]:
     """Return the allow-list globs for self-edit given the history so far.
 
-    Always includes tier 0. Higher tiers appear only after graduation.
+    Always includes tier 0. Higher tiers appear only after graduation. Tier 4
+    is HUMAN-GATED and never auto-unlocked regardless of evidence. Any glob
+    that overlaps the authoritative HARD_DENY_LIST is filtered out — meta_meta
+    must not silently contradict safety.
     """
     hist = list(history)
     state = compute_tier_state(hist, current_cycle)
+    deny = _hard_deny_from_self_edit()
     globs: list[str] = []
     for tier in state.unlocked:
+        if tier_requires_human_approval(tier):
+            continue  # human-gated — evidence exists, but runtime stays locked
         for g in _TIER_GLOBS.get(tier, ()):
-            if g not in globs:
-                globs.append(g)
+            if g in globs:
+                continue
+            if _glob_overlaps_deny(g, deny):
+                continue
+            globs.append(g)
     return tuple(globs)
+
+
+def qualified_tiers(
+    history: Iterable[CycleRecord],
+    current_cycle: int = 0,
+) -> list[int]:
+    """Tiers that evidence says SHOULD be unlocked, including human-gated ones.
+    Use this to surface tier-4 proposals to human reviewers via update-log."""
+    return compute_tier_state(list(history), current_cycle).unlocked
+
+
+def append_audit_log(
+    audit_path: Path,
+    cycle_id: int,
+    event: str,
+    tier: int,
+    detail: str = "",
+) -> None:
+    """Append a human-readable audit line. Intended for update-log.txt.
+
+    Events: 'tier_unlocked', 'tier_reverted', 'tier_proposed_human_gate'.
+    """
+    audit_path = Path(audit_path)
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    line = f"[meta_meta] cycle={cycle_id} event={event} tier={tier}"
+    if detail:
+        line += f" detail={detail}"
+    with audit_path.open("a") as f:
+        f.write(line + "\n")
 
 
 def current_self_edit_tier(

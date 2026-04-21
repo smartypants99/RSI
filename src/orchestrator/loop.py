@@ -111,6 +111,12 @@ class CycleResult:
         # orchestrator can bank them as adversarial examples if post-training
         # eval regresses. Each entry: {problem_id, candidate, domain, problem_ctx}.
         self._admitted_candidates: list[dict] = []
+        # Anchor eval (Task #1, ground-truth). External-benchmark score on
+        # HumanEval/MBPP/GSM8K/MATH, run after internal held-out. Decoupled
+        # from the self-graded loop — if this drops while eval_score rises,
+        # verifier_capture_alarm fires (see _eval_phase).
+        self.anchor_score: float | None = None
+        self.verifier_capture_alarm: bool = False
 
     @property
     def improved(self) -> bool:
@@ -1989,9 +1995,23 @@ class ImprovementLoop:
         # deterministic ground-truth bank — curriculum state and templates
         # would otherwise drift question composition between runs and
         # inject ~25% of the noise that masked cycle 2's real signal.
+        #
+        # Oversample during frozen eval so the HELD_OUT_ONLY partition
+        # (~37% of items, task #3) yields ~200 per-domain → ~1200 total.
+        # At p=0.5 this puts SE ≈ 0.014, enough to resolve |delta| > 0.02
+        # at high confidence. Without the oversample we'd only land ~30
+        # held-out items per domain after partition filtering.
+        cfg = self.config.diagnostics
+        orig_n = cfg.questions_per_domain
+        orig_max = cfg.max_questions_per_domain
+        heldout_target_per_domain = int(
+            getattr(self.config.orchestrator, "heldout_questions_per_domain", 540)
+        )
         prev_mode = getattr(self.diagnostics, "_frozen_eval_mode", False)
         self.diagnostics._frozen_eval_mode = True
         try:
+            cfg.max_questions_per_domain = max(orig_max, heldout_target_per_domain)
+            cfg.questions_per_domain = heldout_target_per_domain
             for i in range(reps):
                 try:
                     d = self.diagnostics.run(self.HELDOUT_CYCLE_SEED)
@@ -2004,6 +2024,8 @@ class ImprovementLoop:
                 per_rep_per_question.append(list(d.per_question))
         finally:
             self.diagnostics._frozen_eval_mode = prev_mode
+            cfg.questions_per_domain = orig_n
+            cfg.max_questions_per_domain = orig_max
         if not scores:
             return
         # Use the mean across repetitions as the authoritative eval_score —
@@ -2042,6 +2064,65 @@ class ImprovementLoop:
             symbol = "+" if delta > 0 else ""
             logger.info(f"    (prev {prev_eval:.3f}, {symbol}{delta:.3f})")
 
+        # Anchor eval (Task #1, ground-truth). Ground-truth external
+        # benchmarks — detects verifier capture when internal loop improves
+        # while real-world tasks regress.
+        anchor_delta: float | None = None
+        if self.config.orchestrator.anchor_eval_enabled:
+            try:
+                from ..utils.external_benchmarks import (
+                    run_anchor_eval,
+                    detect_verifier_capture,
+                    fire_capture_alarm,
+                )
+                ocfg = self.config.orchestrator
+                benchmarks = list(ocfg.anchor_eval_benchmarks)
+                per_bench = max(1, ocfg.anchor_eval_size // max(1, len(benchmarks)))
+
+                def _anchor_model_fn(prompt: str) -> str:
+                    return self.model_loader.generate(
+                        prompt, max_new_tokens=256, temperature=0.0, top_p=1.0
+                    )
+
+                summary = run_anchor_eval(
+                    _anchor_model_fn,
+                    benchmarks=benchmarks,
+                    per_benchmark=per_bench,
+                    cache_dir=ocfg.anchor_eval_cache_dir,
+                )
+                result.anchor_score = summary["anchor_score"]
+                logger.info(
+                    "  anchor eval: %.3f (n=%d) per_bench=%s",
+                    result.anchor_score, summary["n"], summary["per_benchmark"],
+                )
+                prev_anchor = next(
+                    (r.anchor_score for r in reversed(self.history)
+                     if getattr(r, "anchor_score", None) is not None),
+                    None,
+                )
+                if prev_anchor is not None:
+                    anchor_delta = result.anchor_score - prev_anchor
+                    logger.info(
+                        "    (anchor prev %.3f, %s%.3f)",
+                        prev_anchor,
+                        "+" if anchor_delta > 0 else "",
+                        anchor_delta,
+                    )
+                if delta is not None and anchor_delta is not None:
+                    if detect_verifier_capture(
+                        internal_delta=delta,
+                        anchor_delta=anchor_delta,
+                        threshold=ocfg.verifier_capture_alarm_threshold,
+                    ):
+                        fire_capture_alarm(
+                            cycle=cycle,
+                            internal_delta=delta,
+                            anchor_delta=anchor_delta,
+                        )
+                        result.verifier_capture_alarm = True
+            except Exception as exc:
+                logger.warning("anchor_eval failed (non-fatal): %s", exc)
+
         # Curriculum escalation: feed held-out per-question records + the
         # delta into the DifficultyTracker, ratchet the proposal difficulty
         # floor, and persist state so restarts pick up where we left off.
@@ -2067,6 +2148,9 @@ class ImprovementLoop:
                         "cycle": cycle,
                         "eval_score": mean_score,
                         "heldout_delta": delta,
+                        "anchor_score": result.anchor_score,
+                        "anchor_delta": anchor_delta,
+                        "verifier_capture_alarm": result.verifier_capture_alarm,
                         "frontier": result.difficulty_frontier,
                         "difficulty_floor": result.difficulty_floor,
                         "proposals_last_accepted": self.difficulty_tracker.last_accepted,

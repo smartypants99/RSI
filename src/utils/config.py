@@ -518,6 +518,11 @@ class OrchestratorConfig:
     # -0.2+ drops that trigger revert. Default was 8; 5 saves ~5s per training
     # cycle without changing revert semantics.
     regression_probe_questions_per_domain: int = 5
+    # Per-domain oversample target during frozen held-out eval (task #3).
+    # After HELD_OUT_ONLY partition filtering (~37% retained) and ×6 active
+    # domains, 540 per-domain lands ~1200 total held-out questions, giving
+    # SE ≈ 0.014 at p=0.5 — enough to resolve |delta| > 0.02 confidently.
+    heldout_questions_per_domain: int = 540
     # Substrate update: promote the merged checkpoint to a new base every N
     # training cycles. LoRA on a frozen 4-bit base has a fixed ceiling (the
     # only trainable params are the low-rank adapters); periodically snapshot

@@ -104,6 +104,43 @@ def test_effective_allow_list_expands_with_tier2():
         assert g in globs
 
 
+def test_effective_allow_list_never_overlaps_hard_deny():
+    from src.orchestrator.self_edit import HARD_DENY_LIST
+    history = [_se(i, 0.01, tier=0) for i in range(1, 25)]
+    globs = mm.effective_allow_list(history, current_cycle=26)
+    banned_prefixes = (
+        "src/orchestrator/loop.py", "src/utils/config.py", "src/trainer/",
+        "src/safety/", "src/orchestrator/self_edit.py",
+        "src/orchestrator/meta_meta.py", "tests/", "run.sh",
+    )
+    for g in globs:
+        for bp in banned_prefixes:
+            assert not g.startswith(bp), f"tier glob {g} collides with HARD_DENY {bp}"
+    assert "src/orchestrator/loop.py" in HARD_DENY_LIST
+    assert "src/trainer/*" in HARD_DENY_LIST
+
+
+def test_tier4_is_human_gated_not_auto_unlocked():
+    history = [_se(i, 0.01, tier=0) for i in range(1, 25)]
+    qualified = mm.qualified_tiers(history, current_cycle=26)
+    assert 4 in qualified
+    globs = mm.effective_allow_list(history, current_cycle=26)
+    for g in mm.TIER_4_PROPOSAL:
+        assert g not in globs
+    assert mm.tier_requires_human_approval(4) is True
+    assert mm.tier_requires_human_approval(2) is False
+
+
+def test_audit_log_records_tier_events(tmp_path: Path):
+    ap = tmp_path / "update-log.txt"
+    mm.append_audit_log(ap, cycle_id=7, event="tier_unlocked", tier=2)
+    mm.append_audit_log(ap, cycle_id=9, event="tier_reverted", tier=2, detail="2x<0")
+    text = ap.read_text()
+    assert "event=tier_unlocked tier=2" in text
+    assert "event=tier_reverted tier=2" in text
+    assert "cycle=9" in text
+
+
 # --- Revert on negative -------------------------------------------------------
 
 

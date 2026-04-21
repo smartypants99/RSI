@@ -1559,6 +1559,27 @@ class DiagnosticsEngine:
             })
 
         rng.shuffle(questions)
+
+        # Hard partition enforcement (task #3, eval-isolation). In frozen/
+        # held-out mode we only return HELD_OUT_ONLY questions; in the normal
+        # path (curriculum / proposer-facing) we strip HELD_OUT_ONLY and
+        # SMOKE_EVAL so the proposer can never seed from them. This keeps the
+        # four-way partition disjoint end-to-end rather than relying on the
+        # downstream caller to filter.
+        from .eval_partition import Partition, partition_for_question
+        if self._frozen_eval_mode:
+            questions = [
+                q for q in questions
+                if partition_for_question(q.get("prompt", ""), q.get("expected"))
+                   is Partition.HELD_OUT_ONLY
+            ]
+        else:
+            questions = [
+                q for q in questions
+                if partition_for_question(q.get("prompt", ""), q.get("expected"))
+                   not in (Partition.HELD_OUT_ONLY, Partition.SMOKE_EVAL)
+            ]
+
         return questions[:target]
 
     def _curriculum_mix(self, cycle: int) -> dict:

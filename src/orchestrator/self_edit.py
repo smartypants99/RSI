@@ -478,6 +478,11 @@ def run_self_edit_meta_cycle(
         Called twice: once on the baseline worktree (clean HEAD) and once on the
         patched worktree. Keeping this as a caller-supplied callable means we
         never reach inside the trainer / GPU path from this module.
+        IMPORTANT (task #3): the caller MUST scope smoke_eval to the
+        `SMOKE_EVAL` partition of the question universe — see
+        `src/diagnostics/eval_partition.py`. Sharing questions with the held-out
+        or training pools lets a self-edit that overfits the smoke bar also move
+        the held-out bar without that signal reflecting real improvement.
 
     Always writes a history record, even on error.
     """
@@ -584,3 +589,19 @@ def run_self_edit_meta_cycle(
             logger.warning("failed to append self_edit_history: %s", e)
         if wt_path is not None:
             destroy_worktree_sandbox(repo_root, wt_path)
+
+
+def smoke_eval_question_filter(questions):
+    """Filter an iterable of question-dicts to the SMOKE_EVAL partition only.
+
+    Callers building a `smoke_eval` callback for `run_self_edit_meta_cycle`
+    should wrap their question bank with this filter so the +0.5% bar can't
+    be gamed by editing against items that also appear in the held-out or
+    training pools. See task #3 (eval-isolation).
+    """
+    from ..diagnostics.eval_partition import Partition, partition_for_question
+    return [
+        q for q in questions
+        if partition_for_question(q.get("prompt", ""), q.get("expected"))
+           is Partition.SMOKE_EVAL
+    ]

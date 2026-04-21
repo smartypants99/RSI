@@ -4,3 +4,4 @@ accelerate>=0.20
 sympy>=1.12
 vllm>=0.8.0
 bitsandbytes>=0.41
+z3-solver>=4.12

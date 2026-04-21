@@ -98,6 +98,7 @@ class CycleRecord:
     # Tier that was UNLOCKED during this cycle's self-edit attempt, if any.
     # Used to attribute tier-N patches correctly for the revert rule.
     self_edit_tier: Optional[int] = None
+    gradient_health: Optional[dict] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -109,6 +110,7 @@ class CycleRecord:
             components_active={k: bool(v) for k, v in (d.get("components_active") or {}).items()},
             held_out_delta=float(d["held_out_delta"]),
             self_edit_tier=d.get("self_edit_tier"),
+            gradient_health=d.get("gradient_health"),
         )
 
 
@@ -499,6 +501,7 @@ def record_cycle(
     components_active: dict[str, bool],
     held_out_delta: float,
     self_edit_tier: Optional[int] = None,
+    gradient_health: Optional[dict] = None,
 ) -> CycleRecord:
     """Append one cycle's meta-meta record to the JSONL history."""
     rec = CycleRecord(
@@ -506,6 +509,7 @@ def record_cycle(
         components_active={k: bool(components_active.get(k, False)) for k in COMPONENT_KEYS},
         held_out_delta=float(held_out_delta),
         self_edit_tier=self_edit_tier,
+        gradient_health=gradient_health,
     )
     append_history(history_path, rec)
     return rec

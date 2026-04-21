@@ -2560,12 +2560,20 @@ class ImprovementLoop:
                     "self_edit": int(getattr(ocfg, "self_edit_every", 0)) > 0,
                     "grpo": self.config.trainer.training_mode == "grpo",
                 }
+                _grad_health = None
+                _gs = getattr(self.trainer, "_last_grad_summary", None)
+                if _gs is not None:
+                    try:
+                        _grad_health = _gs.to_dict()
+                    except Exception:
+                        _grad_health = None
                 _mm_record(
                     _P(ocfg.meta_meta_history_path),
                     cycle_id=cycle,
                     components_active=components_active,
                     held_out_delta=float(delta),
                     self_edit_tier=None,
+                    gradient_health=_grad_health,
                 )
             except Exception as exc:
                 logger.debug("meta_meta record_cycle failed (non-fatal): %s", exc)
@@ -2757,6 +2765,30 @@ class ImprovementLoop:
             if proposal.get(_tf) is not None:
                 setattr(self.config.trainer, _tf, proposal[_tf])
         self.meta.persist_state()
+
+        # GRPO auto-switch: escalate SFT→GRPO on paired-held-out plateau.
+        # Uses the new should_switch_to_grpo signature: paired_delta +
+        # z-score gate over a sliding window of training-cycle records.
+        try:
+            if self.config.trainer.training_mode == "sft":
+                from ..trainer.grpo import should_switch_to_grpo
+                hist = []
+                for r in self.history:
+                    if r.paired_delta is None:
+                        continue
+                    hist.append({
+                        "paired_delta": float(r.paired_delta),
+                        "paired_se": float(r.paired_delta_se or 0.0),
+                        "n": int(r.paired_delta_n or 0),
+                    })
+                if should_switch_to_grpo(hist):
+                    logger.info(
+                        "[meta] SFT plateau detected (paired-delta z-gate) — "
+                        "switching training_mode to grpo at cycle %d", cycle,
+                    )
+                    self.config.trainer.training_mode = "grpo"
+        except Exception as exc:
+            logger.debug("grpo auto-switch check failed (non-fatal): %s", exc)
 
     def _apply_quality_top_k(self, verified: list) -> list:
         """Rank verified samples by quality, keep the top-k.

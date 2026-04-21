@@ -269,6 +269,7 @@ def sample_anchor_set(
     items_by_benchmark: dict[str, list[BenchmarkItem]],
     per_benchmark: int,
     seed: int = ANCHOR_SEED,
+    include_surprise: bool = False,
 ) -> list[BenchmarkItem]:
     """Deterministic subset: same (items, per_benchmark, seed) → same list.
 
@@ -276,10 +277,26 @@ def sample_anchor_set(
     first `per_benchmark` per benchmark. This is reproducible across
     processes and Python runs (unlike `random.sample`, which depends on
     hash randomization).
+
+    When ``include_surprise=True`` the surprise-eval benchmarks (codex
+    surprise, ARC-AGI, LiveCodeBench post-cutoff) are merged into the
+    sampling pool via ``surprise_eval.load_surprise_anchor_items``. Any
+    failure in the surprise loader is logged and skipped — the base
+    external benchmarks still sample normally.
     """
+    merged: dict[str, list[BenchmarkItem]] = dict(items_by_benchmark)
+    if include_surprise:
+        try:
+            from .surprise_eval import load_surprise_anchor_items
+            surprise = load_surprise_anchor_items()
+            for k, v in surprise.items():
+                merged.setdefault(k, []).extend(v)
+        except Exception as e:
+            logger.warning("sample_anchor_set: surprise merge failed (%s)", e)
+
     out: list[BenchmarkItem] = []
-    for bench in sorted(items_by_benchmark.keys()):
-        pool = list(items_by_benchmark[bench])
+    for bench in sorted(merged.keys()):
+        pool = list(merged[bench])
         # Sort by (seeded hash, item_id) for a stable, seed-varying order.
         pool.sort(key=lambda it: (_stable_hash(f"{seed}:{it.item_id}"), it.item_id))
         out.extend(pool[:per_benchmark])

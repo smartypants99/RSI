@@ -246,7 +246,14 @@ class TrainerConfig:
     # weights. Trainers that blow up the base model shouldn't get to keep
     # their corruption in the next cycle's starting state. Set to a large
     # value (e.g. 1.0) to disable.
-    regression_revert_threshold: float = 0.10
+    # Tightened 0.10 → 0.03 after observing cycle-20 training drop
+    # held-out 0.576 → 0.525 (delta 0.051). The old 0.10 threshold
+    # let that regression through — the model ended up running at
+    # 0.525, below the 0.558 baseline, when cycle_7's 0.576 would have
+    # been kept if the threshold had been tighter. 0.03 still allows
+    # ~0.5 std-of-score noise without triggering spurious reverts
+    # (observed held-out spread per eval is ~0.05 across 2 reps).
+    regression_revert_threshold: float = 0.03
     # skip_if_initial_loss_below: pre-training loss probe. Before the first
     # backward step, we forward a single batch under no_grad and check the
     # loss. If it's already below this threshold, the model has effectively

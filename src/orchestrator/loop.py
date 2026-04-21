@@ -104,6 +104,9 @@ class CycleResult:
         self.candidates_accepted: int = 0
         self.candidates_rejected_by_adversarial: int = 0
         self.classes_suspended: int = 0
+        # Curriculum escalation snapshot for this cycle (DifficultyTracker).
+        self.difficulty_frontier: str = ""
+        self.difficulty_floor: float = 0.0
         # Candidates admitted by §1.4 quorum this cycle — captured so the
         # orchestrator can bank them as adversarial examples if post-training
         # eval regresses. Each entry: {problem_id, candidate, domain, problem_ctx}.
@@ -233,6 +236,15 @@ class ImprovementLoop:
                     config.orchestrator.output_dir, sid=sid
                 )
                 logger.info("RSI registries opened (sid=%s)", self._registries.sid)
+                if self._task_synthesizer is not None:
+                    try:
+                        self._task_synthesizer.set_registries(self._registries)
+                    except Exception as e:
+                        logger.warning(
+                            "TaskSynthesizer.set_registries failed (%s: %s) — "
+                            "library few-shot prefix disabled",
+                            type(e).__name__, e,
+                        )
             except Exception as e:
                 logger.warning("RSI registries failed to open (%s: %s) — artifact logging disabled",
                                type(e).__name__, e)
@@ -1941,10 +1953,53 @@ class ImprovementLoop:
             )
         else:
             logger.info(f"  Held-out eval: {mean_score:.3f}")
+        delta: float | None = None
         if prev_eval is not None:
             delta = mean_score - prev_eval
             symbol = "+" if delta > 0 else ""
             logger.info(f"    (prev {prev_eval:.3f}, {symbol}{delta:.3f})")
+
+        # Curriculum escalation: feed held-out per-question records + the
+        # delta into the DifficultyTracker, ratchet the proposal difficulty
+        # floor, and persist state so restarts pick up where we left off.
+        try:
+            last_per_q = (
+                per_rep_per_question[-1] if per_rep_per_question else []
+            )
+            self.difficulty_tracker.record_heldout(last_per_q)
+            if delta is not None:
+                self.difficulty_tracker.update_ratchet(delta, cycle=cycle)
+            result.difficulty_frontier = self.difficulty_tracker.frontier()
+            result.difficulty_floor = self.difficulty_tracker.difficulty_floor
+            self.difficulty_tracker.save()
+            # cycle_metrics jsonl: one line per held-out eval with the
+            # ratchet state + frontier. Independent of the full per-cycle
+            # JSON dump so operators can tail it cheaply across runs.
+            try:
+                out_dir = self.config.orchestrator.output_dir / "cycle_metrics"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                jsonl_path = out_dir / "curriculum.jsonl"
+                with open(jsonl_path, "a") as _f:
+                    _f.write(json.dumps({
+                        "cycle": cycle,
+                        "eval_score": mean_score,
+                        "heldout_delta": delta,
+                        "frontier": result.difficulty_frontier,
+                        "difficulty_floor": result.difficulty_floor,
+                        "proposals_last_accepted": self.difficulty_tracker.last_accepted,
+                        "proposals_last_rejected": self.difficulty_tracker.last_rejected,
+                        "timestamp": time.time(),
+                    }) + "\n")
+            except Exception as exc:
+                logger.debug("curriculum.jsonl write failed: %s", exc)
+            logger.info(
+                "  curriculum: frontier=%r floor=%.2f (delta=%s)",
+                result.difficulty_frontier or "(none)",
+                result.difficulty_floor,
+                f"{delta:+.3f}" if delta is not None else "n/a",
+            )
+        except Exception as exc:
+            logger.debug("difficulty_tracker post-eval update failed: %s", exc)
 
     def _meta_step(self, cycle: int, result: CycleResult) -> None:
         """End-of-cycle: record outcome into MetaController and apply bounded proposals.

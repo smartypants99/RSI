@@ -375,6 +375,16 @@ class TrainerConfig:
     # max_seq_length) so shrinking model seqlen never under-runs this.
     train_max_seq_length: int = 1024
 
+    # use_gradient_checkpointing: when True, recompute activations during
+    # backward to save ~3x VRAM at ~2x compute cost. For 32B-4bit (~18GB
+    # on A6000 48GB) + rank-8 LoRA (~180MB params + Adam states) +
+    # train_max_seq_length=1024 batch=2, activations are ~2-4GB and fit
+    # comfortably with ~25GB headroom, so GC is pure slowdown. Kept True
+    # by default (safe — matches prior behavior). Set False at next
+    # restart to cut train time ~40-50% once held-out VRAM headroom is
+    # confirmed by an operator. OOM-retry path still halves batch size.
+    use_gradient_checkpointing: bool = True
+
     def __post_init__(self):
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}")

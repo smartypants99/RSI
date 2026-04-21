@@ -900,8 +900,11 @@ class CustomLoRATrainer:
         # may be fragmented, preventing gradient checkpointing from allocating the
         # contiguous blocks it needs for recomputation.
         torch.cuda.empty_cache()
-        # Enable gradient checkpointing to save VRAM on A6000s
-        if hasattr(model, "gradient_checkpointing_enable"):
+        # Enable gradient checkpointing to save VRAM on A6000s (gated —
+        # for 32B-4bit + short-seq LoRA there's ~25GB of unused VRAM and
+        # GC is pure slowdown; operator can set use_gradient_checkpointing=False).
+        if getattr(self.config, "use_gradient_checkpointing", True) \
+                and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
 
         # Pre-training loss probe: if the very first batch's forward loss is
@@ -1269,7 +1272,8 @@ class CustomLoRATrainer:
         model.train()
         model.config.use_cache = False
         torch.cuda.empty_cache()
-        if hasattr(model, "gradient_checkpointing_enable"):
+        if getattr(self.config, "use_gradient_checkpointing", True) \
+                and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
 
         beta = self.config.dpo_beta
@@ -1730,7 +1734,8 @@ class CustomLoRATrainer:
         model.train()
         model.config.use_cache = False
         torch.cuda.empty_cache()
-        if hasattr(model, "gradient_checkpointing_enable"):
+        if getattr(self.config, "use_gradient_checkpointing", True) \
+                and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
 
         try:

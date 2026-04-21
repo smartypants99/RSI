@@ -564,6 +564,19 @@ class OrchestratorConfig:
     prestash_prior_samples: bool = True
     prestash_max_samples: int = 30
 
+    # Anchor eval (Task #1, ground-truth). External benchmarks run after the
+    # internal held-out eval each cycle; if internal score improves while
+    # anchor score drops by >= verifier_capture_alarm_threshold, the cycle
+    # fires a verifier-capture alarm (self-graded loop drifting from ground
+    # truth). Default True; consolidation flip confirms ON.
+    anchor_eval_enabled: bool = True
+    anchor_eval_size: int = 200
+    verifier_capture_alarm_threshold: float = 0.01
+    anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
+        "humaneval", "mbpp", "gsm8k", "math",
+    ])
+    anchor_eval_cache_dir: str = "outputs/external_benchmarks"
+
     def __post_init__(self):
         if self.max_cycles < 1:
             raise ValueError(f"max_cycles must be >= 1, got {self.max_cycles}")
@@ -603,6 +616,17 @@ class OrchestratorConfig:
             raise ValueError(
                 f"prestash_max_samples must be >= 0, got {self.prestash_max_samples}"
             )
+        if self.anchor_eval_size < 1:
+            raise ValueError(
+                f"anchor_eval_size must be >= 1, got {self.anchor_eval_size}"
+            )
+        if self.verifier_capture_alarm_threshold < 0:
+            raise ValueError(
+                f"verifier_capture_alarm_threshold must be >= 0, "
+                f"got {self.verifier_capture_alarm_threshold}"
+            )
+        if not self.anchor_eval_benchmarks:
+            raise ValueError("anchor_eval_benchmarks must be non-empty")
 
 
 @dataclass

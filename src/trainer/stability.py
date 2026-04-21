@@ -177,7 +177,7 @@ class GradientNormTracker:
 
     def install_on_optimizer(self, optimizer) -> None:
         """Wrap ``optimizer.step`` to record the current grad-norm each call."""
-        if self._orig_step is not None:
+        if self._orig_step is not None or getattr(self, "_hook_handle", None) is not None:
             return  # already installed
         try:
             import torch
@@ -186,10 +186,9 @@ class GradientNormTracker:
             return
         tracker = self
         params = list(self._tracked_params or [p for g in optimizer.param_groups for p in g["params"]])
-        orig_step = optimizer.step
 
-        def _wrapped_step(*args, **kwargs):
-            # Compute norm BEFORE step (optimizer.step consumes grads).
+        def _pre_step_hook(opt, args, kwargs):
+            # Compute norm BEFORE step (step consumes grads via optimizer update).
             total_sq = 0.0
             for p in params:
                 g = getattr(p, "grad", None)
@@ -197,19 +196,49 @@ class GradientNormTracker:
                     continue
                 total_sq += float(g.detach().pow(2).sum().item())
             tracker.record_step_norm(total_sq ** 0.5)
-            return orig_step(*args, **kwargs)
 
-        optimizer.step = _wrapped_step  # bound-method replace
-        self._orig_step = orig_step
-        self._hooked_optimizer = optimizer
+        # Use PyTorch's native step-pre-hook API instead of monkey-patching
+        # optimizer.step. Monkey-patching replaces the bound method with a
+        # plain function, which breaks `optimizer.step.__func__` lookups that
+        # transformers' training loop / accelerate internals perform.
+        try:
+            handle = optimizer.register_step_pre_hook(_pre_step_hook)
+            self._hook_handle = handle
+            self._hooked_optimizer = optimizer
+        except AttributeError:
+            # Older torch (<2.0) doesn't have register_step_pre_hook.
+            # Fall back to manual method-wrap via types.MethodType so
+            # the replaced attribute remains a bound method (preserves .__func__).
+            import types
+            orig_step = optimizer.step
+
+            def _wrapped(opt_self, *args, **kwargs):
+                total_sq = 0.0
+                for p in params:
+                    g = getattr(p, "grad", None)
+                    if g is None:
+                        continue
+                    total_sq += float(g.detach().pow(2).sum().item())
+                tracker.record_step_norm(total_sq ** 0.5)
+                return orig_step(*args, **kwargs)
+
+            optimizer.step = types.MethodType(_wrapped, optimizer)
+            self._orig_step = orig_step
+            self._hooked_optimizer = optimizer
 
     def uninstall_on_optimizer(self, optimizer=None) -> None:
-        if self._orig_step is None:
-            return
         opt = optimizer if optimizer is not None else getattr(self, "_hooked_optimizer", None)
-        if opt is not None:
-            opt.step = self._orig_step
-        self._orig_step = None
+        handle = getattr(self, "_hook_handle", None)
+        if handle is not None:
+            try:
+                handle.remove()
+            except Exception:
+                pass
+            self._hook_handle = None
+        if self._orig_step is not None:
+            if opt is not None:
+                opt.step = self._orig_step
+            self._orig_step = None
         self._hooked_optimizer = None
 
     def end_cycle(self, lora_params=None) -> CycleGradSummary:

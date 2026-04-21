@@ -989,3 +989,19 @@ Outstanding for "fully working":
   - DeepSeek-32B TDQ training path (needs user's adapter training
     flow; not touched overnight since peft+TDQModel don't compose)
   - Acceptance stability (currently 0-12/cycle, noisy)
+
+=== 2026-04-21 02:10 UTC — PIVOT TO DeepSeek-32B QLoRA ===
+Stacking test result (8e14733 lowered min_batch to 5):
+  cycle_7 (0.576) → one more train (pool=9, ~2 steps) → 0.561
+  delta = -0.016, under revert threshold (0.03), not reverted.
+  Qwen3-8B confirmed to have hit local max at cycle_7.
+
+Pivot per other Claude's QLoRA guidance (don't use TDA for training,
+use HF 4-bit + LoRA). Used `unsloth/DeepSeek-R1-Distill-Qwen-32B-
+bnb-4bit` (pre-quantized, ~18 GB download vs 64 GB raw).
+
+Commits: f6bee64 (vLLM bitsandbytes wiring + run_deepseek.sh).
+Run started 02:10 UTC. vLLM loading weights now. Architecture
+resolved to Qwen2ForCausalLM. If this cycles cleanly we get a
+much stronger base proposer/solver → accept rate should stay
+above cycle_7-style ceiling → multi-cycle stacking becomes possible.

@@ -946,3 +946,26 @@ Morning recommendations (will NOT change tonight without user input):
      cycle 20 barely trained before early-stopping at step 2.
   3. Retain cycle_7 as the "best" checkpoint reference rather than
      always continuing from most-recent.
+
+=== 2026-04-21 00:55 UTC — completed run summary + resume from cycle_7 ===
+Prior run (PID 54309, started 22:31 UTC) completed 40/40 cycles:
+  trained-cycle held-out trajectory:
+    cycle_7:  0.558 → 0.576  (+0.018, +3.2% vs baseline)
+    cycle_20: 0.576 → 0.525  (-0.051, under old 0.10 revert threshold,
+                              so kept — model ran at 0.525 from here)
+    cycle_39: 0.525 → 0.554  (+0.029, partial recovery)
+  final: 0.554 (just under 0.558 baseline)
+  best: cycle_7 at 0.576
+
+Best checkpoint (cycle_7, 16 GB) saved to
+  /workspace/cycle_7_best_heldout0576/
+for future reuse. Old large checkpoints (cycle_20, cycle_39, cycle_40)
+deleted to reclaim disk (was at 87% / 16 GB free → now 59% / 46 GB).
+
+New run at 00:54 UTC: `bash run.sh --resume /workspace/cycle_7_best_heldout0576`.
+cf1e461 brings regression_revert_threshold down from 0.10 → 0.03 so a
+drop like 0.576→0.525 would now actually revert. 40 more cycles; best
+case is small positive deltas stacked on top of cycle_7's 0.576.
+
+If any regression fires the (now-tight) revert guard, the log will say
+`reverted` and the model will snap back to the last good checkpoint.

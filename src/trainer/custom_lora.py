@@ -2196,6 +2196,8 @@ class CustomLoRATrainer:
         weakness correction, over-writing base weights more than intended each cycle.
         """
         skipped = 0
+        quant_skipped = 0  # separate tally: bnb base skipped (not a gradient signal)
+        zero_B = 0  # separate tally: B actually stayed at init (real signal)
         # QLoRA 4bit/8bit guard: `orig.data += delta` on a Params4bit/Int8Params
         # is a shape mismatch (packed bytes ≠ dense [out, in]). The canonical
         # QLoRA recipe keeps LoRA as a SEPARATE adapter rather than merging.
@@ -2224,12 +2226,18 @@ class CustomLoRATrainer:
                 if base_quant:
                     # Don't merge. LoRA stays in-memory on HF model; stripped
                     # only at the end (next cycle rebuilds fresh LoRA).
-                    skipped += 1
+                    quant_skipped += 1
+                    # Still probe B so the undertrained diagnostic works on QLoRA:
+                    # on bnb-4bit we never merge, but we still want to know whether
+                    # the adapter actually moved off its zero init.
+                    if not is_dora and float(lora_layer.lora_B.detach().abs().max()) < 1e-6:
+                        zero_B += 1
                     continue
                 # For plain LoRA: skip if B ≈ 0 (no gradient signal).
                 # For DoRA: even with B=0, magnitude may have moved — still merge.
                 if not is_dora and float(lora_layer.lora_B.detach().abs().max()) < 1e-6:
                     skipped += 1
+                    zero_B += 1
                     continue
                 # Cast LoRA params to target dtype BEFORE the matmul to avoid
                 # allocating a full-sized (out_features × in_features) float32 matrix.
@@ -2275,15 +2283,25 @@ class CustomLoRATrainer:
                         delta = delta.T
                     orig.data += delta.to(orig.dtype)
         total = len(self._lora_layers)
+        if quant_skipped:
+            logger.info(
+                f"  Skipped {quant_skipped}/{total} LoRA merges (bnb-quantized base — "
+                f"adapter stays separate for vLLM --enable-lora)"
+            )
         if skipped:
             logger.info(f"  Skipped {skipped}/{total} zero-contribution LoRA layers during merge")
-        if total and skipped / total > 0.5:
+        # Real undertrained signal: B stayed at zero init. On QLoRA this is the
+        # only way to tell if gradient actually reached the adapter, since the
+        # merge is always skipped on bnb.
+        if total and zero_B / total > 0.5:
             logger.warning(
-                f"  Undertrained: {skipped}/{total} LoRA layers had zero B matrix. "
+                f"  Undertrained: {zero_B}/{total} LoRA layers had zero B matrix. "
                 f"Training likely did not produce meaningful gradients this cycle."
             )
             self._last_merge_undertrained = True
         else:
+            if zero_B:
+                logger.info(f"  {zero_B}/{total} LoRA layers had zero B (below undertrained threshold)")
             self._last_merge_undertrained = False
 
         # After merging, strip LoRA so next cycle starts clean

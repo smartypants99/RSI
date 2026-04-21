@@ -546,6 +546,19 @@ class OrchestratorConfig:
     self_edit_min_improvement: float = 0.005
     self_edit_smoke_cycles: int = 2
     self_edit_candidate_path: str = "src/generator/data_generator.py"
+    # Fast-start (Task #11, fast-start). Shrinks cold-cycle-1 wall-time so
+    # a restart hits its first trained cycle in ≤20 min instead of ~60.
+    #  - skip_first_diagnostics: cycle 1 uses a uniform-weakness default
+    #    (src/utils/fast_start.default_weakness_diag); real diagnostics
+    #    resume cycle 2+.
+    #  - prestash_prior_samples: on __init__, glob
+    #    outputs/training_pool/*.jsonl and prior outputs_run_*/training_pool
+    #    for records with a different session_id, load up to
+    #    prestash_max_samples of them into _rsi_pending_pool so cycle 1
+    #    can train without waiting for a full synthesis round.
+    skip_first_diagnostics: bool = True
+    prestash_prior_samples: bool = True
+    prestash_max_samples: int = 30
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -581,6 +594,10 @@ class OrchestratorConfig:
         if self.self_edit_smoke_cycles < 1:
             raise ValueError(
                 f"self_edit_smoke_cycles must be >= 1, got {self.self_edit_smoke_cycles}"
+            )
+        if self.prestash_max_samples < 0:
+            raise ValueError(
+                f"prestash_max_samples must be >= 0, got {self.prestash_max_samples}"
             )
 
 
@@ -658,6 +675,10 @@ class SynthesisConfig:
     ood_state_path: str = "outputs/ood_domains.jsonl"
     ood_mainstream_threshold: float = 0.20
 
+    # Fast-start (Task #11). Cycle 1 uses this smaller propose budget so
+    # the first cycle lands fast; cycle>=2 falls back to tasks_per_cycle.
+    synthesis_tasks_per_cycle_bootstrap: int = 15
+
     def __post_init__(self):
         if not (0.0 <= self.frontier_fraction <= 1.0):
             raise ValueError(
@@ -694,6 +715,11 @@ class SynthesisConfig:
             raise ValueError(
                 f"ood_mainstream_threshold must be in (0, 1], "
                 f"got {self.ood_mainstream_threshold}"
+            )
+        if self.synthesis_tasks_per_cycle_bootstrap < 1:
+            raise ValueError(
+                f"synthesis_tasks_per_cycle_bootstrap must be >= 1, "
+                f"got {self.synthesis_tasks_per_cycle_bootstrap}"
             )
 
 

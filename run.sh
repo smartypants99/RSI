@@ -31,7 +31,7 @@ exec python main.py \
     --use-dora \
     --mode rsi \
     --enable-task-synthesis \
-    --synthesis-tasks-per-cycle 20 \
+    --synthesis-tasks-per-cycle 30 \
     --property-consensus-threshold 0.7 \
     --consistency-samples 3 \
     --samples-per-weakness 60 \

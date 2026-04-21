@@ -545,12 +545,12 @@ class OrchestratorConfig:
     # src/trainer/growth.py::grow_and_distill. Full GrowthConfig (growth_factor,
     # distill_epochs, abort_if_worse_by, …) is constructed by the caller in
     # growth.py; this field only gates WHEN the growth step fires. 0 = off.
-    grow_every: int = 0
+    grow_every: int = 15
     # Self-editing pipeline (Task #2, self-edit). Every N cycles the model
     # proposes a unified diff against self_edit_candidate_path, which is
     # applied in a worktree sandbox and smoke-evaluated for smoke_cycles
     # before merging only if held-out delta >= min_improvement. 0 = off.
-    self_edit_every: int = 0
+    self_edit_every: int = 8
     self_edit_max_diff_lines: int = 40
     self_edit_min_improvement: float = 0.005
     self_edit_smoke_cycles: int = 2
@@ -603,6 +603,10 @@ class OrchestratorConfig:
     # meta_meta append-only history (src/orchestrator/meta_meta.py). Written
     # each cycle when meta_meta_enabled.
     meta_meta_history_path: str = "outputs/meta_meta_history.jsonl"
+    # Per-phase wall-time history sidecar (task #10). Fed each cycle from
+    # CycleResult.phase_times; feeds meta_meta.wall_time_trend so end-of-10-
+    # cycle windows can log "cycle time trending down by X%".
+    meta_meta_wall_time_path: str = "outputs/meta_meta_wall_time.jsonl"
     # Rescore + prune cadence for verifier adequacy library (consumed by the
     # adequacy module when a registry-side owner wires it in).
     verifier_adequacy_rescore_every: int = 10
@@ -618,6 +622,33 @@ class OrchestratorConfig:
     moe_shared_experts: int = 1
     moe_init_method: str = "clustering"  # "copy_perturb" | "slice" | "clustering"
     moe_router_noise_std: float = 0.02
+
+    # Fast-student distillation (src/utils/fast_student.py). When True, propose/
+    # solve generation routes through a periodically-distilled small student
+    # (default Qwen2.5-Coder-1.5B). Teacher training is unchanged; verification
+    # runs on real ground truth. See FastStudentConfig for knobs.
+    use_fast_student: bool = True
+    fast_student_model_name: str = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+
+    # Component-proposer / meta-meta-meta (src/orchestrator/component_proposer.py).
+    # Every N cycles the orchestrator proposes entirely new RSI components
+    # (not just tuning existing knobs). 0 = off.
+    # Default 0 = OFF. Component proposer is safety-sensitive (spawns new
+    # pipeline components) so it must be opted-in per run, not on by default.
+    component_proposer_every: int = 0
+    # Verdict JSONL for component proposer runs (task #13).
+    component_proposer_log_path: str = "outputs/component_proposer_verdicts.jsonl"
+    # Compute allocator (UCB1 bandit over {k_candidates, token_budget, ...})
+    # consulted at start of each cycle to pick a strategy. Default off; when
+    # on, the allocator's selection overrides synthesis.candidates_per_problem
+    # and generator.max_new_tokens for that cycle.
+    compute_allocator_enabled: bool = False
+    compute_allocator_history_path: str = "outputs/compute_allocator_history.jsonl"
+    compute_allocator_budget_tokens: float = 1_000_000_000.0
+
+    # Architecture search (src/trainer/arch_search.py). Explores small LoRA
+    # topology variants during growth events and keeps the winner.
+    arch_search_enabled: bool = True
 
     def __post_init__(self):
         if self.max_cycles < 1:
@@ -754,14 +785,14 @@ class SynthesisConfig:
     # Reasoning-strategy library (Task #1B). Model-authored reasoning templates
     # stored as system-prompt prefixes, A/B-tested on a held-out slice, winners
     # re-injected as few-shot prefixes for future propose/solve cycles.
-    strategy_library_enabled: bool = False
+    strategy_library_enabled: bool = True
     strategy_ab_holdout_size: int = 4
     strategy_library_path: str = "outputs/reasoning_strategies.jsonl"
     strategy_library_k_few_shot: int = 2
 
     # Peer-LLM jury verification (Task #1A). Route candidates through multiple
     # independent CLI-accessible LLMs (codex, gemini) and require ≥2/3 consensus.
-    peer_jury_enabled: bool = False
+    peer_jury_enabled: bool = True
     peer_jury_cache_path: str = "outputs/peer_jury_cache.jsonl"
     peer_jury_timeout_s: int = 30
     peer_jury_min_agree: int = 2

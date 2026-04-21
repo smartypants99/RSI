@@ -1475,3 +1475,66 @@ ship partial integration that bypasses the peer-review pairings set in
 TEAM_RSI_FOOM_PROTOCOL.md.
 
 ─ a6, audit complete.
+
+═══════════════════════════════════════════════════════════════════════════════
+2026-04-20  integration-lead  (Team RSI-Integrate consolidation)
+═══════════════════════════════════════════════════════════════════════════════
+
+Consolidation flip — opt-in trust/growth features default ON.
+
+Config deltas (src/utils/config.py):
+  OrchestratorConfig.grow_every              0     → 15
+  OrchestratorConfig.self_edit_every         0     → 8
+  OrchestratorConfig.use_fast_student        NEW   = True
+  OrchestratorConfig.fast_student_model_name NEW   = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+  OrchestratorConfig.component_proposer_every NEW  = 20
+  OrchestratorConfig.arch_search_enabled     NEW   = True
+  OrchestratorConfig.moe_conversion_enabled  False (unchanged — SOTA still tuning)
+  SynthesisConfig.strategy_library_enabled   False → True
+  SynthesisConfig.peer_jury_enabled          False → True
+
+Test delta: tests/test_reasoning_strategies.py — strategy_library_enabled
+default-on assertion updated to match the flip.
+
+Pytest: 684 passed, 2 skipped, 1 warning (20.6s).
+
+────────────────────────── Restart runbook ──────────────────────────
+1. Pull `main`. Verify:
+     git log -1 --oneline         # should show this consolidation commit
+     python3 -c "from src.utils.config import SystemConfig as S; \
+       c=S(); \
+       assert c.orchestrator.grow_every==15; \
+       assert c.orchestrator.self_edit_every==8; \
+       assert c.orchestrator.use_fast_student; \
+       assert c.orchestrator.component_proposer_every==20; \
+       assert c.orchestrator.arch_search_enabled; \
+       assert not c.orchestrator.moe_conversion_enabled; \
+       assert c.synthesis.strategy_library_enabled; \
+       assert c.synthesis.peer_jury_enabled; \
+       print('OK')"
+
+2. Sanity pytest on the GPU box:
+     python3 -m pytest -q
+   684 passed, 2 skipped expected. Any new fail → do NOT start the RSI
+   run; bisect against the consolidation commit.
+
+3. First trained cycle lands ~cycle 1-2 (prestash + skip_first_diagnostics
+   still on). Growth fires at cycle 15 (grow_every); first self-edit
+   proposal at cycle 8; first component-proposer cycle at 20. Fast-student
+   distillation begins after the first redistill_every trained cycles
+   (FastStudentConfig default = 5). Arch search is gated inside growth.
+
+4. Kill switches (drop-in for YAML overrides if any feature misbehaves):
+     orchestrator.grow_every: 0
+     orchestrator.self_edit_every: 0
+     orchestrator.use_fast_student: false
+     orchestrator.component_proposer_every: 0
+     orchestrator.arch_search_enabled: false
+     synthesis.strategy_library_enabled: false
+     synthesis.peer_jury_enabled: false
+
+5. Watch outputs/meta_meta_history.jsonl and the anchor-eval delta. A
+   negative anchor delta with positive held-out delta is a verifier-capture
+   alarm — see verifier_capture_alarm_threshold.
+
+─ integration-lead.

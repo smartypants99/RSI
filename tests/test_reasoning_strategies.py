@@ -23,7 +23,7 @@ def test_synthesis_config_has_strategy_fields():
     c = SynthesisConfig()
     assert hasattr(c, "strategy_library_enabled")
     assert hasattr(c, "strategy_ab_holdout_size")
-    assert c.strategy_library_enabled is False   # default off
+    assert c.strategy_library_enabled is True   # default on (consolidation flip)
     assert c.strategy_ab_holdout_size >= 0
 
 

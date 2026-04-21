@@ -1822,6 +1822,55 @@ class ImprovementLoop:
                         # still flushed (those samples were already used).
                         self._rsi_pending_pool.clear()
                         self._rsi_pool_accumulated_cycles = 0
+
+                        # ── FOOM consolidation hooks (Tasks #1, #2) ──────────
+                        # Gated by config; default 0 = no-op. Wrapped in broad
+                        # try/except so a failure in grow/self-edit never kills
+                        # the RSI cycle — we log and continue.
+                        _ge = int(getattr(self.config.orchestrator, "grow_every", 0))
+                        if _ge > 0 and cycle % _ge == 0:
+                            try:
+                                from ..trainer.growth import GrowthConfig, grow_and_distill
+                                logger.info(
+                                    "[RSI tick %d] grow_every=%d triggered — attempting N→1.5N distill",
+                                    cycle, _ge,
+                                )
+                                # NB: pool_batches + heldout_fn wiring is
+                                # intentionally left stubbed. The first run
+                                # with grow_every on should surface the
+                                # concrete shape; until then we log-and-skip.
+                                logger.warning(
+                                    "[RSI tick %d] weight-growth hook present but pool_batches/"
+                                    "heldout_fn plumbing not yet connected — skipping this cycle. "
+                                    "See update-log.txt runbook for wiring steps.",
+                                    cycle,
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "[RSI tick %d] grow_and_distill hook failed (%s): %s",
+                                    cycle, type(exc).__name__, exc,
+                                )
+
+                        _sse = int(getattr(self.config.orchestrator, "self_edit_every", 0))
+                        if _sse > 0 and cycle % _sse == 0:
+                            try:
+                                from .self_edit import (
+                                    should_run_meta_cycle,
+                                    run_self_edit_meta_cycle,
+                                    SelfEditConfig,
+                                )
+                                if should_run_meta_cycle(cycle, _sse):
+                                    logger.info(
+                                        "[RSI tick %d] self_edit_every=%d triggered — "
+                                        "meta-cycle would run here. model_propose/smoke_eval "
+                                        "plumbing not yet connected — logging and skipping.",
+                                        cycle, _sse,
+                                    )
+                            except Exception as exc:
+                                logger.warning(
+                                    "[RSI tick %d] self_edit hook failed (%s): %s",
+                                    cycle, type(exc).__name__, exc,
+                                )
             except Exception as exc:
                 tb = traceback.format_exc()
                 logger.warning("Step 8 (train) failed (%s): %s", type(exc).__name__, exc)

@@ -158,9 +158,13 @@ class VerifierConfig:
     # backend ships graceful-skip behavior if its dependency (lean4/z3/scipy)
     # is unavailable, so flipping on is safe even without the binary installed.
     # Default-off for BC; consolidation flip enables lean+z3+sim together.
+    # lean4 binary is not installed on the target GPU; leave off.
     lean_verifier_enabled: bool = False
-    z3_verifier_enabled: bool = False
-    sim_verifier_enabled: bool = False
+    # Consolidation flip: z3 + sim default ON. Both ship graceful-skip when
+    # their dependency is missing, and gating lives in task_synthesizer
+    # (stamps properties onto eligible problems).
+    z3_verifier_enabled: bool = True
+    sim_verifier_enabled: bool = True
 
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):
@@ -668,7 +672,9 @@ class SynthesisConfig:
     # harder instances of known ones) so the solver keeps discovering skills
     # outside DifficultyTracker's existing subdomain keys. Default-off for BC;
     # consolidation flip turns ood_enabled=True with period=12.
-    ood_enabled: bool = False
+    # Consolidation flip: OOD curriculum default ON with period=12 so the
+    # first OOD proposer round fires ~cycle 12 (after the initial SFT ramp).
+    ood_enabled: bool = True
     ood_period: int = 12
     ood_domains_per_cycle: int = 3
     ood_seeds_per_domain: int = 8

@@ -19,7 +19,6 @@ exec python main.py \
     --use-vllm \
     --gpu-memory-utilization 0.75 \
     --domains code,math,logic \
-    --use-dora \
     --mode rsi \
     --enable-task-synthesis \
     --synthesis-tasks-per-cycle 30 \

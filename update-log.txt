@@ -1349,3 +1349,20 @@ ROLLBACK
     meta_meta_enabled, paired_eval_enabled.
 
 ─ integration-lead, Team RSI-Trust v2 consolidation complete.
+
+=== 2026-04-21 11:58 UTC — DoRA on bnb-4bit: 2-strike pivot ===
+Two attempts to make DoRA work with bitsandbytes-4bit packed weights
+both failed empirically on the live GPU run:
+  - 7be2d0b: class-name-based detection (Linear4bit / LinearFP4 / LinearNF4)
+  - bca6962: attribute-based detection (quant_state / CB / SCB / Params4bit)
+Both still triggered: RuntimeError: tensor a (13107200) must match tensor b (5120).
+
+Per 2-strike pivot rule: STOP trying to auto-detect 4-bit and opt DoRA
+back on. DoRA is fundamentally incompatible with packed quantized base
+weights (magnitude scale needs dense [out, in] access). Canonical QLoRA
+is plain LoRA on frozen quantized base anyway.
+
+Pivot: remove `--use-dora` from run_deepseek.sh. Config default already
+use_dora=False. No more runtime attempts to enable DoRA on QLoRA path.
+Future work: if DoRA is ever needed, expose a separate fp16/bf16 train
+path that dequantizes in-place for training only. Deferred.

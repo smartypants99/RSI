@@ -238,16 +238,12 @@ class TrainerConfig:
     # regressed by 0.296. Raised floor to 60 so pool accumulates across
     # 3-4 cycles; lower-variance gradient updates on more diverse problems
     # should stop the instant-memorization failure mode.
-    # Lowered 60→30 after property-verified data replaced STaR fallback:
-    # the 60 floor was a response to STaR-fallback + 4 samples causing a
-    # -0.296 held-out regression (run-9). With property-based admission
-    # (§1.3 + §2.1 quorum) the per-sample signal is much cleaner, and
-    # the regression_revert_threshold=0.10 guard will undo any training
-    # cycle that actually regresses held-out. With 60 we observed
-    # zero training cycles over 25-40 cycles — the guard never gets to
-    # prove itself and RSI learns nothing. 30 lets training actually
-    # fire while still being 7x larger than the STaR-era failure mode.
-    min_train_samples: int = 30
+    # STACKING-TEST MODE: lowered 30→5 so training fires on cycle 1 even
+    # with low per-cycle accept. For the "does RSI stack on top of cycle_7"
+    # question we want the fastest possible trained-and-evaled cycle.
+    # Regression_revert_threshold=0.03 + early_stop_loss=0.15 still guard
+    # against corruption. Bump back to 30 after the stacking answer lands.
+    min_train_samples: int = 5
     # regression_revert_threshold: if post-training held-out drops by more
     # than this vs pre-training, revert the checkpoint to pre-training
     # weights. Trainers that blow up the base model shouldn't get to keep

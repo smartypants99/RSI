@@ -649,32 +649,44 @@ def verify(
     t0 = time.time()
     suspended = calibration.suspended_classes() if calibration is not None else set()
 
-    verdicts: list[PropertyVerdict] = []
-    for prop in admitted_properties:
-        if prop.independence_class in suspended:
-            continue
+    # Each property invocation either (a) runs a sandbox subprocess (trusted
+    # builtins like passes_provided_tests) or (b) calls executor.invoke which
+    # itself spawns a subprocess. Both are subprocess-bound, so the Python
+    # thread just waits on Popen — GIL is released and ThreadPoolExecutor
+    # gives real wall-clock parallelism. Properties are mutually independent
+    # (they read _PROBLEM_CTX and _TRUSTED_CHECK_FNS read-only at verify time),
+    # so fan-out is safe.
+    props_to_run = [p for p in admitted_properties if p.independence_class not in suspended]
+
+    def _run_one(prop: Property) -> PropertyVerdict:
         try:
             callable_ = _TRUSTED_CHECK_FNS.get(prop.property_id) or executor.materialize(prop)
         except Exception as e:
-            verdicts.append(PropertyVerdict(
+            return PropertyVerdict(
                 property_id=prop.property_id, verdict="ERROR",
                 independence_class=prop.independence_class,
                 author=prop.author, name=prop.name,
                 reason=f"materialize: {type(e).__name__}: {e}",
-            ))
-            continue
+            )
         v_start = time.time()
         verdict, reason = _invoke_callable(
             callable_, prop, candidate, executor,
             runtime_problem_id=problem_id,
         )
-        verdicts.append(PropertyVerdict(
+        return PropertyVerdict(
             property_id=prop.property_id, verdict=verdict,
             independence_class=prop.independence_class,
             author=prop.author, name=prop.name,
             reason=reason,
             duration_ms=int((time.time() - v_start) * 1000),
-        ))
+        )
+
+    if len(props_to_run) <= 1:
+        verdicts: list[PropertyVerdict] = [_run_one(p) for p in props_to_run]
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(props_to_run))) as _ex:
+            verdicts = list(_ex.map(_run_one, props_to_run))
 
     pass_count = sum(1 for v in verdicts if v.verdict == "PASS")
     fail_count = sum(1 for v in verdicts if v.verdict == "FAIL")

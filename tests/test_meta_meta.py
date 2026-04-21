@@ -191,6 +191,41 @@ def test_record_and_load_roundtrip(tmp_path: Path):
     assert loaded[1].held_out_delta == pytest.approx(-0.01)
 
 
+def test_wall_time_record_and_trend(tmp_path: Path):
+    wp = tmp_path / "wall.jsonl"
+    # 10 cycles: older 5 avg 1000ms/cycle, newer 5 avg 500ms/cycle → down 50%.
+    for c in range(1, 6):
+        mm.record_wall_time(wp, c, "solve", 1000.0)
+    for c in range(6, 11):
+        mm.record_wall_time(wp, c, "solve", 500.0)
+    recs = mm.load_wall_time(wp)
+    assert len(recs) == 10
+    trend = mm.wall_time_trend(recs, window=10)
+    assert trend is not None
+    assert trend["pct_change_down"] == pytest.approx(50.0)
+    assert trend["mean_ms_older"] == pytest.approx(1000.0)
+    assert trend["mean_ms_newer"] == pytest.approx(500.0)
+
+
+def test_wall_time_trend_returns_none_below_window(tmp_path: Path):
+    wp = tmp_path / "wall.jsonl"
+    for c in range(1, 5):
+        mm.record_wall_time(wp, c, "x", 10.0)
+    assert mm.wall_time_trend(mm.load_wall_time(wp), window=10) is None
+
+
+def test_wall_time_aggregates_phases_per_cycle(tmp_path: Path):
+    wp = tmp_path / "wall.jsonl"
+    # Two phases per cycle, each contributes to the cycle total.
+    mm.record_wall_time(wp, 1, "solve", 300.0)
+    mm.record_wall_time(wp, 1, "verify", 200.0)
+    recs = mm.load_wall_time(wp)
+    assert len(recs) == 2
+    # Trend requires ≥window cycles; assert aggregation via direct sum.
+    total = sum(r.ms for r in recs if r.cycle_id == 1)
+    assert total == pytest.approx(500.0)
+
+
 def test_load_history_tolerates_corrupt_lines(tmp_path: Path):
     hp = tmp_path / "meta_meta.jsonl"
     hp.write_text(

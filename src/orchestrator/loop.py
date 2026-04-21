@@ -2570,6 +2570,99 @@ class ImprovementLoop:
             except Exception as exc:
                 logger.debug("meta_meta record_cycle failed (non-fatal): %s", exc)
 
+    # ------------------------------------------------------------------
+    # Task #10: per-phase wall-time observability
+    # ------------------------------------------------------------------
+    def _record_wall_time(self, cycle: int, result: CycleResult) -> None:
+        """Append each phase's wall time (ms) to meta_meta's wall-time sidecar
+        and, at the end of every 10-cycle window, log the cycle-time trend.
+        """
+        ocfg = self.config.orchestrator
+        wall_path_s = getattr(
+            ocfg, "meta_meta_wall_time_path", "outputs/meta_meta_wall_time.jsonl",
+        )
+        try:
+            from pathlib import Path as _P
+            from .meta_meta import (
+                record_wall_time as _rwt,
+                load_wall_time as _lwt,
+                wall_time_trend as _wtt,
+            )
+            wall_path = _P(wall_path_s)
+            for phase, seconds in (result.phase_times or {}).items():
+                if seconds is None or seconds <= 0:
+                    continue
+                _rwt(wall_path, cycle, phase, float(seconds) * 1000.0)
+            if cycle > 0 and cycle % 10 == 0:
+                trend = _wtt(_lwt(wall_path), window=10)
+                if trend is not None:
+                    direction = "down" if trend["pct_change_down"] >= 0 else "up"
+                    logger.info(
+                        "[meta_meta] cycle time trending %s by %.1f%%/10 cycles "
+                        "(older=%.0fms newer=%.0fms)",
+                        direction, abs(trend["pct_change_down"]),
+                        trend["mean_ms_older"], trend["mean_ms_newer"],
+                    )
+        except Exception as exc:
+            logger.debug("wall_time record failed (non-fatal): %s", exc)
+
+    # ------------------------------------------------------------------
+    # Task #13: compute allocator + component proposer hooks (default off)
+    # ------------------------------------------------------------------
+    def _consult_compute_allocator(self, cycle: int, result: CycleResult) -> None:
+        """If enabled, pick a strategy via UCB1 and apply it for THIS cycle."""
+        ocfg = self.config.orchestrator
+        if not getattr(ocfg, "compute_allocator_enabled", False):
+            return
+        try:
+            from pathlib import Path as _P
+            from .compute_allocator import allocator_from_history
+            hist_path = _P(getattr(
+                ocfg, "compute_allocator_history_path",
+                "outputs/compute_allocator_history.jsonl",
+            ))
+            budget = float(getattr(ocfg, "compute_allocator_budget_tokens", 1e9))
+            alloc = allocator_from_history(hist_path)
+            strat = alloc.select(remaining_budget=budget)
+            try:
+                self.config.synthesis.candidates_per_problem = int(strat.k_candidates)
+            except Exception:
+                pass
+            try:
+                self.config.generator.max_new_tokens = int(strat.token_budget)
+            except Exception:
+                pass
+            logger.info(
+                "[cycle %d] compute_allocator → strategy=%s k=%d tokens=%d mode=%s",
+                cycle, strat.name, strat.k_candidates, strat.token_budget,
+                strat.train_mode,
+            )
+        except Exception as exc:
+            logger.debug("compute_allocator consult failed (non-fatal): %s", exc)
+
+    def _maybe_run_component_proposer(self, cycle: int, result: CycleResult) -> None:
+        """Run ComponentProposer every N cycles. 0 = off (default)."""
+        ocfg = self.config.orchestrator
+        every = int(getattr(ocfg, "component_proposer_every", 0) or 0)
+        if every <= 0 or cycle <= 0 or cycle % every != 0:
+            return
+        proposer = getattr(self, "component_proposer", None)
+        if proposer is None:
+            logger.debug(
+                "[cycle %d] component_proposer_every=%d but no proposer wired "
+                "on self.component_proposer — skipping", cycle, every,
+            )
+            return
+        try:
+            if hasattr(proposer, "propose_and_test"):
+                proposer.propose_and_test(cycle=cycle)
+            logger.info("[cycle %d] component_proposer executed", cycle)
+        except Exception as exc:
+            logger.warning(
+                "[cycle %d] component_proposer failed (%s): %s",
+                cycle, type(exc).__name__, exc,
+            )
+
     def _meta_step(self, cycle: int, result: CycleResult) -> None:
         """End-of-cycle: record outcome into MetaController and apply bounded proposals.
 

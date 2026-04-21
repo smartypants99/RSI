@@ -399,6 +399,100 @@ def current_self_edit_tier(
     return max(state.unlocked) if state.unlocked else 0
 
 
+# ---------------------------------------------------------------------------
+# Wall-time observability (task #10)
+# ---------------------------------------------------------------------------
+#
+# Per-phase wall-time samples are appended to a JSONL sidecar. A rolling
+# 10-cycle window feeds `wall_time_trend` which returns a percent-change
+# between the older half and the newer half of the window. The caller logs
+# "cycle time trending down by X%/10 cycles" at the end of each 10-cycle
+# window. Pure: no stdout from this module, only structured data.
+
+
+@dataclass
+class WallTimeRecord:
+    cycle_id: int
+    phase: str
+    ms: float
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "WallTimeRecord":
+        return cls(
+            cycle_id=int(d["cycle_id"]),
+            phase=str(d["phase"]),
+            ms=float(d["ms"]),
+        )
+
+
+def record_wall_time(
+    path: Path,
+    cycle: int,
+    phase: str,
+    ms: float,
+) -> WallTimeRecord:
+    """Append one phase wall-time sample to a JSONL history."""
+    rec = WallTimeRecord(cycle_id=int(cycle), phase=str(phase), ms=float(ms))
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        f.write(json.dumps(rec.to_dict()) + "\n")
+    return rec
+
+
+def load_wall_time(path: Path) -> list[WallTimeRecord]:
+    path = Path(path)
+    if not path.exists():
+        return []
+    out: list[WallTimeRecord] = []
+    with path.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(WallTimeRecord.from_dict(json.loads(line)))
+            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def wall_time_trend(
+    records: Iterable[WallTimeRecord],
+    window: int = 10,
+) -> Optional[dict]:
+    """Return trend over the last `window` cycles (aggregated across phases).
+
+    Compares the mean total-cycle-ms of the first half of the window against
+    the second half. Positive `pct_change_down` means cycle time trended DOWN
+    (faster). Returns None if fewer than `window` distinct cycles are present.
+    """
+    per_cycle: dict[int, float] = {}
+    for r in records:
+        per_cycle[r.cycle_id] = per_cycle.get(r.cycle_id, 0.0) + r.ms
+    if len(per_cycle) < window:
+        return None
+    cycles = sorted(per_cycle)[-window:]
+    half = window // 2
+    older = cycles[:half]
+    newer = cycles[half:]
+    mean_older = sum(per_cycle[c] for c in older) / max(len(older), 1)
+    mean_newer = sum(per_cycle[c] for c in newer) / max(len(newer), 1)
+    if mean_older <= 0:
+        return None
+    pct_change_down = (mean_older - mean_newer) / mean_older * 100.0
+    return {
+        "window": window,
+        "cycles": cycles,
+        "mean_ms_older": mean_older,
+        "mean_ms_newer": mean_newer,
+        "pct_change_down": pct_change_down,
+    }
+
+
 def record_cycle(
     history_path: Path,
     cycle_id: int,

@@ -1,0 +1,22 @@
+[
+  {"correct": {"v": 10.0, "t": 2.0, "d": 20.0}, "wrong_similar": {"v": 10.0, "t": 2.0, "d": 21.0}, "wrong_obvious": {"v": 10.0, "t": 2.0, "d": 0.0}},
+  {"correct": {"m": 2.0, "a": 3.0, "F": 6.0}, "wrong_similar": {"m": 2.0, "a": 3.0, "F": 5.5}, "wrong_obvious": {"m": 2.0, "a": 3.0, "F": 0.0}},
+  {"correct": {"m": 1.0, "v": 4.0, "KE": 8.0}, "wrong_similar": {"m": 1.0, "v": 4.0, "KE": 16.0}, "wrong_obvious": {"m": 1.0, "v": 4.0, "KE": 0.0}},
+  {"correct": {"m": 2.0, "g": 9.8, "h": 5.0, "PE": 98.0}, "wrong_similar": {"m": 2.0, "g": 9.8, "h": 5.0, "PE": 99.0}, "wrong_obvious": {"m": 2.0, "g": 9.8, "h": 5.0, "PE": 0.0}},
+  {"correct": {"q1": 1.0, "q2": 1.0, "r": 1.0, "k": 9e9, "F": 9e9}, "wrong_similar": {"q1": 1.0, "q2": 1.0, "r": 1.0, "k": 9e9, "F": 9e8}, "wrong_obvious": {"q1": 1.0, "q2": 1.0, "r": 1.0, "k": 9e9, "F": 0.0}},
+  {"correct": {"p": 100.0, "v": 1.0, "n": 1.0, "R": 8.314, "T": 12.03}, "wrong_similar": {"p": 100.0, "v": 1.0, "n": 1.0, "R": 8.314, "T": 12.5}, "wrong_obvious": {"p": 100.0, "v": 1.0, "n": 1.0, "R": 8.314, "T": 0.0}},
+  {"correct": {"v0": 0.0, "a": 2.0, "t": 3.0, "v": 6.0}, "wrong_similar": {"v0": 0.0, "a": 2.0, "t": 3.0, "v": 5.5}, "wrong_obvious": {"v0": 0.0, "a": 2.0, "t": 3.0, "v": 0.0}},
+  {"correct": {"f": 100.0, "lambda": 3.0, "v": 300.0}, "wrong_similar": {"f": 100.0, "lambda": 3.0, "v": 330.0}, "wrong_obvious": {"f": 100.0, "lambda": 3.0, "v": 0.0}},
+  {"correct": {"V": 12.0, "I": 2.0, "R": 6.0}, "wrong_similar": {"V": 12.0, "I": 2.0, "R": 5.0}, "wrong_obvious": {"V": 12.0, "I": 2.0, "R": 0.0}},
+  {"correct": {"V": 10.0, "I": 3.0, "P": 30.0}, "wrong_similar": {"V": 10.0, "I": 3.0, "P": 33.0}, "wrong_obvious": {"V": 10.0, "I": 3.0, "P": 0.0}},
+  {"correct": {"m1": 2.0, "v1": 3.0, "m2": 1.0, "v2": 0.0, "p_total": 6.0}, "wrong_similar": {"m1": 2.0, "v1": 3.0, "m2": 1.0, "v2": 0.0, "p_total": 7.0}, "wrong_obvious": {"m1": 2.0, "v1": 3.0, "m2": 1.0, "v2": 0.0, "p_total": 0.0}},
+  {"correct": {"T": 2.0, "f": 0.5}, "wrong_similar": {"T": 2.0, "f": 0.4}, "wrong_obvious": {"T": 2.0, "f": 0.0}},
+  {"correct": {"m": 1.0, "c": 3e8, "E": 9e16}, "wrong_similar": {"m": 1.0, "c": 3e8, "E": 9e15}, "wrong_obvious": {"m": 1.0, "c": 3e8, "E": 0.0}},
+  {"correct": {"F": 10.0, "d": 5.0, "W": 50.0}, "wrong_similar": {"F": 10.0, "d": 5.0, "W": 45.0}, "wrong_obvious": {"F": 10.0, "d": 5.0, "W": 0.0}},
+  {"correct": {"k": 100.0, "x": 0.1, "F": 10.0}, "wrong_similar": {"k": 100.0, "x": 0.1, "F": 9.0}, "wrong_obvious": {"k": 100.0, "x": 0.1, "F": 0.0}},
+  {"correct": {"n1": 1.0, "n2": 1.5, "theta1": 30.0, "theta2": 19.47}, "wrong_similar": {"n1": 1.0, "n2": 1.5, "theta1": 30.0, "theta2": 25.0}, "wrong_obvious": {"n1": 1.0, "n2": 1.5, "theta1": 30.0, "theta2": 0.0}},
+  {"correct": {"u": 5.0, "g": 10.0, "h_max": 1.25}, "wrong_similar": {"u": 5.0, "g": 10.0, "h_max": 1.5}, "wrong_obvious": {"u": 5.0, "g": 10.0, "h_max": 0.0}},
+  {"correct": {"I": 2.0, "omega": 3.0, "L": 6.0}, "wrong_similar": {"I": 2.0, "omega": 3.0, "L": 7.0}, "wrong_obvious": {"I": 2.0, "omega": 3.0, "L": 0.0}},
+  {"correct": {"rho": 1000.0, "g": 9.8, "h": 2.0, "P": 19600.0}, "wrong_similar": {"rho": 1000.0, "g": 9.8, "h": 2.0, "P": 20000.0}, "wrong_obvious": {"rho": 1000.0, "g": 9.8, "h": 2.0, "P": 0.0}},
+  {"correct": {"m": 1.0, "c": 4184.0, "dT": 10.0, "Q": 41840.0}, "wrong_similar": {"m": 1.0, "c": 4184.0, "dT": 10.0, "Q": 40000.0}, "wrong_obvious": {"m": 1.0, "c": 4184.0, "dT": 10.0, "Q": 0.0}}
+]

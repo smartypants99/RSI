@@ -1,0 +1,22 @@
+[
+  {"correct": "def f(x):\n    return x + 1", "wrong_similar": "def f(x):\n    return x + 2", "wrong_obvious": "def f(x):\n    return 0"},
+  {"correct": "def add(a, b):\n    return a + b", "wrong_similar": "def add(a, b):\n    return a - b", "wrong_obvious": "def add(a, b):\n    return None"},
+  {"correct": "def sq(x):\n    return x * x", "wrong_similar": "def sq(x):\n    return x + x", "wrong_obvious": "def sq(x):\n    return 1"},
+  {"correct": "def is_even(n):\n    return n % 2 == 0", "wrong_similar": "def is_even(n):\n    return n % 2 == 1", "wrong_obvious": "def is_even(n):\n    return True"},
+  {"correct": "def max2(a, b):\n    return a if a > b else b", "wrong_similar": "def max2(a, b):\n    return a if a < b else b", "wrong_obvious": "def max2(a, b):\n    return 0"},
+  {"correct": "def abs_val(x):\n    return x if x >= 0 else -x", "wrong_similar": "def abs_val(x):\n    return x if x > 0 else -x", "wrong_obvious": "def abs_val(x):\n    return x"},
+  {"correct": "def double(x):\n    return x * 2", "wrong_similar": "def double(x):\n    return x * 3", "wrong_obvious": "def double(x):\n    return x"},
+  {"correct": "def sub(a, b):\n    return a - b", "wrong_similar": "def sub(a, b):\n    return b - a", "wrong_obvious": "def sub(a, b):\n    return 0"},
+  {"correct": "def mul(a, b):\n    return a * b", "wrong_similar": "def mul(a, b):\n    return a + b", "wrong_obvious": "def mul(a, b):\n    return 1"},
+  {"correct": "def neg(x):\n    return -x", "wrong_similar": "def neg(x):\n    return x", "wrong_obvious": "def neg(x):\n    return 0"},
+  {"correct": "def inc2(x):\n    return x + 2", "wrong_similar": "def inc2(x):\n    return x + 1", "wrong_obvious": "def inc2(x):\n    return 2"},
+  {"correct": "def is_pos(n):\n    return n > 0", "wrong_similar": "def is_pos(n):\n    return n >= 0", "wrong_obvious": "def is_pos(n):\n    return False"},
+  {"correct": "def half(x):\n    return x / 2", "wrong_similar": "def half(x):\n    return x / 3", "wrong_obvious": "def half(x):\n    return x"},
+  {"correct": "def min2(a, b):\n    return a if a < b else b", "wrong_similar": "def min2(a, b):\n    return a if a > b else b", "wrong_obvious": "def min2(a, b):\n    return 0"},
+  {"correct": "def cube(x):\n    return x * x * x", "wrong_similar": "def cube(x):\n    return x * x", "wrong_obvious": "def cube(x):\n    return x"},
+  {"correct": "def dec(x):\n    return x - 1", "wrong_similar": "def dec(x):\n    return x + 1", "wrong_obvious": "def dec(x):\n    return 0"},
+  {"correct": "def mod3(x):\n    return x % 3", "wrong_similar": "def mod3(x):\n    return x % 2", "wrong_obvious": "def mod3(x):\n    return 0"},
+  {"correct": "def is_zero(x):\n    return x == 0", "wrong_similar": "def is_zero(x):\n    return x != 0", "wrong_obvious": "def is_zero(x):\n    return True"},
+  {"correct": "def add3(a, b, c):\n    return a + b + c", "wrong_similar": "def add3(a, b, c):\n    return a + b - c", "wrong_obvious": "def add3(a, b, c):\n    return 0"},
+  {"correct": "def quad(x):\n    return x * 4", "wrong_similar": "def quad(x):\n    return x * 2", "wrong_obvious": "def quad(x):\n    return x"}
+]

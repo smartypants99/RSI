@@ -1,0 +1,22 @@
+[
+  {"correct": "(assert (= (+ 1 1) 2))", "wrong_similar": "(assert (= (+ 1 1) 3))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (=> p p))", "wrong_similar": "(assert (=> p (not p)))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (forall ((x Int)) (= x x)))", "wrong_similar": "(assert (forall ((x Int)) (= x 0)))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (> 5 3))", "wrong_similar": "(assert (> 3 5))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (= (* 2 3) 6))", "wrong_similar": "(assert (= (* 2 3) 5))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (and true true))", "wrong_similar": "(assert (and true false))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (or false true))", "wrong_similar": "(assert (or false false))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (not false))", "wrong_similar": "(assert (not true))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (= (- 10 3) 7))", "wrong_similar": "(assert (= (- 10 3) 8))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (forall ((x Int)) (>= (* x x) 0)))", "wrong_similar": "(assert (forall ((x Int)) (> (* x x) 0)))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (= (mod 10 3) 1))", "wrong_similar": "(assert (= (mod 10 3) 2))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (distinct 1 2 3))", "wrong_similar": "(assert (distinct 1 2 1))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (= (div 20 4) 5))", "wrong_similar": "(assert (= (div 20 4) 4))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (=> (and p q) p))", "wrong_similar": "(assert (=> (and p q) (not p)))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (<= 0 1))", "wrong_similar": "(assert (<= 1 0))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (= (abs -5) 5))", "wrong_similar": "(assert (= (abs -5) -5))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (forall ((x Int) (y Int)) (= (+ x y) (+ y x))))", "wrong_similar": "(assert (forall ((x Int) (y Int)) (= (+ x y) (- x y))))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (= (ite true 1 2) 1))", "wrong_similar": "(assert (= (ite true 1 2) 2))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (xor true false))", "wrong_similar": "(assert (xor true true))", "wrong_obvious": "(assert false)"},
+  {"correct": "(assert (= (+ 0 n) n))", "wrong_similar": "(assert (= (+ 0 n) 0))", "wrong_obvious": "(assert false)"}
+]

@@ -1,0 +1,22 @@
+[
+  {"correct": 2, "wrong_similar": 3, "wrong_obvious": 0, "ctx": {"problem": "1+1"}},
+  {"correct": 4, "wrong_similar": 5, "wrong_obvious": 0, "ctx": {"problem": "2+2"}},
+  {"correct": 9, "wrong_similar": 8, "wrong_obvious": 0, "ctx": {"problem": "3*3"}},
+  {"correct": 25, "wrong_similar": 24, "wrong_obvious": 0, "ctx": {"problem": "5*5"}},
+  {"correct": 100, "wrong_similar": 101, "wrong_obvious": 0, "ctx": {"problem": "10*10"}},
+  {"correct": 7, "wrong_similar": 6, "wrong_obvious": -7, "ctx": {"problem": "3+4"}},
+  {"correct": 12, "wrong_similar": 13, "wrong_obvious": 0, "ctx": {"problem": "3*4"}},
+  {"correct": 3.14, "wrong_similar": 3.15, "wrong_obvious": 0, "ctx": {"problem": "pi approx"}},
+  {"correct": 1, "wrong_similar": 2, "wrong_obvious": 0, "ctx": {"problem": "0+1"}},
+  {"correct": 0, "wrong_similar": 1, "wrong_obvious": 999, "ctx": {"problem": "5-5"}},
+  {"correct": -3, "wrong_similar": 3, "wrong_obvious": 0, "ctx": {"problem": "1-4"}},
+  {"correct": 16, "wrong_similar": 17, "wrong_obvious": 0, "ctx": {"problem": "4*4"}},
+  {"correct": 6, "wrong_similar": 5, "wrong_obvious": 0, "ctx": {"problem": "3!"}},
+  {"correct": 24, "wrong_similar": 25, "wrong_obvious": 0, "ctx": {"problem": "4!"}},
+  {"correct": 120, "wrong_similar": 119, "wrong_obvious": 0, "ctx": {"problem": "5!"}},
+  {"correct": 8, "wrong_similar": 7, "wrong_obvious": 0, "ctx": {"problem": "2^3"}},
+  {"correct": 2.718, "wrong_similar": 2.817, "wrong_obvious": 0, "ctx": {"problem": "e approx"}},
+  {"correct": 1.414, "wrong_similar": 1.413, "wrong_obvious": 0, "ctx": {"problem": "sqrt(2)"}},
+  {"correct": 15, "wrong_similar": 14, "wrong_obvious": 0, "ctx": {"problem": "sum 1..5"}},
+  {"correct": 55, "wrong_similar": 54, "wrong_obvious": 0, "ctx": {"problem": "sum 1..10"}}
+]

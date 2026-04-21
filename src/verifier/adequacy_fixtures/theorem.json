@@ -1,0 +1,22 @@
+[
+  {"correct": "theorem add_comm : ∀ a b : ℕ, a + b = b + a := by intros; ring", "wrong_similar": "theorem add_comm : ∀ a b : ℕ, a + b = b - a := by intros; ring", "wrong_obvious": "theorem add_comm : sorry"},
+  {"correct": "theorem t : 1 + 1 = 2 := rfl", "wrong_similar": "theorem t : 1 + 1 = 3 := rfl", "wrong_obvious": "theorem t : 1 + 1 = 2 := sorry"},
+  {"correct": "theorem mul_zero : ∀ n : ℕ, n * 0 = 0 := by intros; simp", "wrong_similar": "theorem mul_zero : ∀ n : ℕ, n * 0 = n := by intros; simp", "wrong_obvious": "sorry"},
+  {"correct": "theorem zero_add : ∀ n : ℕ, 0 + n = n := by intros; simp", "wrong_similar": "theorem zero_add : ∀ n : ℕ, 0 + n = 1 := by intros; simp", "wrong_obvious": "theorem zero_add : admit"},
+  {"correct": "theorem refl_eq : ∀ (x : α), x = x := fun _ => rfl", "wrong_similar": "theorem refl_eq : ∀ (x : α), x = 0 := fun _ => rfl", "wrong_obvious": "theorem refl_eq : sorry"},
+  {"correct": "theorem and_comm : p ∧ q → q ∧ p := fun ⟨a,b⟩ => ⟨b,a⟩", "wrong_similar": "theorem and_comm : p ∧ q → p ∧ p := fun ⟨a,b⟩ => ⟨a,a⟩", "wrong_obvious": "sorry"},
+  {"correct": "theorem or_comm : p ∨ q → q ∨ p := by intro h; cases h <;> simp [*]", "wrong_similar": "theorem or_comm : p ∨ q → p ∧ q := by intro h; cases h <;> simp [*]", "wrong_obvious": "theorem or_comm : sorry"},
+  {"correct": "theorem id_fn : ∀ x, id x = x := fun _ => rfl", "wrong_similar": "theorem id_fn : ∀ x, id x = 0 := fun _ => rfl", "wrong_obvious": "admit"},
+  {"correct": "theorem succ_ne_zero : ∀ n : ℕ, n.succ ≠ 0 := fun n => Nat.succ_ne_zero n", "wrong_similar": "theorem succ_ne_zero : ∀ n : ℕ, n.succ = 0 := fun n => Nat.succ_ne_zero n", "wrong_obvious": "sorry"},
+  {"correct": "theorem add_assoc : ∀ a b c : ℕ, (a+b)+c = a+(b+c) := by intros; ring", "wrong_similar": "theorem add_assoc : ∀ a b c : ℕ, (a+b)+c = a+(b-c) := by intros; ring", "wrong_obvious": "theorem add_assoc : sorry"},
+  {"correct": "theorem not_not : ¬¬p ↔ p := by tauto", "wrong_similar": "theorem not_not : ¬¬p ↔ ¬p := by tauto", "wrong_obvious": "sorry"},
+  {"correct": "theorem imp_self : p → p := fun h => h", "wrong_similar": "theorem imp_self : p → q := fun h => h", "wrong_obvious": "theorem imp_self : admit"},
+  {"correct": "theorem eq_symm : a = b → b = a := fun h => h.symm", "wrong_similar": "theorem eq_symm : a = b → a = b := fun h => h.symm", "wrong_obvious": "sorry"},
+  {"correct": "theorem le_refl : ∀ n : ℕ, n ≤ n := fun n => Nat.le_refl n", "wrong_similar": "theorem le_refl : ∀ n : ℕ, n < n := fun n => Nat.le_refl n", "wrong_obvious": "sorry"},
+  {"correct": "theorem lt_irrefl : ∀ n : ℕ, ¬ (n < n) := fun n h => Nat.lt_irrefl n h", "wrong_similar": "theorem lt_irrefl : ∀ n : ℕ, (n < n) := fun n h => Nat.lt_irrefl n h", "wrong_obvious": "admit"},
+  {"correct": "theorem pair_eq : (a,b) = (a,b) := rfl", "wrong_similar": "theorem pair_eq : (a,b) = (b,a) := rfl", "wrong_obvious": "theorem pair_eq : sorry"},
+  {"correct": "theorem true_intro : True := trivial", "wrong_similar": "theorem true_intro : False := trivial", "wrong_obvious": "sorry"},
+  {"correct": "theorem false_elim : False → p := fun h => h.elim", "wrong_similar": "theorem false_elim : True → p := fun h => h.elim", "wrong_obvious": "admit"},
+  {"correct": "theorem two_add_two : 2 + 2 = 4 := rfl", "wrong_similar": "theorem two_add_two : 2 + 2 = 5 := rfl", "wrong_obvious": "sorry"},
+  {"correct": "theorem three_times_three : 3 * 3 = 9 := rfl", "wrong_similar": "theorem three_times_three : 3 * 3 = 6 := rfl", "wrong_obvious": "theorem three_times_three : sorry"}
+]

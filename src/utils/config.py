@@ -362,6 +362,19 @@ class TrainerConfig:
     # the norm computation, under no_grad), + one scalar per input feature.
     use_dora: bool = False
 
+    # train_max_seq_length: cap on padded sequence length during SFT/DPO
+    # training. ModelConfig.max_seq_length governs generation/inference
+    # (typically 4096 to fit reasoning tokens) but SFT samples are padded
+    # to whichever max_length the dataset is built with. Property-verified
+    # code solutions (the v0.2.1 RSI distribution) are typically <500
+    # tokens; padding each to 4096 wastes ~8x per-step compute and makes
+    # attention O(seq²) dominate the forward pass.
+    # 1024 caps attention cost at 1/16 of 4096's while still fitting
+    # long samples (longer ones are truncated preserving EOS — existing
+    # TrainingDataset behavior). Dataset clamps to min(this, ModelConfig.
+    # max_seq_length) so shrinking model seqlen never under-runs this.
+    train_max_seq_length: int = 1024
+
     def __post_init__(self):
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}")
@@ -426,6 +439,10 @@ class TrainerConfig:
             raise ValueError(
                 f"init_method must be one of 'kaiming', 'pissa' — got {self.init_method!r}"
             )
+        if self.train_max_seq_length < 1:
+            raise ValueError(
+                f"train_max_seq_length must be >= 1, got {self.train_max_seq_length}"
+            )
 
 
 @dataclass
@@ -464,9 +481,12 @@ class OrchestratorConfig:
     mode: str = "classic"
     # Speed knob: RSI Step 0 diagnostics refresh period. Reuse the prior tick's
     # DiagnosticResult for N-1 cycles, re-run fully every Nth cycle (and always
-    # on cycle 1 / post-training). 240-prompt diagnostic is ~56s/cycle; caching
-    # for 3 cycles saves ~37s/cycle on average. Set to 1 to disable caching.
-    rsi_diagnostic_refresh_every: int = 3
+    # on cycle 1 / post-training). On 32B-R1 the 240-prompt diagnostic is
+    # ~6 min/miss; period=5 cuts miss rate from 1/3 to 1/5, saving ~2.4 min/cycle
+    # on average vs period=3. Cache still invalidates after every training step,
+    # so staleness is bounded to non-training cycles where mastery is stable.
+    # Set to 1 to disable caching.
+    rsi_diagnostic_refresh_every: int = 5
     # Quick regression probe size (per domain) — 5 is enough to detect the
     # -0.2+ drops that trigger revert. Default was 8; 5 saves ~5s per training
     # cycle without changing revert semantics.

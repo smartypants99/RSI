@@ -70,6 +70,7 @@ class PropertyKind(str, Enum):
     COUNTEREXAMPLE_SEARCH = "COUNTEREXAMPLE_SEARCH"
     SIMULATION = "SIMULATION"
     LEAN_PROOF = "LEAN_PROOF"           # task #3 — Lean4 theorem-proof backend
+    PEER_REVIEW = "PEER_REVIEW"         # task #1 — multi-LLM jury consensus
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -89,6 +90,7 @@ INDEPENDENCE_CLASSES: frozenset[str] = frozenset({
     "dimensional.physical",   # v0.2.1 addition
     "simulation.numerical",   # task #5 — physics/chem simulator backend
     "proof.formal",           # task #3 — Lean4 theorem-proof backend
+    "peer.consensus",         # task #1 — independent peer-LLM jury
 })
 
 _VALID_RETURNS = frozenset({"bool", "bool_with_witness", "equivalence_class"})

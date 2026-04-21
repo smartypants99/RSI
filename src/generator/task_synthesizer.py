@@ -1033,8 +1033,7 @@ class TaskSynthesizer:
             )
         try:
             return list(self.model_loader.generate_batch(
-                prompts, max_new_tokens=512, temperature=0.8, top_p=0.95,
-                stop=["```"],
+                prompts, max_new_tokens=2048, temperature=0.6, top_p=0.95,
             ))
         except Exception as exc:
             logger.warning("model_loader.generate_batch (code) failed: %s", exc)
@@ -1060,7 +1059,7 @@ class TaskSynthesizer:
             )
         try:
             return list(self.model_loader.generate_batch(
-                prompts, max_new_tokens=1024, temperature=0.8, top_p=0.95,
+                prompts, max_new_tokens=2048, temperature=0.6, top_p=0.95,
             ))
         except Exception as exc:
             logger.warning("model_loader.generate_batch failed: %s", exc)
@@ -1577,20 +1576,22 @@ class TaskSynthesizer:
             return out
 
         # ONE batched model call — not len(problems) separate calls.
-        # Shorter max_new_tokens: a Python function is 5-30 lines ≈ 300 tokens.
-        # 512 is a safe ceiling; 1024 was slack that cost time with no gain.
-        # stop=["```"]: our prompt ends with "```python\n" to force code-mode,
-        # so the NEXT "```" marks end of the function body. Stopping there
-        # saves dozens-to-hundreds of tokens of trailing prose that would
-        # otherwise burn through `max_new_tokens`. vLLM honors `stop` natively;
-        # HF path ignores it (compat shim) with no correctness change.
+        # R1-aware budgets:
+        # - max_new_tokens=2048: R1 needs space for <think>...</think> then
+        #   the actual code. 512 got consumed inside reasoning, never emitted
+        #   code → "no extractable Python code" (66% of cycle 1 failures).
+        # - NO `stop=["```"]`: R1 writes scratch code inside its <think> with
+        #   ```python fences, so stopping on first ``` kills generation
+        #   mid-thinking and the real answer never lands. Post-process instead
+        #   (strip <think> in _extract_code).
+        # - temperature=0.6: slightly tighter than 0.8 — R1 Distill reports
+        #   best results in 0.5-0.7 range for code.
         try:
             if self._generate_fn_override is not None:
                 raws = [self._generate_fn_override(p) for p in prompts]
             elif self.model_loader is not None:
                 raws = list(self.model_loader.generate_batch(
-                    prompts, max_new_tokens=512, temperature=0.8, top_p=0.95,
-                    stop=["```"],
+                    prompts, max_new_tokens=2048, temperature=0.6, top_p=0.95,
                 ))
             else:
                 raws = [""] * len(prompts)

@@ -198,7 +198,7 @@ class TrainerConfig:
     lora_rank: int = 8
     lora_alpha: int = 16
     lora_dropout: float = 0.05
-    learning_rate: float = 5e-6
+    learning_rate: float = 5e-5
     # Defaults tuned for small-cycle RSI regime (typ. 5-30 verified samples/cycle).
     # Cycle-2 (success) = 1-2 optimizer steps, final loss ~0.4-0.8.
     # Cycle-3 (overfit) = 25+ steps on 9 samples, final loss 0.045.

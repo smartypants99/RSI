@@ -255,8 +255,14 @@ class ModelLoader:
         )
         return response
 
-    def generate_batch(self, prompts: list[str], max_new_tokens: int = 2048, temperature: float = 0.7, top_p: float = 0.9) -> list[str]:
-        """Generate responses for multiple prompts efficiently."""
+    def generate_batch(self, prompts: list[str], max_new_tokens: int = 2048, temperature: float = 0.7, top_p: float = 0.9, stop: list[str] | None = None) -> list[str]:
+        """Generate responses for multiple prompts efficiently.
+
+        `stop` is accepted for API parity with the vLLM backend but not
+        consumed here (HF generate pathway). Callers pass it as a speed hint;
+        HF path just returns the full output.
+        """
+        del stop
         if not prompts:
             return []
         original_padding_side = self._tokenizer.padding_side

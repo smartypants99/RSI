@@ -266,7 +266,12 @@ class TDQModelLoader:
         return text
 
     def generate_batch(self, prompts: list[str], max_new_tokens: int = 2048,
-                        temperature: float = 0.7, top_p: float = 0.9) -> list[str]:
+                        temperature: float = 0.7, top_p: float = 0.9,
+                        stop: list[str] | None = None) -> list[str]:
+        # `stop` accepted for API parity with the vLLM backend; HF generate
+        # doesn't consume it here — callers who rely on stop sequences for
+        # speed will still get correct (but slower) outputs.
+        del stop
         if not prompts:
             return []
         if self._model is None:

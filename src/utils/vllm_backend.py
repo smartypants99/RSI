@@ -250,23 +250,28 @@ class VLLMModelLoader:
         return torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     def generate(self, prompt: str, max_new_tokens: int = 2048,
-                 temperature: float = 0.7, top_p: float = 0.9) -> str:
-        results = self.generate_batch([prompt], max_new_tokens, temperature, top_p)
+                 temperature: float = 0.7, top_p: float = 0.9,
+                 stop: list[str] | None = None) -> str:
+        results = self.generate_batch([prompt], max_new_tokens, temperature, top_p, stop=stop)
         return results[0] if results else ""
 
     def generate_batch(self, prompts: list[str], max_new_tokens: int = 2048,
-                       temperature: float = 0.7, top_p: float = 0.9) -> list[str]:
+                       temperature: float = 0.7, top_p: float = 0.9,
+                       stop: list[str] | None = None) -> list[str]:
         if not prompts:
             return []
 
         if self._llm is not None:
             # vLLM path (fast)
             greedy = temperature <= 0
-            params = self._sampling_params_cls(
+            sp_kwargs = dict(
                 max_tokens=max_new_tokens,
                 temperature=0.0 if greedy else temperature,
                 top_p=1.0 if greedy else top_p,
             )
+            if stop:
+                sp_kwargs["stop"] = list(stop)
+            params = self._sampling_params_cls(**sp_kwargs)
             outputs = self._llm.generate(prompts, params)
             return [o.outputs[0].text for o in outputs]
         else:

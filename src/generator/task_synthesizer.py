@@ -1014,6 +1014,32 @@ class TaskSynthesizer:
             return ""
         return resps[0] if resps else ""
 
+    def _generate_many_code(self, prompts: list[str]) -> list[str]:
+        """Batched generate for prompts that end with a ```python fence.
+
+        Adds stop=["```"] so vLLM stops as soon as the function body closes,
+        instead of running out the full max_new_tokens on trailing prose. On
+        R1-style reasoning models this alone can save 30–60% of solve-time
+        tokens. HF path ignores `stop` (compat shim, correctness preserved).
+        """
+        if not prompts:
+            return []
+        if self._generate_fn_override is not None:
+            return [self._generate_fn_override(p) for p in prompts]
+        if self.model_loader is None:
+            raise RuntimeError(
+                "TaskSynthesizer has no generate_fn and no model_loader — "
+                "cannot produce co-gen outputs"
+            )
+        try:
+            return list(self.model_loader.generate_batch(
+                prompts, max_new_tokens=512, temperature=0.8, top_p=0.95,
+                stop=["```"],
+            ))
+        except Exception as exc:
+            logger.warning("model_loader.generate_batch (code) failed: %s", exc)
+            return ["" for _ in prompts]
+
     def _generate_many(self, prompts: list[str]) -> list[str]:
         """Batched generate — N prompts in one vLLM call.
 
@@ -1397,7 +1423,7 @@ class TaskSynthesizer:
                 "```python\n"
             )
         try:
-            blind = self._generate_many(prompts)
+            blind = self._generate_many_code(prompts)
         except Exception as exc:
             logger.debug("self-solve gate generate failed (%s) — keeping all", exc)
             return proposals
@@ -1524,12 +1550,18 @@ class TaskSynthesizer:
         # ONE batched model call — not len(problems) separate calls.
         # Shorter max_new_tokens: a Python function is 5-30 lines ≈ 300 tokens.
         # 512 is a safe ceiling; 1024 was slack that cost time with no gain.
+        # stop=["```"]: our prompt ends with "```python\n" to force code-mode,
+        # so the NEXT "```" marks end of the function body. Stopping there
+        # saves dozens-to-hundreds of tokens of trailing prose that would
+        # otherwise burn through `max_new_tokens`. vLLM honors `stop` natively;
+        # HF path ignores it (compat shim) with no correctness change.
         try:
             if self._generate_fn_override is not None:
                 raws = [self._generate_fn_override(p) for p in prompts]
             elif self.model_loader is not None:
                 raws = list(self.model_loader.generate_batch(
                     prompts, max_new_tokens=512, temperature=0.8, top_p=0.95,
+                    stop=["```"],
                 ))
             else:
                 raws = [""] * len(prompts)
@@ -1595,7 +1627,7 @@ class TaskSynthesizer:
         )
         prompts = [prompt] * remaining
         try:
-            out.extend(self._generate_many(prompts))
+            out.extend(self._generate_many_code(prompts))
         except Exception as exc:
             logger.debug("solve(%s, k=%d) raised: %s",
                          getattr(problem, "problem_id", "?"), k, exc)

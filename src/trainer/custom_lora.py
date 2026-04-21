@@ -943,6 +943,13 @@ class CustomLoRATrainer:
         if getattr(self.config, "use_gradient_checkpointing", True) \
                 and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
+            # QLoRA gotcha: 4-bit frozen base + gradient checkpointing severs
+            # autograd at the embedding (requires_grad=False), so gradient
+            # never reaches LoRA — B stays at zero init across every step.
+            # enable_input_require_grads reconnects the graph. No-op on
+            # non-quantized bases.
+            if hasattr(model, "enable_input_require_grads"):
+                model.enable_input_require_grads()
 
         # Pre-training loss probe: if the very first batch's forward loss is
         # already below the skip threshold, the model has effectively memorized
@@ -1319,6 +1326,13 @@ class CustomLoRATrainer:
         if getattr(self.config, "use_gradient_checkpointing", True) \
                 and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
+            # QLoRA gotcha: 4-bit frozen base + gradient checkpointing severs
+            # autograd at the embedding (requires_grad=False), so gradient
+            # never reaches LoRA — B stays at zero init across every step.
+            # enable_input_require_grads reconnects the graph. No-op on
+            # non-quantized bases.
+            if hasattr(model, "enable_input_require_grads"):
+                model.enable_input_require_grads()
 
         beta = self.config.dpo_beta
         total_loss = 0.0
@@ -1781,6 +1795,13 @@ class CustomLoRATrainer:
         if getattr(self.config, "use_gradient_checkpointing", True) \
                 and hasattr(model, "gradient_checkpointing_enable"):
             model.gradient_checkpointing_enable()
+            # QLoRA gotcha: 4-bit frozen base + gradient checkpointing severs
+            # autograd at the embedding (requires_grad=False), so gradient
+            # never reaches LoRA — B stays at zero init across every step.
+            # enable_input_require_grads reconnects the graph. No-op on
+            # non-quantized bases.
+            if hasattr(model, "enable_input_require_grads"):
+                model.enable_input_require_grads()
 
         try:
             global_step = 0

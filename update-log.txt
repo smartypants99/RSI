@@ -1005,3 +1005,13 @@ Run started 02:10 UTC. vLLM loading weights now. Architecture
 resolved to Qwen2ForCausalLM. If this cycles cleanly we get a
 much stronger base proposer/solver → accept rate should stay
 above cycle_7-style ceiling → multi-cycle stacking becomes possible.
+
+=== 2026-04-21 02:28 UTC — cron 10min iter — DeepSeek-32B live ===
+Model loaded fast (02:10 launch → 02:15 ready). Cycle 1 in progress:
+  - Propose: 20/30 accepted (10 failed: R1 reasoning trace before
+    PROBLEM: format — parser hits "Alright, let's tackle..." etc.)
+  - Solve: in flight at check time
+  - Verify: not yet
+No training yet. If later proposals keep failing on reasoning-trace
+preamble, add a `</think>`-boundary strip to the parser. Not a fix
+yet — waiting for first cycle to complete end-to-end.

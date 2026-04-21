@@ -1445,6 +1445,15 @@ class ImprovementLoop:
             logger.warning("[RSI tick %d] property_engine.verify() unavailable (%s)", cycle, _pe_exc)
             _pe_available = False
 
+        # Task #12 (warm-speed): cross-candidate parallel verify. Each
+        # _pe_verify call is subprocess-bound (SandboxedExecutor spawns a
+        # child per property; 8ea90e4 already parallelizes WITHIN a candidate).
+        # Stacking across-candidate parallelism on top gives real wall-clock
+        # speedup on the verify phase, which is dominant at steady state.
+        # Registry / training-pool / _admitted_candidates writes stay serial
+        # on the main thread in the bookkeeping pass below — no locking
+        # needed, and the original (pid, idx) order is preserved.
+        _verify_work: list = []
         for problem in proposed_problems:
             pid = getattr(problem, "problem_id", None)
             if pid is None:
@@ -1453,129 +1462,128 @@ class ImprovementLoop:
             candidates = candidates_by_problem.get(pid, [])
             if not candidates:
                 continue
-
             for idx, candidate in enumerate(candidates):
                 cand_id = f"{pid}:cand{idx}"
                 candidate_str = (
                     candidate if isinstance(candidate, str)
                     else getattr(candidate, "solution", str(candidate))
                 )
-
                 if not _pe_available or not props:
                     logger.debug("  Skipping candidate %s: no properties or verify() unavailable", cand_id)
                     continue
+                _verify_work.append((problem, pid, idx, cand_id, candidate_str, props))
 
-                # STEP 4+6: run admitted properties via property_engine.verify() and decide.
-                # SandboxedExecutor (Phase B): subprocess per property, ~50-200ms each.
-                # STEP 5 slot: adversarial pass deferred per v0.2 — wire here before verify() call.
+        def _verify_one(item):
+            _problem, _pid, _idx, _cand_id, _cand_str, _props = item
+            try:
+                rec = _pe_verify(
+                    problem_id=_pid,
+                    candidate=_cand_str,
+                    admitted_properties=_props,
+                    executor=_executor,
+                    calibration=reg.calibration_ledger,
+                    quorum_distinct_classes_required=2,
+                    min_properties=2,
+                )
+                return (item, rec, None)
+            except Exception as exc:
+                return (item, None, exc)
+
+        _verify_results: list = []
+        if _verify_work:
+            from concurrent.futures import ThreadPoolExecutor as _VerifyPool
+            # max_workers=8 chosen to saturate on typical 8-16 core machines
+            # while avoiding subprocess-spawn storms. property_engine's
+            # inner pool is max_workers=min(8, len(props)) after task #12.
+            with _VerifyPool(max_workers=8) as _vex:
+                _verify_results = list(_vex.map(_verify_one, _verify_work))
+
+        for _item, pe_record, _exc in _verify_results:
+            problem, pid, idx, cand_id, candidate_str, props = _item
+            if _exc is not None:
+                logger.debug("  verify() raised for candidate %s: %s", cand_id, _exc)
+                continue
+            per_prop_verdicts = [
+                {
+                    "property_id": v.property_id,
+                    "passed": v.verdict == "PASS",
+                    "reason": v.reason,
+                    "independence_class": v.independence_class,
+                }
+                for v in pe_record.per_property
+            ]
+            vr_id = pe_record.record_id
+            try:
+                reg.verification_log.append_verification(VerificationRecord(
+                    record_id=vr_id,
+                    problem_id=pid,
+                    candidate_id=cand_id,
+                    property_ids=[v.property_id for v in pe_record.per_property],
+                    per_property_verdicts=per_prop_verdicts,
+                    quorum_accepted=pe_record.accepted,
+                    quorum_reason=pe_record.reject_reason,
+                    adversarial=False,
+                    session_id=reg.sid,
+                    quorum_n=pe_record.quorum_n,
+                    pass_count=pe_record.pass_count,
+                    fail_count=pe_record.fail_count,
+                    error_count=pe_record.error_count,
+                    distinct_classes=tuple(pe_record.distinct_classes),
+                    quorum_distinct_classes_required=pe_record.quorum_distinct_classes_required,
+                ))
+            except Exception as exc:
+                logger.debug("VerificationRecord write failed: %s", exc)
+
+            if pe_record.accepted:
+                result.candidates_accepted += 1
                 try:
-                    pe_record = _pe_verify(
-                        problem_id=pid,
-                        candidate=candidate_str,
-                        admitted_properties=props,
-                        executor=_executor,
-                        calibration=reg.calibration_ledger,
-                        quorum_distinct_classes_required=2,
-                        min_properties=2,
+                    from ..verifier.property_engine import get_problem_ctx as _get_ctx
+                    _saved_ctx = dict(_get_ctx(pid) or {})
+                except Exception:
+                    _saved_ctx = {}
+                result._admitted_candidates.append({
+                    "problem_id": pid,
+                    "candidate": candidate_str,
+                    "domain": getattr(problem, "domain", "code") or "code",
+                    "problem_ctx": _saved_ctx,
+                })
+                for prop_rec in staged_prop_records.get(pid, []):
+                    try:
+                        reg.property_registry.append_property(prop_rec, bundle_passed_vov=True)
+                        result.properties_admitted += 1
+                    except Exception as exc:
+                        logger.debug("PropertyRecord flush failed: %s", exc)
+                try:
+                    from ..generator.data_generator import TrainingSample
+                    ts_obj = TrainingSample(
+                        prompt=getattr(problem, "problem_text", ""),
+                        response=candidate_str,
+                        domain=getattr(problem, "domain", "unknown"),
+                        verified=True,
+                        source="rsi_property",
                     )
-                except Exception as exc:
-                    logger.debug("  verify() raised for candidate %s: %s", cand_id, exc)
-                    continue
-
-                per_prop_verdicts = [
-                    {
-                        "property_id": v.property_id,
-                        "passed": v.verdict == "PASS",
-                        "reason": v.reason,
-                        "independence_class": v.independence_class,
-                    }
-                    for v in pe_record.per_property
-                ]
-                vr_id = pe_record.record_id
-                try:
-                    reg.verification_log.append_verification(VerificationRecord(
-                        record_id=vr_id,
+                    training_samples.append(ts_obj)
+                    reg.training_pool.append_sample(TrainingPoolRecord(
+                        pool_record_id=_uuid.uuid4().hex,
                         problem_id=pid,
                         candidate_id=cand_id,
-                        property_ids=[v.property_id for v in pe_record.per_property],
-                        per_property_verdicts=per_prop_verdicts,
-                        quorum_accepted=pe_record.accepted,
-                        quorum_reason=pe_record.reject_reason,
-                        adversarial=False,
+                        verification_record_id=vr_id,
+                        domain=getattr(problem, "domain", ""),
+                        prompt=getattr(problem, "problem_text", ""),
+                        response=candidate_str,
                         session_id=reg.sid,
-                        quorum_n=pe_record.quorum_n,
-                        pass_count=pe_record.pass_count,
-                        fail_count=pe_record.fail_count,
-                        error_count=pe_record.error_count,
-                        distinct_classes=tuple(pe_record.distinct_classes),
-                        quorum_distinct_classes_required=pe_record.quorum_distinct_classes_required,
                     ))
+                    _retire_problem(pid, reg, session_id=reg.sid)
                 except Exception as exc:
-                    logger.debug("VerificationRecord write failed: %s", exc)
-
-                if pe_record.accepted:
-                    result.candidates_accepted += 1
-                    try:
-                        from ..verifier.property_engine import get_problem_ctx as _get_ctx
-                        _saved_ctx = dict(_get_ctx(pid) or {})
-                    except Exception:
-                        _saved_ctx = {}
-                    result._admitted_candidates.append({
-                        "problem_id": pid,
-                        "candidate": candidate_str,
-                        "domain": getattr(problem, "domain", "code") or "code",
-                        "problem_ctx": _saved_ctx,
-                    })
-                    # Bundle passed §1.4 (quorum) — NOW flush staged PropertyRecords
-                    # (spec v0.2.1: write-on-bundle-pass; §1.3 admittees that belong
-                    # to rejected bundles are never persisted).
-                    for prop_rec in staged_prop_records.get(pid, []):
-                        try:
-                            reg.property_registry.append_property(prop_rec, bundle_passed_vov=True)
-                            result.properties_admitted += 1
-                        except Exception as exc:
-                            logger.debug("PropertyRecord flush failed: %s", exc)
-                    # Convert candidate to TrainingSample for the training pool.
-                    try:
-                        from ..generator.data_generator import TrainingSample
-                        # TrainingSample takes `response:` (kwarg), not
-                        # `solution:`. Previous `solution=` silently raised
-                        # TypeError which was swallowed at DEBUG level, so
-                        # every accepted candidate got silently dropped —
-                        # that's why run-5 cycles 1-5 showed
-                        # "candidates accepted=N > 0" but "pool has 0
-                        # samples" every cycle. The counter fired BEFORE
-                        # the silent TypeError.
-                        ts_obj = TrainingSample(
-                            prompt=getattr(problem, "problem_text", ""),
-                            response=candidate_str,
-                            domain=getattr(problem, "domain", "unknown"),
-                            verified=True,
-                            source="rsi_property",
-                        )
-                        training_samples.append(ts_obj)
-                        reg.training_pool.append_sample(TrainingPoolRecord(
-                            pool_record_id=_uuid.uuid4().hex,
-                            problem_id=pid,
-                            candidate_id=cand_id,
-                            verification_record_id=vr_id,
-                            domain=getattr(problem, "domain", ""),
-                            prompt=getattr(problem, "problem_text", ""),
-                            response=candidate_str,
-                            session_id=reg.sid,
-                        ))
-                        # §7: retire problem on first training-pool acceptance.
-                        _retire_problem(pid, reg, session_id=reg.sid)
-                    except Exception as exc:
-                        logger.warning(
-                            "TrainingSample/pool write failed (%s): %s — "
-                            "candidate accepted by quorum but dropped from "
-                            "training pool. If this happens on EVERY candidate, "
-                            "the TrainingSample constructor signature changed.",
-                            type(exc).__name__, exc,
-                        )
-                else:
-                    logger.debug("  Quorum rejected %s: %s", cand_id, pe_record.reject_reason)
+                    logger.warning(
+                        "TrainingSample/pool write failed (%s): %s — "
+                        "candidate accepted by quorum but dropped from "
+                        "training pool. If this happens on EVERY candidate, "
+                        "the TrainingSample constructor signature changed.",
+                        type(exc).__name__, exc,
+                    )
+            else:
+                logger.debug("  Quorum rejected %s: %s", cand_id, pe_record.reject_reason)
 
         result.phase_times["rsi_step4_verify"] = time.time() - phase_start
         logger.info(

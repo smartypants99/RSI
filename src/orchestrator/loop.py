@@ -117,6 +117,12 @@ class CycleResult:
         # verifier_capture_alarm fires (see _eval_phase).
         self.anchor_score: float | None = None
         self.verifier_capture_alarm: bool = False
+        # Paired-sample variance reduction (task #3). Computed in _eval_phase
+        # vs. the previous cycle's per-question records. None before cycle 2.
+        self.paired_delta: float | None = None
+        self.paired_delta_se: float | None = None
+        self.paired_delta_n: int | None = None
+        self.paired_variance_reduction: float | None = None
 
     @property
     def improved(self) -> bool:
@@ -2063,6 +2069,35 @@ class ImprovementLoop:
             delta = mean_score - prev_eval
             symbol = "+" if delta > 0 else ""
             logger.info(f"    (prev {prev_eval:.3f}, {symbol}{delta:.3f})")
+
+        # Paired-sample variance reduction (task #3). When the previous
+        # cycle cached its per-question records, compute a paired delta +
+        # SE. Frozen eval holds the question set constant, so pairing by
+        # (prompt, expected) matches every question — typical VR is 3-5×.
+        try:
+            prev_per_q = next(
+                (
+                    getattr(r, "_eval_per_rep_per_question", None)
+                    for r in reversed(self.history)
+                    if getattr(r, "_eval_per_rep_per_question", None)
+                ),
+                None,
+            )
+            cur_per_q = per_rep_per_question[-1] if per_rep_per_question else None
+            if prev_per_q and cur_per_q:
+                from ..diagnostics.paired_eval import paired_delta
+                pd = paired_delta(prev_per_q[-1], cur_per_q)
+                if pd is not None:
+                    result.paired_delta = pd.delta
+                    result.paired_delta_se = pd.delta_se
+                    result.paired_delta_n = pd.n
+                    result.paired_variance_reduction = pd.variance_reduction
+                    logger.info(
+                        "    paired delta: %+.4f ± %.4f (n=%d, z=%.2f, VR=%.1fx)",
+                        pd.delta, pd.delta_se, pd.n, pd.z, pd.variance_reduction,
+                    )
+        except Exception as exc:
+            logger.warning("paired delta computation failed (non-fatal): %s", exc)
 
         # Anchor eval (Task #1, ground-truth). Ground-truth external
         # benchmarks — detects verifier capture when internal loop improves

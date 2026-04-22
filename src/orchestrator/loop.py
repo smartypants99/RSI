@@ -582,15 +582,47 @@ class ImprovementLoop:
                     and getattr(result.training_metrics, "steps", 0) > 0
                 )
                 skip_eval = (_mode == "rsi") and (not trained)
+                # Task #23 wedge 1: also skip the full Phase-5b eval when the
+                # quick regression probe already showed a regression beyond
+                # the configured threshold. Full eval is ~40 min; confirming
+                # a regression we already detected in the quick probe is
+                # wasted compute. The quick-probe revert path above has
+                # already banked the adversarial samples and rolled vLLM
+                # back to last-good, so skipping the full eval here does not
+                # change best-promotion eligibility (the cycle was not going
+                # to be promoted anyway). Carry forward the prior eval_score
+                # so downstream meta / early-stop have something to read.
+                ocfg_es = self.config.orchestrator
+                _skip_full_on_quick_regression = bool(getattr(
+                    ocfg_es, "skip_full_heldout_on_quick_regression", False,
+                ))
+                _quick_skip_threshold = float(getattr(
+                    ocfg_es, "quick_regression_skip_threshold", 0.10,
+                ))
+                _quick_regressed = (
+                    _skip_full_on_quick_regression
+                    and trained
+                    and result.improvement < -_quick_skip_threshold
+                )
+                if _quick_regressed and not skip_eval:
+                    skip_eval = True
+                    logger.info(
+                        "[Cycle %d] Phase 5b: HELD-OUT EVAL skipped — quick "
+                        "probe already regressed (%+.3f < -%.2f); saves "
+                        "~%d min by not confirming what we already know.",
+                        cycle, result.improvement, _quick_skip_threshold, 40,
+                    )
+                    result.heldout_eval_kind = "skipped_quick_regression"
                 eval_start = time.time()
                 try:
                     if skip_eval:
-                        logger.info(
-                            "[Cycle %d] Phase 5b: HELD-OUT EVAL skipped — "
-                            "no training this cycle in RSI mode (model state "
-                            "unchanged; saves ~2.5 min/cycle during warm-up)",
-                            cycle,
-                        )
+                        if not _quick_regressed:
+                            logger.info(
+                                "[Cycle %d] Phase 5b: HELD-OUT EVAL skipped — "
+                                "no training this cycle in RSI mode (model state "
+                                "unchanged; saves ~2.5 min/cycle during warm-up)",
+                                cycle,
+                            )
                         # Carry forward previous eval_score so the meta
                         # controller has SOMETHING to look at.
                         if self.history:

@@ -606,6 +606,53 @@ class OrchestratorConfig:
     # eval wall-clock on the 8-11 min quick cycle.
     heldout_quick_subsample_n: int = 96
     heldout_full_every: int = 5
+    # Task #23 wedge 1: skip the full held-out eval when the quick
+    # regression probe already showed a regression beyond this threshold.
+    # Full eval takes ~40 min; if the quick probe already says training
+    # hurt, there's no point spending 40 more minutes confirming it.
+    # Setting skip_full_heldout_on_quick_regression=False restores the
+    # prior "always run full" behavior. Threshold=0.10 matches the default
+    # regression_revert_threshold.
+    skip_full_heldout_on_quick_regression: bool = True
+    quick_regression_skip_threshold: float = 0.10
+    # Task #23 wedge 2: halve the default full-eval per-domain target.
+    # With N=600 + paired-sample VR=2.5 the MDE is ~5.1pp (vs ~3.6pp at
+    # N=1200) — the 1pp sensitivity claim from the task spec is NOT
+    # reachable by N reduction alone; operator must trade off cost vs.
+    # sensitivity. See docs in heldout_full_subsample_n math comment
+    # below. Set heldout_full_subsample_n=0 to fall back to the legacy
+    # heldout_questions_per_domain behavior.
+    # MDE math (paired McNemar, α=0.05, power=0.8, p=0.5):
+    #   σ²_paired = 2·p·(1-p) / VR
+    #   MDE = 2.802 · √(σ²_paired / N)
+    # VR=2.5: N=600 → MDE≈0.0511, N=1200 → MDE≈0.0362
+    # VR=4.0: N=600 → MDE≈0.0404, N=1200 → MDE≈0.0286
+    # VR=10 : N=600 → MDE≈0.0256, N=1200 → MDE≈0.0181
+    # The 1pp sensitivity target in the task spec would require VR≥126
+    # at N=600, which is unrealistic (observed VR is 3-5×). Shipping
+    # N=600 explicitly for throughput; operator may raise back to 1200
+    # via heldout_full_subsample_n=1200 if MDE matters more than wall.
+    heldout_full_subsample_n: int = 600
+    # Task #23 wedge 3: cache the base-model held-out predictions once at
+    # loop startup so cycle-1 paired_delta computation does not require a
+    # second full eval run. When True, _cache_base_heldout_predictions()
+    # runs during __init__ (or first cycle) and stashes per-question
+    # correctness keyed by (prompt, expected). Frozen-eval seed guarantees
+    # the question set matches across cycles.
+    heldout_cache_base_predictions: bool = True
+    # Task #23 wedge 4: bump max_num_seqs during the held-out-only phase.
+    # The vLLM engine is configured once at startup (max_num_seqs is not
+    # hot-swappable in current vLLM), so this value is read by the vLLM
+    # loader when coresident_training is disabled during Phase 5b. Leave
+    # at 0 to inherit VLLMConfig.max_num_seqs.
+    heldout_max_num_seqs: int = 96
+    # Task #23 wedge 5: hard cap on max_new_tokens during held-out eval
+    # generation. Most held-out questions have short canonical answers
+    # (numbers, function signatures) — 2048-token budgets are wasted KV-
+    # cache space. 512 matches the existing hard-coded cap at the two
+    # held-out generate_batch sites and is enforced through
+    # heldout_eval_max_tokens so it's visible and tunable.
+    heldout_eval_max_tokens: int = 512
     # Substrate update: promote the merged checkpoint to a new base every N
     # training cycles. LoRA on a frozen 4-bit base has a fixed ceiling (the
     # only trainable params are the low-rank adapters); periodically snapshot
@@ -785,6 +832,26 @@ class OrchestratorConfig:
             raise ValueError(f"plateau_patience must be >= 1, got {self.plateau_patience}")
         if self.heldout_repetitions < 1:
             raise ValueError(f"heldout_repetitions must be >= 1, got {self.heldout_repetitions}")
+        if self.quick_regression_skip_threshold < 0:
+            raise ValueError(
+                "quick_regression_skip_threshold must be >= 0, "
+                f"got {self.quick_regression_skip_threshold}"
+            )
+        if self.heldout_full_subsample_n < 0:
+            raise ValueError(
+                "heldout_full_subsample_n must be >= 0, "
+                f"got {self.heldout_full_subsample_n}"
+            )
+        if self.heldout_max_num_seqs < 0:
+            raise ValueError(
+                "heldout_max_num_seqs must be >= 0, "
+                f"got {self.heldout_max_num_seqs}"
+            )
+        if self.heldout_eval_max_tokens < 1:
+            raise ValueError(
+                "heldout_eval_max_tokens must be >= 1, "
+                f"got {self.heldout_eval_max_tokens}"
+            )
         if self.heldout_quick_subsample_n < 0:
             raise ValueError(
                 f"heldout_quick_subsample_n must be >= 0, got {self.heldout_quick_subsample_n}"

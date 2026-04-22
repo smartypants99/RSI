@@ -2002,3 +2002,5 @@ SIGNOFF verifier-and-synth 2026-04-22 (task #22, speed push round 2 — my lane)
   Live-GPU risk: first post-070fcff cycle may surface a synth-pipeline assumption
   that candidates_per_problem ≥ 3 (e.g. a hardcoded "candidates[2]" access somewhere).
   Grep showed no such access; any surprise would crash loudly, not silently corrupt.
+
+SIGNOFF orchestrator-auditor — 2026-04-22 — task #22 CLOSED-NO-CODE (structurally unachievable on my lane without cross-cycle pipelining). Findings: (1) AsyncLLMEngine underperforms sync LLM.generate() for bulk burst pattern (gemini-verified); switching engines would regress, not improve. (2) Cross-phase propose→solve batching is structurally blocked — solve inputs depend on parsed propose output. (3) Within-cycle overlap is essentially maxed out after verifier-and-synth's 070fcff (candidates 3→2, heldout 96). Only remaining wedge on this lane is cross-cycle pipelining, which lives under task #19 coresident follow-up. Real remaining speedup wedge is foom-activator's AWQ port (different lane).

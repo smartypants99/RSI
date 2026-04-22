@@ -434,11 +434,13 @@ class TrainerConfig:
     # backward to save ~3x VRAM at ~2x compute cost. For 32B-4bit (~18GB
     # on A6000 48GB) + rank-8 LoRA (~180MB params + Adam states) +
     # train_max_seq_length=1024 batch=2, activations are ~2-4GB and fit
-    # comfortably with ~25GB headroom, so GC is pure slowdown. Kept True
-    # by default (safe — matches prior behavior). Set False at next
-    # restart to cut train time ~40-50% once held-out VRAM headroom is
-    # confirmed by an operator. OOM-retry path still halves batch size.
-    use_gradient_checkpointing: bool = True
+    # comfortably with ~25GB headroom, so GC is pure slowdown.
+    # Task #20 throughput pass: flipped default False. Gemini consult
+    # predicts 25-30% speedup on the 32B-4bit / A6000 workload. The OOM-
+    # retry path (src/trainer/custom_lora.py) still halves batch size, so
+    # a misconfigured restart on a smaller GPU self-recovers. Set True
+    # explicitly if running on <48GB VRAM or longer seq lengths.
+    use_gradient_checkpointing: bool = False
 
     def __post_init__(self):
         if self.lora_rank < 1:

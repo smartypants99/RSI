@@ -173,3 +173,50 @@ def test_one_step_overfit_drives_loss_down():
         f"one-step overfit failed: {initial:.4f} -> {after:.4f} "
         f"(gradient flow likely broken)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task #20: Liger kernels helper — no-op paths (install-gated)
+# ---------------------------------------------------------------------------
+
+def test_maybe_apply_liger_kernels_disabled_by_config():
+    from src.utils.model_loader import _maybe_apply_liger_kernels
+    from src.utils.config import ModelConfig
+
+    cfg = ModelConfig(model_path="stub", use_liger_kernels=False)
+
+    class _M:
+        class config: model_type = "qwen2"
+    assert _maybe_apply_liger_kernels(_M(), cfg) is False
+
+
+def test_maybe_apply_liger_kernels_non_qwen2_is_noop():
+    from src.utils.model_loader import _maybe_apply_liger_kernels
+    from src.utils.config import ModelConfig
+
+    cfg = ModelConfig(model_path="stub", use_liger_kernels=True)
+
+    class _M:
+        class config: model_type = "llama"
+    # Even with use_liger_kernels=True, non-Qwen2 models return False.
+    assert _maybe_apply_liger_kernels(_M(), cfg) is False
+
+
+def test_maybe_apply_liger_kernels_missing_package_is_noop(monkeypatch):
+    """When liger_kernel isn't installed, helper returns False without raising."""
+    import builtins
+    from src.utils.model_loader import _maybe_apply_liger_kernels
+    from src.utils.config import ModelConfig
+
+    cfg = ModelConfig(model_path="stub", use_liger_kernels=True)
+
+    class _M:
+        class config: model_type = "qwen2"
+
+    real_import = builtins.__import__
+    def _blocker(name, *args, **kwargs):
+        if name.startswith("liger_kernel"):
+            raise ImportError("simulated missing liger_kernel")
+        return real_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", _blocker)
+    assert _maybe_apply_liger_kernels(_M(), cfg) is False

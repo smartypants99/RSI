@@ -13,6 +13,51 @@ from .config import ModelConfig
 logger = logging.getLogger(__name__)
 
 
+def _maybe_apply_liger_kernels(model, config: "ModelConfig") -> bool:
+    """Apply Liger-Kernel Qwen2 patches when available + requested.
+
+    Returns True iff patches were applied. Safe no-op otherwise:
+      - liger_kernel not installed → log debug + return False
+      - model is not Qwen2 / Qwen2-based → return False
+      - config.use_liger_kernels is False → return False
+
+    Patches fuse RMSNorm + RoPE + SwiGLU + cross-entropy into Triton
+    kernels. Compatible with bnb-4bit frozen base (gemini consult +
+    upstream README). Must be called AFTER the model is loaded so the
+    real modules exist to patch.
+    """
+    if not bool(getattr(config, "use_liger_kernels", False)):
+        return False
+    # Detect Qwen2 family by architecture class name — covers Qwen2,
+    # Qwen2.5, and distill variants (DeepSeek-R1-Distill-Qwen-*).
+    model_type = getattr(getattr(model, "config", None), "model_type", "") or ""
+    cls_name = type(model).__name__
+    is_qwen2 = ("qwen2" in model_type.lower()) or ("Qwen2" in cls_name)
+    if not is_qwen2:
+        logger.debug(
+            "Liger skip: model_type=%r cls=%r (only Qwen2 family supported here)",
+            model_type, cls_name,
+        )
+        return False
+    try:
+        from liger_kernel.transformers import (  # type: ignore[import-not-found]
+            apply_liger_kernel_to_qwen2,
+        )
+    except ImportError:
+        logger.debug("Liger skip: liger_kernel package not installed")
+        return False
+    try:
+        apply_liger_kernel_to_qwen2(model=model)
+        logger.info("Applied Liger kernels to Qwen2 model (fused RMSNorm/RoPE/SwiGLU/CE)")
+        return True
+    except Exception as e:
+        logger.warning(
+            "Liger kernel patch failed (%s: %s) — falling back to stock HF ops",
+            type(e).__name__, e,
+        )
+        return False
+
+
 class ActivationStats:
     """Pre-computed stats from an activation tensor (avoids storing full tensor)."""
     __slots__ = ("dead_ratio", "std", "mean", "max_abs")
@@ -194,6 +239,8 @@ class ModelLoader:
         else:
             raise RuntimeError(f"Model download failed after 3 attempts: {last_err}") from last_err
         # KV cache is enabled for inference speed. Trainer disables it during training.
+        # Task #20 throughput: apply Liger kernels when requested + compatible.
+        _maybe_apply_liger_kernels(self._model, self.config)
         return self
 
     def _build_quant_config(self):

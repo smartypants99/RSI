@@ -913,6 +913,16 @@ class VLLMConfig:
     # dispatch overhead).
     parallel_verify_enabled: bool = False
 
+    # Task #18 speed pass step 2: chunked prefill. vLLM splits long prompt
+    # prefills into chunks and interleaves them with decode steps, which
+    # prevents the 120-prompt solve batch's long shared <think>...task-
+    # template prefix from stalling the decode pipeline for 2-3 seconds
+    # per prefill wave. Gemini consult: essential for this workload —
+    # without it, prefill spikes dominate wall-time on the solve phase.
+    # Default True; safe to disable if a vLLM version rejects the kwarg
+    # (the loader's TypeError-retry drops it gracefully).
+    enable_chunked_prefill: bool = True
+
     def __post_init__(self):
         if not (0.0 < self.gpu_memory_utilization <= 1.0):
             raise ValueError(f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}")

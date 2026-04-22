@@ -45,7 +45,8 @@ class VLLMModelLoader:
                  max_num_seqs: int = 0,
                  enforce_eager: bool = False,
                  coresident_training_enabled: bool = False,
-                 coresident_vllm_mem_frac: float = 0.42):
+                 coresident_vllm_mem_frac: float = 0.42,
+                 enable_chunked_prefill: bool = True):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
@@ -533,6 +534,26 @@ class VLLMModelLoader:
             self._current_model_path = checkpoint_path
             self.config.model_path = checkpoint_path
         self._unload_hf()
+        # Task #19: if the engine is merely sleeping (coresident path took
+        # effect on enter_training), waking it up restores inference without
+        # paying the full ~3-5 min reload cost. On bnb-4bit where the base
+        # weights don't change, we don't need to reload from disk at all —
+        # just register the new adapter via set_lora_adapter on the woken
+        # engine. Gracefully falls through to the destroy-and-reload path
+        # if wake fails.
+        if self._vllm_sleeping and self._llm is not None:
+            if self._vllm_wake():
+                if adapter_path is not None:
+                    self.enable_lora = True
+                    self.set_lora_adapter(adapter_path)
+                logger.info(
+                    "coresident swap: woke vLLM + registered adapter "
+                    "(reload skipped, saved ~3-5 min)"
+                )
+                return
+            logger.info(
+                "coresident wake failed; reverting to destroy-and-reload path"
+            )
         # If vLLM is already loaded (e.g. resume path called before training),
         # unload it first so _load_vllm doesn't leak the prior engine's GPU mem.
         self._unload_vllm()

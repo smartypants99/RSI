@@ -282,6 +282,16 @@ class ImprovementLoop:
                 allow_remote_code=getattr(config.model, "allow_remote_code", False),
                 quantization_config=vllm_cfg.quantization_config,
                 max_num_seqs=int(getattr(vllm_cfg, "max_num_seqs", 0) or 0),
+                # Task #19: co-resident training knobs. Default-off; user
+                # flips coresident_training_enabled=True after A/B on
+                # target GPU. See VLLMConfig docstring for the VRAM budget.
+                enforce_eager=bool(getattr(vllm_cfg, "enforce_eager", False)),
+                coresident_training_enabled=bool(
+                    getattr(vllm_cfg, "coresident_training_enabled", False)
+                ),
+                coresident_vllm_mem_frac=float(
+                    getattr(vllm_cfg, "coresident_vllm_mem_frac", 0.42)
+                ),
             )
         else:
             from ..utils.model_loader import ModelLoader

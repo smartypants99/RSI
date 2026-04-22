@@ -1935,3 +1935,40 @@ Remaining caveats as follow-up tickets (caveats = tasks):
   - Live-GPU validation of the 48-seq concurrency (current measurement: CPU stub only). If OOM on first live cycle, lower to 40.
   - Live-GPU verification of prefix-cache hit-rate with log_throughput_stats=True and a single cycle's log parsed. If num_cached_tokens is near-zero after batch 2, the system prefix is drifting somewhere and chunked_prefill gains are capped.
   - Consider a dedicated task "port off bitsandbytes to AWQ" — would unlock speculative decoding (the largest unexplored throughput lever). Materially larger surface change; separate ticket owner.
+
+---
+cross-reviewer APPROVES resumption (speed push ~2-3x combined) — 2026-04-22 — final gate on #18/#19/#20.
+
+Gemini consulted for math sanity checks; codex skipped (401 auth this session per team-wide rule).
+
+Final-gate checks:
+
+(a) Coresident flag — VERIFIED default OFF. OrchestratorConfig.coresident_training_enabled=False (config.py:901). Stays off on first live run; flipping True is a follow-up decision after teacher+trainer single-GPU headroom is empirically confirmed. When enabled, ~3-5 min reload per cycle elided via vLLM sleep/wake (14aa31d).
+
+(b) Liger opt-in — VERIFIED default True but test infra does NOT exercise the CUDA path. `test_one_step_overfit_drives_loss_down` uses `_TinyCausalLM` (pure-PyTorch stub); `_maybe_apply_liger_kernels` explicitly short-circuits on non-Qwen2, so the test validates gradient flow in a generic module only, not the Liger-patched forward/backward. This is a LIVE-GPU-ONLY RISK: gradient-flow regression from Liger would show as flatlined loss on the real Qwen2 RMSNorm/CE patches and test would not catch it. Recommend watching cycle-1 loss trajectory — if initial_loss ~ final_loss on a pool that was producing signal pre-#20, disable via TrainerConfig.use_liger_kernels=False and resume. No silent-danger path (loss logging exists; trainer warnings fire on flat-loss). Not blocking relaunch.
+
+(c) max_num_seqs=48 KV math — VERIFIED safe at typical workload, THIN at worst case. Back-of-envelope with 32B-bnb-4bit, max_model_len=4096, GQA (num_kv_heads=8, head_dim=128, layers=64) → per-token KV ≈ 256 KB. Usable KV budget at gpu_memory_utilization=0.85 on 48GB A6000 minus ~18GB weights minus ~2GB CUDA graphs ≈ 20-25GB KV pool. 48 seqs at typical avg seq_len=1500 tokens (post-#10 caps) → ~18GB. Fits. WORST case: 48 seqs at max_model_len=4096 → ~48GB, would force vLLM preemption/swap. In practice propose caps at 600 tokens and solver at 1200 so this worst case cannot arise from the active prompts. Live-GPU fallback: if engine init OOMs, drop to 32 via config (already a tested knob from task #10). Not blocking.
+
+(d) Chunked prefill + prefix caching coexistence — VERIFIED both coexist. vllm_backend.py:159 sets enable_prefix_caching=True always; vllm_backend.py:169-173 conditionally sets enable_chunked_prefill=True (default True). vLLM v0.6+ v1 engine supports both jointly — chunked-prefilled requests still hit the prefix cache. TypeError retry path (vllm_backend.py:207) defensively strips enable_chunked_prefill on older vLLM. Safe.
+
+(e) Dynamic padding + GC-off memory peak — VERIFIED safe at realistic workload. At batch_size=2, seq_len=1024, 32B-bnb-4bit + LoRA r=16: weights ~16GB + LoRA 0.4GB + AdamW state 0.8GB + activations (64 layers × 1024 × 5120 × 2 bytes × 2 samples) ≈ 1.4GB + attn ~1GB + buffers ~2GB ≈ ~21GB. Well under 40GB even with GC off. Worst case batch_size=2 × seq_len=4096: ~30GB, still under. Dynamic padding caps per-batch at observed seq_len (not max_model_len), so long-tail batches don't pay max-length memory. Safe.
+
+Honest expected wall-clock per cycle (with task #10 baseline + #18/#19/#20 layered, assuming default flags: coresident OFF, Liger ON, chunked prefill ON, dynamic padding ON, GC OFF, max_num_seqs=48):
+  propose   6 min → ~4 min   (chunked prefill + max_num_seqs bump)
+  solve     2 min → ~1.2 min (vLLM 1.6-1.8x throughput, honest foom-activator number)
+  train     5 min → ~3.3 min IF Liger active (+40-50% step throughput unconfirmed), ~4-5 min if Liger no-ops
+  held-out  1.5 min quick / 13 min full (every 5th cycle)
+  anchor    ~1 min (already batched, Part A)
+Steady-state QUICK cycle: ~10-11 min without Liger gain, ~8-9 min with Liger gain
+Steady-state FULL cycle:  ~21-22 min without Liger gain, ~18-20 min with Liger gain
+Combined speedup vs pre-speed-push baseline (~42 min): ~2-3x, matching team-lead's honest framing.
+
+Live-GPU risks (NOT blocking, all with defined fallbacks):
+1. Liger gradient flow — watch cycle-1 loss trajectory; disable via use_liger_kernels=False if flat.
+2. max_num_seqs=48 OOM on engine init — drop to 32 via config.
+3. coresident=False first run is intentional; enable only after headroom confirmed.
+4. GC-off memory peak — empirically verify at first training cycle; enable use_gradient_checkpointing=True if peak > 40GB.
+
+pytest: 801 passed, 2 skipped, 1 dep-warning (pre-existing). No unauthorized GPU runs this session. Follow-ups tracked: #13 (trainer verdict_warnings down-weight), trainer-auditor's metrics.undertrained wiring + save_lora None semantics.
+
+Green light for GPU resumption on team-lead authority.

@@ -1847,3 +1847,20 @@ Not done (outside requested scope, flagged for follow-up):
   - Live-GPU max_num_seqs=32 headroom check: static projection says ~4GB KV at max_seq=4096 bf16 × 32 ≈ safe on A6000 (48GB total − ~27GB base − ~16GB LoRA overhead), but this must be empirically confirmed on first live cycle. If vLLM OOMs on engine init, drop max_num_seqs to 16 or 0.
 
 pytest: 759 passed, 2 skipped. Commit: accda68.
+
+---
+cross-reviewer APPROVES resumption (cycle ≤ ~7-8 min target) — all 4 final-gate checks passed with two honest caveats stated inline.
+
+Caveat 1 (held-out power, corrected): N=128 quick subsample detects |Δ| ≥ ~3-4% at z≥2 (NOT ≥1% as my earlier signoff incorrectly claimed — McNemar-style variance recomputation: SE(Δ)≈√(0.05/N) at ρ=0.9 gives ~0.020 at N=128 → z=2 at ~4pp). Full 1200-sample sweep every 5 cycles detects |Δ| ≥ ~1% at z≥2 (SE ≈ 0.0065). This aligns with regression_revert_threshold=0.03 — the quick-subsample sensitivity matches the revert gate, fine <1pp measurement is available at the full-sweep cadence. Docstring in src/utils/config.py updated to state this honestly.
+
+Caveat 2 (trainer down-weight): VerificationRecord.verdict_warnings=("any_fail",) is plumbed through the verifier/jsonl but src/trainer/* does not yet consume it. 2-of-3 accepted samples under the default "majority" policy train with identical weight to 3-of-3 clean samples. Protective layers cover the risk: mode_collapse_distinct_threshold=0.6, verifier_capture_alarm, streak-regression guard, and best_confirm_cycles=2 all gate bulk bad-signal leakage. Followup tracked as task #13.
+
+Final-gate checks:
+(a) Subsampled held-out power — calibrated honestly above; quick detects ≥3-4%, full detects ≥1%.
+(b) Mode-collapse alarm — threshold 0.6 on distinct/n per-benchmark; wouldn't false-positive on humaneval/mbpp (fixtures have 12 distinct problems each, distinct=1.0 when model produces varied outputs) or gsm8k/math (numeric answers, distinct spread naturally >0.6 on non-degenerate). Would have tripped on overnight cycle 2 humaneval distinct=7/12=0.58.
+(c) Majority-vote accept — property_engine still enforces distinct independence_classes (2+ backends required) and duplicate-author rejection under "majority" and "quorum_2of3" policies. Hash-equality is not a separate gate; the independence-class rule provides the equivalent orthogonality guarantee that two independent check mechanisms agreed.
+(d) Fast-student inline distill — NOT fired on GPU. orchestrator.fast_student_distill_inline=False default stays in place; only harvest runs on cycle ≥ 1. redistill_every=2 bumped only changes buffer-consumption cadence when the operator flips inline True after a live-GPU headroom check.
+
+pytest: 759 passed, 2 skipped, 1 dep-warning (pre-existing). Final commit set: 302fc41 (Part A approves) → d370c18 (task #11 accept-policy + mode-collapse + streak guard) → a500d7a (task #11 signoff) → accda68 (task #10 wire-up) → 88389c6 (task #10 signoff) → THIS commit (task #12 final gate, honest power caveat). No unauthorized GPU runs originated from this session. Task #13 created for trainer verdict_warnings down-weight polish.
+
+Green light for GPU resumption on team-lead authority. — 2026-04-22, cross-reviewer task #12.

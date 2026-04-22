@@ -543,11 +543,17 @@ class OrchestratorConfig:
     # downscale questions_per_domain so the eval lands ~heldout_quick_subsample_n
     # prompts total after the HELD_OUT_ONLY partition filter (~37% retain).
     # Every heldout_full_every cycles we run the full sweep to refresh the
-    # base-model reference. Statistical sanity: at N=128, p≈0.5, SE ≈ 0.044;
-    # paired vs a cached base-model subsample score the variance reduces by
-    # the per-question correlation (typically ~5-10× on frozen-eval). Paired
-    # SE ≈ 0.044/√5 ≈ 0.020 gives z ≈ 2.5 on a true +1pp delta (well above
-    # the z≥2 power floor). Full 1200 every 5 cycles to re-anchor.
+    # base-model reference.
+    #
+    # Honest statistical-power calibration (McNemar-style paired binary):
+    #   Var(Δ) per item ≈ 2·p·(1-p)·(1-ρ); at p=0.5, ρ=0.9 → σ² ≈ 0.05 / N.
+    #   N=128  → SE(Δ) ≈ √(0.05/128)  ≈ 0.020  → z=2 at ≈4pp delta.
+    #   N=1200 → SE(Δ) ≈ √(0.05/1200) ≈ 0.0065 → z=2 at ≈1.3pp delta.
+    # So the QUICK subsample reliably detects |Δ| ≥ ~3-4%; the FULL sweep
+    # every 5 cycles detects |Δ| ≥ ~1%. This aligns with the existing
+    # regression_revert_threshold=0.03 — the quick-subsample sensitivity
+    # matches the revert gate, and finer <1pp measurement is only needed
+    # on the cadence the full sweep already provides.
     # Set heldout_quick_subsample_n=0 to disable (always run full).
     heldout_quick_subsample_n: int = 128
     heldout_full_every: int = 5

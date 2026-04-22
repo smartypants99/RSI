@@ -1646,3 +1646,54 @@ SIGNOFF trainer-auditor 2026-04-22 (task #1)
     - _train_mixed: SFT side uses adaptive planner; DPO side now also does. No live run has exercised mixed mode.
     - GRPO rollout cache retains per-prompt tensors across epochs; not a correctness bug, but a long multi-epoch GRPO run could accumulate VRAM — worth monitoring.
   pytest: 682 passed, 2 skipped, 1 warning (unchanged from baseline).
+
+SIGNOFF verifier-and-synth 2026-04-22 (task #4, partial — anchor harness)
+  commit: 75ee14a fix(anchor-eval): execution-based grading for humaneval/mbpp
+  Audit scope: src/utils/external_benchmarks.py
+  Root cause (overnight humaneval=mbpp=0.0 every cycle):
+    - _default_grade fell through to `ans in pred or pred in ans` on canonical_solution.
+    - Real HumanEval canonical_solution is body-only (no `def` line), so it will never
+      appear as a substring of a typical completion. MBPP canonical is multi-line code
+      that almost never appears verbatim inside a model output. Both paths were
+      guaranteed-False → 0.0, unrelated to model skill.
+  Fix (execution-based grader):
+    - _grade_humaneval: compose prompt+completion (or reuse full def if present),
+      append benchmark's `check()` body + `check(entry_point)`, run run_python_sandboxed.
+    - _grade_mbpp: extract code from optional ```python fence, append test_list asserts,
+      run sandboxed.
+    - _extract_code strips <think>...</think> and fences before grading.
+    - Offline fixtures carry entry_point + test/test_list metadata so grader works
+      offline (tests + canary + CI).
+  Evidence humaneval/mbpp now score >0 on a known-correct completion:
+    - tests/test_external_benchmarks.py::test_humaneval_grader_executes_known_correct
+        known-correct body `    return a + b\n` → anchor_score == 1.0
+        known-wrong body  `    return a - b\n` → anchor_score == 0.0
+    - tests/test_external_benchmarks.py::test_mbpp_grader_executes_known_correct
+        ```python def mul_i(a,b): return a*b ``` → anchor_score == 1.0
+    - Full suite: 698 passed, 2 skipped, 1 warning.
+  Out-of-scope-this-SIGNOFF caveats (NOT yet addressed — each is now its own task):
+    - gsm8k=1.0 suspiciously clean: n-check + sampling-diversity audit not done here;
+      default math grader still uses _normalize_number substring match on last number,
+      which for offline fixtures with single-number prompts can succeed trivially.
+    - propose_batch_code 30% proposal failure rate (missing_problem / too_few_tests /
+      missing_reference / missing_entry) — parser tolerant but prompt yield still lossy.
+    - curriculum domain-stuck on math/percentage 5 cycles while eval held-out is code;
+      _curriculum_share + domain selection in diagnostics/engine.py not yet rebalanced.
+    - Z3/simulator verifier backends: HAS_Z3 + unavailability path not yet logged at
+      per-decision granularity (cannot distinguish "verified-clean" from "silently-skipped"
+      in the cycle_metrics stream).
+  Cross-agent signals:
+    - foom-activator: anchor harness now provides a real expansion signal for verifier
+      expansion triggers — any sustained anchor_score lift can actually be trusted now.
+    - orchestrator-auditor: anchor_score numbers emitted prior to 75ee14a were
+      measurement-floor zeros, not real regressions. The cycle_0 baseline-drift canary
+      should be re-taken after this commit lands on live GPU.
+    - trainer-auditor: no adapter-application bug at anchor time discovered; the anchor
+      model_fn goes through self.model_loader.generate which already reflects the active
+      PEFT adapter stack.
+  Remaining live-GPU risk:
+    - run_python_sandboxed requires RLIMIT_NPROC=0, setrlimit on the box; confirmed green
+      in CI but the production container (GPU pod) may have a different seccomp profile.
+      If sandbox fails to spawn, _grade_* returns False and anchor_score collapses to 0
+      again. Watch first live cycle: if anchor_score is still 0.0 post-75ee14a, the
+      sandbox itself is the next bug, not the grader.

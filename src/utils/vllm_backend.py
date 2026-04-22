@@ -63,6 +63,14 @@ class VLLMModelLoader:
         # concurrent-sequence cap. Task #10: 32 amortizes decode overhead
         # once propose/solve fan-out shrinks (k=3, tasks=12).
         self.max_num_seqs = int(max_num_seqs)
+        # Task #23 wedge 4: optional override for held-out-only phases.
+        # vLLM's max_num_seqs is engine-level and not hot-swappable at
+        # runtime, so "bump during held-out" realistically means "if the
+        # caller has flipped this knob before the engine (re)loads, use
+        # the heldout value instead of max_num_seqs". apply_heldout_mode()
+        # below toggles which value is used on the next _load_vllm() call.
+        self.heldout_max_num_seqs: int = 0
+        self._heldout_mode: bool = False
         # Task #19: coresident-training knobs. When coresident is ON we
         # initialize vLLM with a clipped gpu_memory_utilization (gemini
         # consult: ~0.42 on 48GB A6000 for 32B-4bit to leave room for HF)
@@ -170,8 +178,18 @@ class VLLMModelLoader:
             # set it explicitly so the optimization survives version drift.
             enable_prefix_caching=True,
         )
-        if self.max_num_seqs > 0:
-            llm_kwargs["max_num_seqs"] = self.max_num_seqs
+        # Task #23 wedge 4: use heldout_max_num_seqs when the caller has
+        # flipped _heldout_mode and provided a positive value. Otherwise
+        # fall back to the general max_num_seqs. vLLM cannot change
+        # max_num_seqs on a live engine, so this takes effect on the
+        # NEXT _load_vllm() call after apply_heldout_mode(True) is set.
+        _effective_max_num_seqs = (
+            self.heldout_max_num_seqs
+            if (self._heldout_mode and self.heldout_max_num_seqs > 0)
+            else self.max_num_seqs
+        )
+        if _effective_max_num_seqs > 0:
+            llm_kwargs["max_num_seqs"] = _effective_max_num_seqs
         if self.enforce_eager:
             # Task #19: disable CUDA-graph capture. Required when the engine
             # must coexist with HF training on a 48GB GPU (gemini consult:
@@ -284,6 +302,27 @@ class VLLMModelLoader:
                 except Exception:
                     pass
                 torch.cuda.empty_cache()
+
+    def apply_heldout_mode(self, enabled: bool,
+                            heldout_max_num_seqs: int = 0) -> None:
+        """Toggle held-out-eval mode and (optionally) set its max_num_seqs.
+
+        Task #23 wedge 4: vLLM's max_num_seqs is engine-level and not
+        hot-swappable on a live engine. apply_heldout_mode(True) flips a
+        flag that _load_vllm reads on the NEXT reload (e.g. after a
+        post-training vLLM swap). For runs that never reload (inference-
+        only, no training between cycles) the held-out cap must be set
+        once at startup by calling apply_heldout_mode(True, N) BEFORE
+        the first _load_vllm(). Caller is responsible for setting
+        enabled=False after the held-out phase if it wants the default
+        cap restored on subsequent reloads.
+
+        When heldout_max_num_seqs == 0 (default), the flip is a no-op —
+        the general self.max_num_seqs is used as before.
+        """
+        self._heldout_mode = bool(enabled)
+        if heldout_max_num_seqs > 0:
+            self.heldout_max_num_seqs = int(heldout_max_num_seqs)
 
     def _load_hf(self):
         """Load HF model for training."""

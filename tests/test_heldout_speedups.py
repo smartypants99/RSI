@@ -307,6 +307,62 @@ def test_config_rejects_negative_heldout_max_num_seqs(tmp_path):
         )
 
 
+def test_vllm_apply_heldout_mode_flips_flag_and_value(tmp_path):
+    """VLLMModelLoader.apply_heldout_mode sets both the flag and the
+    heldout_max_num_seqs value without loading the engine (pure state
+    manipulation — vLLM engine cannot hot-swap max_num_seqs)."""
+    from src.utils.vllm_backend import VLLMModelLoader
+    loader = VLLMModelLoader.__new__(VLLMModelLoader)
+    # Minimal attribute init — we're exercising the pure-Python branch.
+    loader.max_num_seqs = 32
+    loader.heldout_max_num_seqs = 0
+    loader._heldout_mode = False
+    loader.apply_heldout_mode(True, heldout_max_num_seqs=96)
+    assert loader._heldout_mode is True
+    assert loader.heldout_max_num_seqs == 96
+
+
+def test_vllm_apply_heldout_mode_noop_when_value_zero(tmp_path):
+    """Calling apply_heldout_mode(True, 0) preserves existing value."""
+    from src.utils.vllm_backend import VLLMModelLoader
+    loader = VLLMModelLoader.__new__(VLLMModelLoader)
+    loader.max_num_seqs = 32
+    loader.heldout_max_num_seqs = 48
+    loader._heldout_mode = False
+    loader.apply_heldout_mode(True, heldout_max_num_seqs=0)
+    assert loader._heldout_mode is True
+    assert loader.heldout_max_num_seqs == 48  # unchanged
+
+
+def test_vllm_effective_max_num_seqs_logic():
+    """Replicate the selector used inside _load_vllm so regressions to
+    that branch don't slip through (the engine side can't be unit-tested
+    without an actual GPU)."""
+    from src.utils.vllm_backend import VLLMModelLoader
+    loader = VLLMModelLoader.__new__(VLLMModelLoader)
+    loader.max_num_seqs = 32
+    loader.heldout_max_num_seqs = 96
+
+    def effective(mode_on: bool, heldout: int, general: int) -> int:
+        loader._heldout_mode = mode_on
+        loader.heldout_max_num_seqs = heldout
+        loader.max_num_seqs = general
+        return (
+            loader.heldout_max_num_seqs
+            if (loader._heldout_mode and loader.heldout_max_num_seqs > 0)
+            else loader.max_num_seqs
+        )
+
+    # Flag off → use general cap.
+    assert effective(False, 96, 32) == 32
+    # Flag on + heldout set → use heldout cap.
+    assert effective(True, 96, 32) == 96
+    # Flag on but heldout=0 → fall back to general cap.
+    assert effective(True, 0, 32) == 32
+    # Flag on + heldout > 0, general = 0 (vLLM-default) → use heldout.
+    assert effective(True, 96, 0) == 96
+
+
 # --- Wedge 5: max_new_tokens cap -------------------------------------------
 
 

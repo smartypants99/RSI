@@ -448,7 +448,7 @@ class TrainerConfig:
     # retry path (src/trainer/custom_lora.py) still halves batch size, so
     # a misconfigured restart on a smaller GPU self-recovers. Set True
     # explicitly if running on <48GB VRAM or longer seq lengths.
-    use_gradient_checkpointing: bool = False
+    use_gradient_checkpointing: bool = True
 
     def __post_init__(self):
         if self.lora_rank < 1:

@@ -127,6 +127,12 @@ class CycleResult:
         self.paired_delta_se: float | None = None
         self.paired_delta_n: int | None = None
         self.paired_variance_reduction: float | None = None
+        # Task #23 wedge 3 (wire-up): which reference the paired_delta
+        # was computed against. "base_cache" means the cycle-1 cached
+        # base-model predictions (high-overlap, stable); "prev_cycle"
+        # means the previous cycle's per-question records (legacy path).
+        # None when paired_delta was not computed.
+        self.paired_delta_reference: str | None = None
         # Task #14: set True when solution-diversity tracker raised a
         # mode-collapse alarm this cycle.
         self.diversity_alarm: bool = False
@@ -500,6 +506,46 @@ class ImprovementLoop:
         self.difficulty_tracker = DifficultyTracker.load_or_new(
             self._difficulty_state_path
         )
+
+        # Task #23 wedge 3: base-model held-out prediction cache.
+        # Populated once from the cycle-1 full eval (or any cycle whose
+        # predictions still reflect the frozen base — e.g. no LoRA yet),
+        # then reused as the paired_delta reference for every subsequent
+        # quick-eval. Overlap against the full N≈600 base predictions
+        # drives variance reduction to ~2.5×, which is what makes the
+        # N=128 quick-eval MDE land near 5pp.
+        #
+        # Cache is keyed by model_id; swapping the base (AWQ port, new
+        # DeepSeek revision, substrate-merge epoch) invalidates it
+        # automatically — next cycle-1 equivalent refills.
+        self._heldout_base_cache = None
+        if getattr(config.orchestrator, "paired_eval_enabled", True):
+            try:
+                from ..diagnostics.heldout_base_cache import BaseHeldoutCache
+                cache_path = (
+                    config.orchestrator.output_dir / "heldout_base_cache.jsonl"
+                )
+                # Use the base model path as the fingerprint source.
+                # model_loader.model_path is stable for the run; after a
+                # substrate merge it gets redirected and the cache resets
+                # for the new fingerprint.
+                base_model_id = getattr(self.model_loader, "model_path", "")
+                self._heldout_base_cache = BaseHeldoutCache.load_or_new(
+                    path=cache_path, model_id=str(base_model_id),
+                )
+                if self._heldout_base_cache.entries:
+                    logger.info(
+                        "heldout_base_cache: loaded %d cached base predictions "
+                        "for model_id=%s",
+                        len(self._heldout_base_cache.entries), base_model_id,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "heldout_base_cache init failed (%s: %s) — "
+                    "paired_delta will fall back to prev-cycle reference only",
+                    type(exc).__name__, exc,
+                )
+                self._heldout_base_cache = None
 
     def run(self) -> None:
         """Run the full improvement loop with per-cycle fault isolation.
@@ -2578,6 +2624,133 @@ class ImprovementLoop:
             return min(candidates)
         return float(result.pre_score or 0.0)
 
+    # ------------------------------------------------------------------
+    # Task #23 wedge 3: base-model held-out prediction cache wiring.
+    # Split out as helpers so they can be unit-tested without driving
+    # the full _eval_phase (which depends on vLLM, diagnostics engine,
+    # curriculum tracker, anchor eval, etc.).
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _per_q_key(rec: dict) -> str:
+        """Key matching paired_eval._per_question_correct_map."""
+        return f"{rec.get('prompt','')}|{rec.get('expected','')}"
+
+    def _compute_paired_delta_with_base_cache(
+        self, result: "CycleResult", cur_per_q: list[dict] | None,
+    ) -> None:
+        """Pick the reference records with the largest overlap against
+        ``cur_per_q`` (base cache OR previous cycle) and populate the
+        paired_delta fields on ``result``. No-op if neither candidate
+        has >=2 matched questions or if cur_per_q is empty.
+
+        On cycle 1 the prev-cycle candidate is empty, so base_cache is
+        the only path that can produce a paired_delta — this is the
+        whole point of wedge 3.
+        """
+        if not cur_per_q:
+            return
+        from ..diagnostics.paired_eval import paired_delta
+
+        prev_per_q = next(
+            (
+                getattr(r, "_eval_per_rep_per_question", None)
+                for r in reversed(self.history)
+                if getattr(r, "_eval_per_rep_per_question", None)
+            ),
+            None,
+        )
+        prev_records = prev_per_q[-1] if prev_per_q else None
+
+        base_cache = getattr(self, "_heldout_base_cache", None)
+        base_records = None
+        if base_cache is not None and base_cache.entries:
+            base_records = base_cache.to_per_question_records()
+
+        cur_keys = {self._per_q_key(r) for r in cur_per_q}
+
+        def _overlap(ref_records):
+            if not ref_records:
+                return 0
+            return sum(
+                1 for r in ref_records
+                if self._per_q_key(r) in cur_keys
+            )
+
+        base_overlap = _overlap(base_records)
+        prev_overlap = _overlap(prev_records)
+
+        chosen_ref = None
+        chosen_src = None
+        if base_overlap >= prev_overlap and base_overlap >= 2:
+            chosen_ref, chosen_src = base_records, "base_cache"
+        elif prev_overlap >= 2:
+            chosen_ref, chosen_src = prev_records, "prev_cycle"
+
+        if chosen_ref is None:
+            return
+        pd = paired_delta(chosen_ref, cur_per_q)
+        if pd is None:
+            return
+        result.paired_delta = pd.delta
+        result.paired_delta_se = pd.delta_se
+        result.paired_delta_n = pd.n
+        result.paired_variance_reduction = pd.variance_reduction
+        # Stash the source on the result so cross-reviewer can audit which
+        # reference each cycle used (useful when interpreting VR numbers).
+        try:
+            result.paired_delta_reference = chosen_src
+        except Exception:
+            pass
+        logger.info(
+            "    paired delta: %+.4f ± %.4f (n=%d, z=%.2f, VR=%.1fx) "
+            "[ref=%s]",
+            pd.delta, pd.delta_se, pd.n, pd.z,
+            pd.variance_reduction, chosen_src,
+        )
+
+    def _maybe_populate_base_cache(
+        self, cycle: int, result: "CycleResult",
+        cur_per_q: list[dict] | None,
+    ) -> None:
+        """Populate the base held-out cache the first time a full eval
+        runs on the un-trained base model. Constraints:
+
+          - cache must exist and be empty (first time only for this model_id),
+          - cur_per_q must be non-empty,
+          - heldout_eval_kind must be "full" (richer reference than a
+            quick subsample),
+          - no prior cycle in self.history may have training_metrics.steps > 0
+            (i.e. this is still the frozen base; post-training predictions
+            do not belong in the "base" cache).
+
+        Saves atomically via BaseHeldoutCache.save().
+        """
+        base_cache = getattr(self, "_heldout_base_cache", None)
+        if base_cache is None or base_cache.entries:
+            return
+        if not cur_per_q:
+            return
+        if getattr(result, "heldout_eval_kind", "full") != "full":
+            return
+        trained_any = any(
+            getattr(r, "training_metrics", None)
+            and getattr(r.training_metrics, "steps", 0) > 0
+            for r in self.history
+        )
+        if trained_any:
+            return
+        from ..diagnostics.heldout_base_cache import populate_from_eval
+        added = populate_from_eval(base_cache, cur_per_q)
+        if added > 0:
+            base_cache.save()
+            logger.info(
+                "heldout_base_cache: populated %d base predictions "
+                "from cycle %d full eval (model_id=%s)",
+                added, cycle,
+                getattr(self.model_loader, "model_path", ""),
+            )
+
     def _quick_regression_probe(self, cycle: int) -> float:
         """Fast post-training sanity check — returns an overall score from a
         small held-out slice.
@@ -2800,36 +2973,35 @@ class ImprovementLoop:
             symbol = "+" if delta > 0 else ""
             logger.info(f"    (prev {prev_eval:.3f}, {symbol}{delta:.3f})")
 
-        # Paired-sample variance reduction (task #3). When the previous
-        # cycle cached its per-question records, compute a paired delta +
-        # SE. Frozen eval holds the question set constant, so pairing by
-        # (prompt, expected) matches every question — typical VR is 3-5×.
-        # Gated on paired_eval_enabled (default True, consolidation flip).
+        # Paired-sample variance reduction (task #3). When a stable
+        # reference (base cache OR previous cycle's per-question records)
+        # is available, compute a paired delta + SE. Frozen eval holds
+        # the question set constant, so pairing by (prompt, expected)
+        # matches every question — typical VR is 3-5×. Gated on
+        # paired_eval_enabled (default True, consolidation flip).
+        #
+        # Task #23 wedge 3 (actually wired): prefer the BASE cache as
+        # the reference. Cache overlap against full N≈600 base predictions
+        # is both larger and more stable than pairing against a single
+        # prior quick-eval subset (N≈128). Falls back to prev-cycle
+        # per-question records if the cache is empty (first eval) or if
+        # the overlap happens to be smaller than the prev-cycle path.
+        cur_per_q = per_rep_per_question[-1] if per_rep_per_question else None
         if getattr(self.config.orchestrator, "paired_eval_enabled", True):
             try:
-                prev_per_q = next(
-                    (
-                        getattr(r, "_eval_per_rep_per_question", None)
-                        for r in reversed(self.history)
-                        if getattr(r, "_eval_per_rep_per_question", None)
-                    ),
-                    None,
-                )
-                cur_per_q = per_rep_per_question[-1] if per_rep_per_question else None
-                if prev_per_q and cur_per_q:
-                    from ..diagnostics.paired_eval import paired_delta
-                    pd = paired_delta(prev_per_q[-1], cur_per_q)
-                    if pd is not None:
-                        result.paired_delta = pd.delta
-                        result.paired_delta_se = pd.delta_se
-                        result.paired_delta_n = pd.n
-                        result.paired_variance_reduction = pd.variance_reduction
-                        logger.info(
-                            "    paired delta: %+.4f ± %.4f (n=%d, z=%.2f, VR=%.1fx)",
-                            pd.delta, pd.delta_se, pd.n, pd.z, pd.variance_reduction,
-                        )
+                self._compute_paired_delta_with_base_cache(result, cur_per_q)
             except Exception as exc:
                 logger.warning("paired delta computation failed (non-fatal): %s", exc)
+
+        # Task #23 wedge 3 (actually wired): populate the base cache the
+        # first time we have a full per-question eval under the frozen
+        # base.
+        try:
+            self._maybe_populate_base_cache(cycle, result, cur_per_q)
+        except Exception as exc:
+            logger.warning(
+                "heldout_base_cache populate failed (non-fatal): %s", exc,
+            )
 
         # Anchor eval (Task #1, ground-truth). Ground-truth external
         # benchmarks — detects verifier capture when internal loop improves

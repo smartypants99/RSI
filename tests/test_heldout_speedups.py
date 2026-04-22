@@ -17,6 +17,8 @@ import math
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.orchestrator.loop import CycleResult, ImprovementLoop
 from src.utils.config import OrchestratorConfig
 
@@ -422,3 +424,178 @@ def test_eval_path_reads_configured_cap_not_hardcoded_512():
     # Positive assertion: at least two references to the configurable cap.
     good = text.count("self._heldout_max_tokens")
     assert good >= 2, good
+
+
+# ---------------------------------------------------------------------------
+# Task #23 wedge 3 LOOP WIRE-UP (task #24e).
+# Exercises the two helper seams pulled out of _eval_phase:
+#   _compute_paired_delta_with_base_cache
+#   _maybe_populate_base_cache
+# Plus: ImprovementLoop.__init__ attaches a BaseHeldoutCache when
+# paired_eval_enabled is True, and reloads persisted entries for the
+# same model_id on the next process.
+# ---------------------------------------------------------------------------
+
+def _bare_loop_with_cache(tmp_path: Path, *, model_id: str = "base/model",
+                          paired: bool = True) -> ImprovementLoop:
+    """Build an ImprovementLoop without loading any real model, and
+    attach a BaseHeldoutCache the way __init__ would."""
+    from src.diagnostics.heldout_base_cache import BaseHeldoutCache
+    loop = ImprovementLoop.__new__(ImprovementLoop)
+    orchestrator = OrchestratorConfig(
+        output_dir=tmp_path,
+        log_dir=tmp_path / "logs",
+        paired_eval_enabled=paired,
+    )
+    loop.config = SimpleNamespace(orchestrator=orchestrator)
+    loop.model_loader = SimpleNamespace(model_path=model_id)
+    loop.history = []
+    loop._heldout_base_cache = None
+    if paired:
+        loop._heldout_base_cache = BaseHeldoutCache.load_or_new(
+            path=tmp_path / "heldout_base_cache.jsonl",
+            model_id=model_id,
+        )
+    return loop
+
+
+def _per_q(prompt, expected, correct):
+    return {"prompt": prompt, "expected": expected, "correct": bool(correct),
+            "response": "r" if correct else "w"}
+
+
+def test_loop_init_attaches_base_cache_when_paired_eval_enabled(tmp_path):
+    """__init__'s wire-up: when paired_eval_enabled is True, the loop has
+    a BaseHeldoutCache keyed by model_loader.model_path."""
+    from src.diagnostics.heldout_base_cache import BaseHeldoutCache
+    loop = _bare_loop_with_cache(tmp_path, model_id="deepseek/test-base")
+    assert loop._heldout_base_cache is not None
+    assert isinstance(loop._heldout_base_cache, BaseHeldoutCache)
+    assert len(loop._heldout_base_cache.entries) == 0  # empty first time
+
+
+def test_loop_init_no_cache_when_paired_eval_disabled(tmp_path):
+    loop = _bare_loop_with_cache(tmp_path, paired=False)
+    assert loop._heldout_base_cache is None
+
+
+def test_populate_and_readback_across_processes(tmp_path):
+    """Populate-once semantics (user-requested test shape):
+    cycle-1 full eval populates the cache, a fresh loader sees it."""
+    loop1 = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    cur_per_q = [_per_q("Q1?", "A", True), _per_q("Q2?", "B", False),
+                 _per_q("Q3?", "C", True)]
+    r1 = CycleResult(1)
+    r1.heldout_eval_kind = "full"
+    loop1._maybe_populate_base_cache(1, r1, cur_per_q)
+    # File written.
+    cache_path = tmp_path / "heldout_base_cache.jsonl"
+    assert cache_path.exists()
+    # Fresh loader (simulates next process run): reloads the 3 entries.
+    loop2 = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    assert len(loop2._heldout_base_cache.entries) == 3
+    assert loop2._heldout_base_cache.has("Q1?", "A")
+
+
+def test_populate_only_on_full_eval(tmp_path):
+    """Quick-eval kind must NOT populate the cache — we want the richer
+    full-N reference."""
+    loop = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    cur_per_q = [_per_q("Q1?", "A", True)]
+    r = CycleResult(1)
+    r.heldout_eval_kind = "quick"
+    loop._maybe_populate_base_cache(1, r, cur_per_q)
+    assert len(loop._heldout_base_cache.entries) == 0
+
+
+def test_populate_skipped_once_any_cycle_has_trained(tmp_path):
+    """If ANY prior cycle trained, the current eval no longer reflects
+    the frozen base — don't pollute the base cache."""
+    loop = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    trained = CycleResult(1)
+    trained.training_metrics = SimpleNamespace(steps=3)
+    loop.history.append(trained)
+    cur_per_q = [_per_q("Q1?", "A", True)]
+    r = CycleResult(2)
+    r.heldout_eval_kind = "full"
+    loop._maybe_populate_base_cache(2, r, cur_per_q)
+    assert len(loop._heldout_base_cache.entries) == 0
+
+
+def test_paired_delta_uses_base_cache_on_cycle1(tmp_path):
+    """The wire-up's headline behaviour: on cycle 1 (empty history),
+    paired_delta is computed using the base cache as reference. Without
+    wedge-3 wire-up this case was skipped entirely (no prev-cycle ref)."""
+    loop = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    # Pre-populate base cache with a prior base run.
+    base = [_per_q("Q1?", "A", True), _per_q("Q2?", "B", True),
+            _per_q("Q3?", "C", False)]
+    from src.diagnostics.heldout_base_cache import populate_from_eval
+    populate_from_eval(loop._heldout_base_cache, base)
+    # Current cycle eval (same questions, one regression on Q1).
+    cur = [_per_q("Q1?", "A", False), _per_q("Q2?", "B", True),
+           _per_q("Q3?", "C", False)]
+    r = CycleResult(1)
+    loop._compute_paired_delta_with_base_cache(r, cur)
+    assert r.paired_delta is not None
+    assert r.paired_delta_n == 3
+    assert r.paired_delta_reference == "base_cache"
+    # delta = (0+1+0)/3 - (1+1+0)/3 = 1/3 - 2/3 = -1/3.
+    assert r.paired_delta == pytest.approx(-1.0 / 3.0, abs=1e-9)
+
+
+def test_paired_delta_prefers_base_cache_when_overlap_tied(tmp_path):
+    """When both references have the same overlap, base_cache wins —
+    it's the more stable N≈600 reference, not the noisy prev-cycle."""
+    loop = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    qs = [_per_q("Q1?", "A", True), _per_q("Q2?", "B", False)]
+    from src.diagnostics.heldout_base_cache import populate_from_eval
+    populate_from_eval(loop._heldout_base_cache, qs)
+    # Also plant a previous cycle with identical overlap.
+    prev_result = CycleResult(1)
+    prev_result._eval_per_rep_per_question = [qs]
+    loop.history.append(prev_result)
+
+    cur = [_per_q("Q1?", "A", False), _per_q("Q2?", "B", False)]
+    r = CycleResult(2)
+    loop._compute_paired_delta_with_base_cache(r, cur)
+    assert r.paired_delta_reference == "base_cache"
+
+
+def test_paired_delta_falls_back_to_prev_when_cache_empty(tmp_path):
+    """If the base cache is empty, the legacy prev-cycle path still works."""
+    loop = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    # Cache empty.
+    qs = [_per_q("Q1?", "A", True), _per_q("Q2?", "B", False)]
+    prev_result = CycleResult(1)
+    prev_result._eval_per_rep_per_question = [qs]
+    loop.history.append(prev_result)
+
+    cur = [_per_q("Q1?", "A", False), _per_q("Q2?", "B", False)]
+    r = CycleResult(2)
+    loop._compute_paired_delta_with_base_cache(r, cur)
+    assert r.paired_delta_reference == "prev_cycle"
+    assert r.paired_delta_n == 2
+
+
+def test_paired_delta_noop_when_no_reference(tmp_path):
+    """Empty cache, empty history — paired_delta is simply not computed."""
+    loop = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    cur = [_per_q("Q1?", "A", True)]
+    r = CycleResult(1)
+    loop._compute_paired_delta_with_base_cache(r, cur)
+    assert r.paired_delta is None
+    assert r.paired_delta_reference is None
+
+
+def test_base_cache_model_id_swap_invalidates(tmp_path):
+    """Swapping base model (AWQ port, new substrate epoch) resets the
+    cache automatically — this is the wedge-3 safety property."""
+    loop_a = _bare_loop_with_cache(tmp_path, model_id="m/A")
+    r1 = CycleResult(1); r1.heldout_eval_kind = "full"
+    loop_a._maybe_populate_base_cache(1, r1, [_per_q("Q1?", "A", True)])
+    assert (tmp_path / "heldout_base_cache.jsonl").exists()
+    # Now a new process comes up with model_id=m/B — entries from m/A
+    # must not leak through.
+    loop_b = _bare_loop_with_cache(tmp_path, model_id="m/B")
+    assert len(loop_b._heldout_base_cache.entries) == 0

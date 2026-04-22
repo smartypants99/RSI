@@ -1761,3 +1761,5 @@ Remaining risks (each is its own follow-up task):
   - test_reference_bank.py was present at session start (prior
     orchestrator-auditor run?); verified green and left in place as
     additional coverage. No conflict with test_best_promotion.py.
+
+SIGNOFF orchestrator-auditor — 2026-04-22 — outlier-reference bug closed via (a) best_min_samples_verified=8 + best_confirm_cycles=2 eligibility gate (ineligible/captured cycles cannot start a pending-best streak), (b) trimmed-mean clamp on the revert reference in _revert_reference so a stale confirmed best can't trap the loop, (c) toothed verifier-capture response: revert-to-best + self-edit halt on N consecutive alarms + VoV adversarial banking. 12 new reference-bank tests; full suite 633 passed, 2 skipped. Audit notes: eval-isolation is hash-partitioned (no RNG leak path), HELDOUT_CYCLE_SEED is stable, vLLM LoRARequest wiring validates adapter files before registration, HF↔vLLM swap path recovers from stale .incomplete checkpoints to base. Commits: 12cb95a (confirm gate + toothed alarm + _revert_reference + test_reference_bank.py).

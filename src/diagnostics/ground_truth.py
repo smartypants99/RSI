@@ -1302,6 +1302,101 @@ def _check_code_unit_tests(response: str, tests: list[str], entry_point: str,
     return ok
 
 
+def _score_code_unit_tests(
+    response: str, tests: list[str], entry_point: str,
+    *, timeout_s: int = 8, forbidden_symbols: list[str] = None,
+) -> tuple[bool, float]:
+    """Run unit tests individually and return (all_pass, pass_fraction).
+
+    Task #28: populate a continuous score ∈ [0,1] on per_question records
+    so the continuous-paired-delta MDE path (task #25 wedge 1) does not
+    degenerate to {0, 1}. For code tasks, the natural continuous score is
+    the fraction of unit tests the model's code passes — a 60%-passing
+    solution is more informative than "wrong" (0) would suggest.
+
+    Implementation: wrap each test in its own try/except inside one
+    sandbox subprocess and count sentinel lines. Single subprocess keeps
+    cost identical to the all-or-nothing grader (_check_code_unit_tests
+    was already sandboxed once); per-test granularity comes for free.
+
+    Returns (bool_all_pass, fraction_passed). Early-rejection paths
+    (no code, syntax error, missing entry_point, forbidden symbols)
+    return (False, 0.0) — consistent with the binary grader.
+    """
+    from ..utils.sandbox import run_python_sandboxed
+    code = _extract_code_block(response)
+    if not code:
+        return False, 0.0
+    try:
+        compile(code, "<string>", "exec")
+    except SyntaxError:
+        return False, 0.0
+    if entry_point and not re.search(rf"(?m)^def\s+{re.escape(entry_point)}\s*\(", code):
+        return False, 0.0
+    if forbidden_symbols:
+        hit = _has_forbidden_symbol(code, forbidden_symbols)
+        if hit:
+            return False, 0.0
+
+    if not tests:
+        # No tests to grade. Match the binary grader's behavior: if
+        # run_python_sandboxed accepts the raw code, count it as 1/1.
+        ok, _ = run_python_sandboxed(code, timeout_s=timeout_s, memory_mb=256)
+        return bool(ok), (1.0 if ok else 0.0)
+
+    # Build a harness that runs each test in its own try/except and
+    # prints a sentinel line per test. Counting is stdout-based so it
+    # survives subprocess death (partial stdout buffered through
+    # run_python_sandboxed's tail return).
+    harness_lines = [code, ""]
+    for i, t in enumerate(tests):
+        # Each test becomes:
+        #   try:
+        #       <test>
+        #       print("__TASK28_PASS__", i)
+        #   except Exception:
+        #       print("__TASK28_FAIL__", i)
+        # Indentation is critical — the test body is often `assert ...`
+        # which must be inside the try block.
+        harness_lines.append("try:")
+        for line in t.splitlines() or [""]:
+            harness_lines.append("    " + line)
+        harness_lines.append(f"    print('__TASK28_PASS__ {i}')")
+        harness_lines.append("except Exception:")
+        harness_lines.append(f"    print('__TASK28_FAIL__ {i}')")
+    harness = "\n".join(harness_lines) + "\n"
+    ok, tail = run_python_sandboxed(harness, timeout_s=timeout_s, memory_mb=256)
+    # Process hard-fail (e.g. SIGKILL from memory limit) before any test
+    # sentinel prints — treat as 0/N. Otherwise count sentinels even if
+    # the process exited nonzero (an individual failing assert inside the
+    # try/except shouldn't crash the harness).
+    if not tail:
+        return False, 0.0
+    passes = sum(1 for _ in re.finditer(r"__TASK28_PASS__ \d+", tail))
+    fails = sum(1 for _ in re.finditer(r"__TASK28_FAIL__ \d+", tail))
+    total = passes + fails
+    if total == 0:
+        # No sentinels parsed — the harness itself failed (import error,
+        # top-level SyntaxError after our compile() check, etc.). Report
+        # 0/N conservatively.
+        return False, 0.0
+    # Guard against over-counting (e.g. tests that themselves print
+    # "__TASK28_PASS__"). Cap at len(tests).
+    if total > len(tests):
+        # Take the FIRST len(tests) sentinels in order.
+        sentinels = re.findall(
+            r"__TASK28_(PASS|FAIL)__ \d+", tail,
+        )[:len(tests)]
+        passes = sum(1 for s in sentinels if s == "PASS")
+        total = len(sentinels)
+    fraction = passes / total if total > 0 else 0.0
+    all_pass = (passes == len(tests)) and (fails == 0)
+    # Also require the sandbox ok=True when all tests passed — matches
+    # the binary grader's semantics for the "correct" field.
+    all_pass = all_pass and bool(ok)
+    return all_pass, fraction
+
+
 def grade_ground_truth(question: GroundTruthQuestion, response: str,
                        code_timeout: int = 8) -> bool:
     """Dispatch to the appropriate rigorous grader. NEVER uses substring."""
@@ -1321,6 +1416,43 @@ def grade_ground_truth(question: GroundTruthQuestion, response: str,
             forbidden_symbols=question.forbidden_symbols or None,
         )
     return False
+
+
+def grade_ground_truth_score(
+    question: GroundTruthQuestion, response: str,
+    code_timeout: int = 8,
+) -> tuple[bool, float]:
+    """Return (all_correct, continuous_score) for the response.
+
+    Task #28: continuous score ∈ [0,1] per per_question record so the
+    wedge-1 continuous-paired-delta MDE path (≤1% at N=600) sees real
+    variance instead of degenerating to {0,1}.
+
+    Per-method behavior:
+      - code_unit_tests: fraction of tests passing (run individually in
+        one sandbox subprocess — same cost as the binary grader).
+      - numeric_exact / sympy_equiv / exact_mc / exact_string: score
+        collapses to 1.0 when correct else 0.0. No rubric-based partial
+        credit at this layer yet — log-prob-of-gold upgrade is a
+        follow-up task. `correct` and `score` still agree bit-for-bit
+        in the binary case, so downstream paired_delta behaves exactly
+        like today on non-code domains.
+
+    The returned `all_correct` is the same bool the legacy
+    grade_ground_truth() returns, so existing callers that only need
+    correctness can ignore the score.
+    """
+    method = question.check_method
+    if method == "code_unit_tests":
+        ok, frac = _score_code_unit_tests(
+            response, question.unit_tests or [], question.entry_point,
+            timeout_s=code_timeout,
+            forbidden_symbols=question.forbidden_symbols or None,
+        )
+        return ok, float(frac)
+    # Binary methods — score collapses to correctness.
+    correct = grade_ground_truth(question, response, code_timeout=code_timeout)
+    return correct, (1.0 if correct else 0.0)
 
 
 def question_to_dict(q: GroundTruthQuestion) -> dict:

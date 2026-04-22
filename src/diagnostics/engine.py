@@ -1191,6 +1191,24 @@ class DiagnosticsEngine:
                 qid = hashlib.md5(
                     f"{e.get('domain','')}|{e.get('subdomain','')}|{e.get('question','')}|{e.get('expected','')}".encode()
                 ).hexdigest()[:16]
+                # Task #28: stamp a continuous score alongside the binary
+                # correct flag. Defaults to 0.0/1.0 mirroring correct when
+                # evidence lacks a score key (legacy path). paired_eval's
+                # continuous_paired_delta uses rec['score'] with the
+                # rec['correct'] binary fallback preserved for BC.
+                raw_score = e.get("score")
+                if raw_score is None:
+                    score_val = 1.0 if e.get("correct", False) else 0.0
+                else:
+                    try:
+                        score_val = float(raw_score)
+                    except (TypeError, ValueError):
+                        score_val = 1.0 if e.get("correct", False) else 0.0
+                # Clamp defensively — downstream MDE math assumes [0,1].
+                if score_val < 0.0:
+                    score_val = 0.0
+                elif score_val > 1.0:
+                    score_val = 1.0
                 result.per_question.append({
                     "question_id": qid,
                     "domain": e.get("domain", domain),
@@ -1198,6 +1216,7 @@ class DiagnosticsEngine:
                     "question": e.get("question", ""),
                     "expected": e.get("expected", ""),
                     "correct": bool(e.get("correct", False)),
+                    "score": score_val,
                     "difficulty": e.get("difficulty", "medium"),
                     "confidence": e.get("confidence", 0.0),
                     "check_type": e.get("check_type", "contains"),
@@ -1368,10 +1387,20 @@ class DiagnosticsEngine:
             # rigorous dispatcher (sympy / sandboxed unit tests / exact MC /
             # numeric exact). Fall back to the legacy check_type grader for
             # template/model-generated questions only.
+            #
+            # Task #28: also produce a continuous score ∈ [0,1] per item.
+            # For code_unit_tests this is the fraction of tests passed;
+            # for other methods it collapses to 1.0 if correct else 0.0
+            # (a follow-up task adds log-prob-of-gold for non-code).
+            # The continuous score drives the wedge-1 MDE path (≤1% at
+            # N=600) wired by orchestrator-auditor in e70e869.
             if q.get("check_method"):
-                correct = self._check_ground_truth(q, response)
+                correct, score = self._check_ground_truth_scored(q, response)
             else:
                 correct = self._check_answer(response, q["expected"], q["check_type"])
+                # Legacy template/model-generated questions have no per-
+                # test granularity — score collapses to the binary flag.
+                score = 1.0 if correct else 0.0
             if q.get("_class_id") is not None and q.get("_difficulty_int") is not None:
                 curriculum_results.append(
                     (q["_class_id"], int(q["_difficulty_int"]), bool(correct))
@@ -1382,6 +1411,7 @@ class DiagnosticsEngine:
                 "expected": q["expected"],
                 "response": response[:500],
                 "correct": correct,
+                "score": float(score),
                 "domain": domain,
                 "subdomain": q.get("subdomain", "general"),
                 "difficulty": q.get("difficulty", "medium"),
@@ -2069,6 +2099,38 @@ class DiagnosticsEngine:
             exp, ct = response, expected
             response = question
         return self._check_answer(response, exp, ct)
+
+    def _check_ground_truth_scored(self, q: dict, response: str) -> tuple[bool, float]:
+        """Grade a ground-truth-bank question and return (correct, score).
+
+        Task #28: continuous score ∈ [0,1] alongside the binary correct
+        flag so the continuous-paired-delta MDE path (task #25) sees
+        real variance on code items (fraction of unit tests passing)
+        instead of degenerating to {0,1}. Non-code methods collapse
+        score == 1.0 iff correct else 0.0 until a rubric / log-prob
+        upgrade lands.
+        """
+        gtq = GroundTruthQuestion(
+            prompt=q.get("prompt", ""),
+            canonical_answer=q.get("canonical_answer", q.get("expected", "")),
+            check_method=q.get("check_method", ""),
+            domain=q.get("domain", ""),
+            subdomain=q.get("subdomain", "general"),
+            difficulty=q.get("difficulty", "medium"),
+            source=q.get("source", "curated"),
+            unit_tests=q.get("unit_tests") or None,
+            entry_point=q.get("entry_point", ""),
+            forbidden_symbols=q.get("forbidden_symbols") or None,
+        )
+        try:
+            from .ground_truth import grade_ground_truth_score
+            return grade_ground_truth_score(
+                gtq, response,
+                code_timeout=self.config.code_execution_timeout,
+            )
+        except Exception as e:
+            logger.debug("grade_ground_truth_score failed (%s): %s", type(e).__name__, e)
+            return False, 0.0
 
     def _check_ground_truth(self, q: dict, response: str) -> bool:
         """Grade a ground-truth-bank question using the rigorous dispatcher.

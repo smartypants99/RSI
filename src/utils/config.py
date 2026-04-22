@@ -214,7 +214,11 @@ class TrainerConfig:
     lora_rank: int = 8
     lora_alpha: int = 16
     lora_dropout: float = 0.05
-    learning_rate: float = 5e-5
+    # Live-run cycle 2 (32 samples, LR=5e-5): held-out AND anchor both
+    # regressed -15pp. LR=5e-5 over-drives QLoRA on the 32B base — lowered
+    # to 2e-5. Still 4× the original 5e-6 (which was too timid to move the
+    # loss) but not the 5e-5 that was causing damage.
+    learning_rate: float = 2e-5
     # Defaults tuned for small-cycle RSI regime (typ. 5-30 verified samples/cycle).
     # Cycle-2 (success) = 1-2 optimizer steps, final loss ~0.4-0.8.
     # Cycle-3 (overfit) = 25+ steps on 9 samples, final loss 0.045.

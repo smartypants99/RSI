@@ -1291,7 +1291,10 @@ class CustomLoRATrainer:
 
         # DPO doubles activation memory vs SFT — err on smaller batch.
         batch_size = max(1, self.config.batch_size // 2)
-        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+        # Use configured LR as-is. The SFT path removed silent √cycle decay
+        # because it silently overrode meta-LR-bandit proposals — DPO/GRPO had
+        # the same bug; honor the configured LR so meta decisions stick.
+        cycle_lr = self.config.learning_rate
         return self._train_dpo_inner(
             dataset, model, cycle, batch_size, rejected_count, cycle_lr,
             retry_on_oom=True,
@@ -1315,8 +1318,35 @@ class CustomLoRATrainer:
             )
         lora_params = [p for g in optimizer.param_groups for p in g["params"]]
         total_batches = len(dataloader) * self.config.num_epochs
-        total_steps = max(1, total_batches // self.config.gradient_accumulation_steps
-                         + (1 if total_batches % self.config.gradient_accumulation_steps != 0 else 0))
+        # Adaptive step-budget — same contract as SFT: scale grad_accum UP to
+        # keep total_steps <= max_steps_per_cycle, and skip the cycle when even
+        # with accum=total_batches we fall below min_steps_per_cycle.
+        base_accum = self.config.gradient_accumulation_steps
+        effective_accum, total_steps, skip_cycle = _plan_step_budget(
+            total_batches,
+            base_accum,
+            self.config.max_steps_per_cycle,
+            self.config.min_steps_per_cycle,
+        )
+        if effective_accum != base_accum:
+            logger.info(
+                f"  DPO adaptive grad_accum: {base_accum} → {effective_accum}"
+                f" (total_batches={total_batches}, cap={self.config.max_steps_per_cycle})"
+            )
+        if skip_cycle:
+            logger.warning(
+                f"  Skipping DPO cycle: expected_steps={total_steps}"
+                f" < min_steps_per_cycle={self.config.min_steps_per_cycle}"
+            )
+            try:
+                del optimizer
+            except UnboundLocalError:
+                pass
+            return TrainingMetrics(
+                cycle=cycle, avg_loss=0, final_loss=0, steps=0,
+                samples_used=len(dataset), samples_rejected=rejected_count,
+                learning_rate=cycle_lr, training_mode="dpo",
+            )
         warmup_steps = int(total_steps * self.config.warmup_ratio)
         scheduler = self._build_scheduler(optimizer, warmup_steps, total_steps)
 
@@ -1384,12 +1414,12 @@ class CustomLoRATrainer:
                     reward_margin_sum += margin
                     reward_margin_count += 1
 
-                    loss = loss / self.config.gradient_accumulation_steps
+                    loss = loss / effective_accum
                     loss.backward()
                     accum_count += 1
                     last_loss = unweighted_loss
 
-                    if accum_count % self.config.gradient_accumulation_steps == 0:
+                    if accum_count % effective_accum == 0:
                         torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
                         optimizer.step()
                         scheduler.step()
@@ -1399,7 +1429,7 @@ class CustomLoRATrainer:
                     total_loss += unweighted_loss
                     batch_count += 1
 
-            if accum_count % self.config.gradient_accumulation_steps != 0:
+            if accum_count % effective_accum != 0:
                 torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
                 optimizer.step()
                 scheduler.step()
@@ -1484,13 +1514,22 @@ class CustomLoRATrainer:
             )
         model = self.model_loader.model
         tokenizer = self.model_loader.tokenizer
+        # Match the main SFT path: cap padding at train_max_seq_length so mixed
+        # mode doesn't pay 4096-token attention for ~500-token samples.
+        _train_cap = min(
+            getattr(self.config, "train_max_seq_length",
+                    self.model_loader.config.max_seq_length),
+            self.model_loader.config.max_seq_length,
+        )
         dataset = TrainingDataset(
-            verified_samples, tokenizer,
-            max_length=self.model_loader.config.max_seq_length,
+            verified_samples, tokenizer, max_length=_train_cap,
         )
         samples_rejected = len(verified_samples) - len(dataset)
         batch_size = self.config.batch_size
-        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+        # Configured LR honored as-is — silent √cycle decay was removed for the
+        # same reason as the main SFT path (meta-LR-bandit must not be silently
+        # overridden).
+        cycle_lr = self.config.learning_rate
         return self._train_inner(
             dataset, model, tokenizer, cycle, batch_size,
             samples_rejected, verified_samples, cycle_lr, retry_on_oom=True,
@@ -1721,7 +1760,8 @@ class CustomLoRATrainer:
         G = self.config.grpo_group_size
         clip_eps = self.config.grpo_clip_eps
         refresh = self.config.grpo_rollout_refresh_steps
-        cycle_lr = self.config.learning_rate / math.sqrt(max(cycle, 1))
+        # Use configured LR — see _train_dpo note on removed √cycle decay.
+        cycle_lr = self.config.learning_rate
 
         # Build prompt list from verified samples. We reuse samples as the prompt
         # source and preserve them for canonical-grading during reward scoring.

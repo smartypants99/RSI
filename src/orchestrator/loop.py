@@ -133,6 +133,20 @@ class CycleResult:
         # means the previous cycle's per-question records (legacy path).
         # None when paired_delta was not computed.
         self.paired_delta_reference: str | None = None
+        # Task #27: which statistical engine produced paired_delta.
+        # "continuous" | "binary" | None (not computed).
+        self.paired_delta_mode: str | None = None
+        # Task #27: MDE at α=0.05, power=0.8 on the continuous path. None
+        # when not computed or on the binary path.
+        self.paired_delta_mde_80: float | None = None
+        # Task #27: observed sample correlation ρ(pre, post). None on
+        # binary path.
+        self.paired_delta_rho: float | None = None
+        # Task #27: populated when SPRT fires early and the rep loop
+        # broke out of heldout_repetitions. None when SPRT was inactive
+        # or didn't trigger.
+        self.sprt_stopped_at_rep: int | None = None
+        self.sprt_decision: str | None = None
         # Task #14: set True when solution-diversity tracker raised a
         # mode-collapse alarm this cycle.
         self.diversity_alarm: bool = False
@@ -2650,7 +2664,6 @@ class ImprovementLoop:
         """
         if not cur_per_q:
             return
-        from ..diagnostics.paired_eval import paired_delta
 
         prev_per_q = next(
             (
@@ -2689,24 +2702,140 @@ class ImprovementLoop:
 
         if chosen_ref is None:
             return
-        pd = paired_delta(chosen_ref, cur_per_q)
-        if pd is None:
-            return
-        result.paired_delta = pd.delta
-        result.paired_delta_se = pd.delta_se
-        result.paired_delta_n = pd.n
-        result.paired_variance_reduction = pd.variance_reduction
-        # Stash the source on the result so cross-reviewer can audit which
-        # reference each cycle used (useful when interpreting VR numbers).
-        try:
-            result.paired_delta_reference = chosen_src
-        except Exception:
-            pass
-        logger.info(
-            "    paired delta: %+.4f ± %.4f (n=%d, z=%.2f, VR=%.1fx) "
-            "[ref=%s]",
-            pd.delta, pd.delta_se, pd.n, pd.z,
-            pd.variance_reduction, chosen_src,
+
+        # Task #27: select the statistical engine by configured mode.
+        # Both paths produce the same schema fields (delta, delta_se, n,
+        # z) so the downstream regression_revert_threshold comparison is
+        # unchanged regardless of mode. "continuous" additionally exposes
+        # mde_80 and rho for observability.
+        eval_mode = getattr(
+            self.config.orchestrator, "heldout_eval_mode", "continuous",
+        )
+        if eval_mode == "continuous":
+            from ..diagnostics.continuous_paired_eval import (
+                continuous_paired_delta,
+            )
+            cpd = continuous_paired_delta(chosen_ref, cur_per_q)
+            if cpd is None:
+                return
+            result.paired_delta = cpd.delta
+            result.paired_delta_se = cpd.delta_se
+            result.paired_delta_n = cpd.n
+            # Approximate a "variance reduction" vs. unpaired binary for the
+            # legacy observability field. Unpaired-binary Var ≈ 2p(1-p)/N
+            # at p≈mean_score; paired-continuous Var = delta_se². This is
+            # an observability number, not a decision rule.
+            try:
+                p = 0.5 * (cpd.mean_pre + cpd.mean_post)
+                unpaired_var = 2.0 * max(1e-9, p * (1.0 - p)) / max(1, cpd.n)
+                result.paired_variance_reduction = (
+                    unpaired_var / (cpd.delta_se ** 2)
+                    if cpd.delta_se > 0 else None
+                )
+            except Exception:
+                result.paired_variance_reduction = None
+            try:
+                result.paired_delta_reference = chosen_src
+                result.paired_delta_mode = "continuous"
+                result.paired_delta_mde_80 = cpd.mde_80
+                result.paired_delta_rho = cpd.rho
+            except Exception:
+                pass
+            logger.info(
+                "    paired delta [continuous]: %+.4f ± %.4f (n=%d, z=%.2f, "
+                "rho=%.3f, MDE80=%.4f) [ref=%s]",
+                cpd.delta, cpd.delta_se, cpd.n, cpd.z, cpd.rho,
+                cpd.mde_80, chosen_src,
+            )
+        else:
+            # Binary/McNemar legacy path.
+            from ..diagnostics.paired_eval import paired_delta
+            pd = paired_delta(chosen_ref, cur_per_q)
+            if pd is None:
+                return
+            result.paired_delta = pd.delta
+            result.paired_delta_se = pd.delta_se
+            result.paired_delta_n = pd.n
+            result.paired_variance_reduction = pd.variance_reduction
+            try:
+                result.paired_delta_reference = chosen_src
+                result.paired_delta_mode = "binary"
+            except Exception:
+                pass
+            logger.info(
+                "    paired delta [binary]: %+.4f ± %.4f (n=%d, z=%.2f, "
+                "VR=%.1fx) [ref=%s]",
+                pd.delta, pd.delta_se, pd.n, pd.z,
+                pd.variance_reduction, chosen_src,
+            )
+
+    def _sprt_interim_decision(
+        self, *, per_rep_per_question: list[list[dict]],
+        look: int, K: int = 3,
+    ) -> "SequentialDecision | None":
+        """Compute a running continuous paired-delta from the reps seen
+        so far and call sprt_decide(look, K=3). Returns None if no
+        reference is available (cycle 1 with empty base cache) or if the
+        pairing yields n < 2.
+
+        Reference selection matches _compute_paired_delta_with_base_cache:
+        larger overlap wins, base_cache preferred on ties. Only the most
+        recent rep's per-question records are used for each look so the
+        OBF critical values (tied to independent look-stat scaling) are
+        a reasonable approximation of the true sequential distribution.
+        """
+        if not per_rep_per_question:
+            return None
+        cur = per_rep_per_question[-1]
+        if not cur:
+            return None
+
+        # Mirror the reference-selection logic from
+        # _compute_paired_delta_with_base_cache so the interim look and
+        # the final report agree on which reference they're testing.
+        prev_per_q = next(
+            (
+                getattr(r, "_eval_per_rep_per_question", None)
+                for r in reversed(self.history)
+                if getattr(r, "_eval_per_rep_per_question", None)
+            ),
+            None,
+        )
+        prev_records = prev_per_q[-1] if prev_per_q else None
+        base_cache = getattr(self, "_heldout_base_cache", None)
+        base_records = (
+            base_cache.to_per_question_records()
+            if base_cache is not None and base_cache.entries else None
+        )
+        cur_keys = {self._per_q_key(r) for r in cur}
+
+        def _overlap(ref):
+            if not ref:
+                return 0
+            return sum(1 for r in ref if self._per_q_key(r) in cur_keys)
+
+        base_overlap = _overlap(base_records)
+        prev_overlap = _overlap(prev_records)
+        chosen_ref = None
+        if base_overlap >= prev_overlap and base_overlap >= 2:
+            chosen_ref = base_records
+        elif prev_overlap >= 2:
+            chosen_ref = prev_records
+        if chosen_ref is None:
+            return None
+
+        from ..diagnostics.continuous_paired_eval import continuous_paired_delta
+        from ..diagnostics.sequential_eval import sprt_decide
+
+        cpd = continuous_paired_delta(chosen_ref, cur)
+        if cpd is None or cpd.delta_se <= 0:
+            return None
+        return sprt_decide(
+            look=look,
+            n_so_far=cpd.n,
+            delta=cpd.delta,
+            delta_se=cpd.delta_se,
+            K=K,
         )
 
     def _maybe_populate_base_cache(
@@ -2918,6 +3047,22 @@ class ImprovementLoop:
                 self.diagnostics.set_heldout_max_tokens(_heldout_tok_cap)
             except Exception as _exc:  # pragma: no cover
                 logger.debug("set_heldout_max_tokens failed (%s)", _exc)
+        # Task #27: SPRT (group-sequential) early-stop across reps.
+        # Active when sprt_early_stop_enabled AND reps >= 3 (K=3 OBF
+        # design). For reps < 3 the rep loop runs to completion — with
+        # the default heldout_repetitions=1 that matches current
+        # behavior exactly (no early-stop possible). Operators who want
+        # the ~65% wall-clock savings on real-signal cycles must raise
+        # heldout_repetitions to 3+. Intra-rep chunked SPRT (the ideal
+        # "every 200 prompts" wedge) requires a diagnostics.run_chunked
+        # primitive that does not exist today; left as follow-up.
+        sprt_enabled = bool(getattr(
+            self.config.orchestrator, "sprt_early_stop_enabled", True,
+        )) and reps >= 3
+        sprt_K = 3
+        sprt_fired_at: int | None = None
+        sprt_decision_str: str | None = None
+
         try:
             cfg.max_questions_per_domain = max(orig_max, heldout_target_per_domain)
             cfg.questions_per_domain = heldout_target_per_domain
@@ -2931,6 +3076,34 @@ class ImprovementLoop:
                 scores.append(d.overall_score)
                 per_rep_domain_scores.append(dict(d.domain_scores))
                 per_rep_per_question.append(list(d.per_question))
+
+                # Task #27: interim SPRT look at each rep boundary. Computes a
+                # running continuous paired-delta against whichever reference
+                # _compute_paired_delta_with_base_cache would pick. If the
+                # OBF critical is exceeded, break. Safety gates (promotion
+                # eligibility, capture alarm, mode-collapse, regression
+                # guard) are intentionally untouched — SPRT only changes
+                # how many reps we run, never what we decide afterwards.
+                if sprt_enabled and (i + 1) < reps and (i + 1) <= sprt_K:
+                    try:
+                        interim = self._sprt_interim_decision(
+                            per_rep_per_question=per_rep_per_question,
+                            look=(i + 1),
+                            K=sprt_K,
+                        )
+                        if interim is not None and interim.decision == "stop_reject_null":
+                            sprt_fired_at = i + 1
+                            sprt_decision_str = interim.decision
+                            logger.info(
+                                "  SPRT early-stop at look %d/%d: "
+                                "|z|=%.3f ≥ crit=%.3f — breaking rep loop "
+                                "(saves %d/%d reps).",
+                                interim.look, sprt_K, abs(interim.z),
+                                interim.critical, reps - (i + 1), reps,
+                            )
+                            break
+                    except Exception as _exc:  # pragma: no cover
+                        logger.debug("sprt_decide interim failed: %s", _exc)
         finally:
             self.diagnostics._frozen_eval_mode = prev_mode
             cfg.questions_per_domain = orig_n
@@ -2942,6 +3115,9 @@ class ImprovementLoop:
         # is strictly more informative than a single draw.
         mean_score = sum(scores) / len(scores)
         result.eval_score = mean_score
+        if sprt_fired_at is not None:
+            result.sprt_stopped_at_rep = sprt_fired_at
+            result.sprt_decision = sprt_decision_str
         result.eval_scores_all = scores
         result.eval_domain_scores = dict(eval_diag.domain_scores) if eval_diag else {}
         # meta_analyst ASK 1: surface the per-subdomain breakdown that run()

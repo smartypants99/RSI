@@ -83,12 +83,22 @@ class BaseHeldoutCache:
                     qkey = row.get("qkey")
                     if not qkey:
                         continue
-                    cache.entries[qkey] = {
+                    ent = {
                         "correct": bool(row.get("correct", False)),
                         "prediction": str(row.get("prediction", "")),
                         "prompt": str(row.get("prompt", "")),
                         "expected": str(row.get("expected", "")),
                     }
+                    # Task #27: round-trip continuous score when present so
+                    # the continuous paired-delta engine has real σ²≈0.025
+                    # data. Legacy rows without `score` → continuous layer
+                    # falls back to {0,1} from `correct`.
+                    if "score" in row:
+                        try:
+                            ent["score"] = float(row["score"])
+                        except (TypeError, ValueError):
+                            pass
+                    cache.entries[qkey] = ent
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("heldout_base_cache load failed (%s): %s", type(exc).__name__, exc)
         return cache
@@ -115,13 +125,24 @@ class BaseHeldoutCache:
         return self.entries.get(_question_key(prompt, expected))
 
     def put(self, *, prompt: str, expected: str | None,
-            correct: bool, prediction: str = "") -> None:
-        self.entries[_question_key(prompt, expected)] = {
+            correct: bool, prediction: str = "",
+            score: float | None = None) -> None:
+        ent = {
             "correct": bool(correct),
             "prediction": str(prediction),
             "prompt": str(prompt),
             "expected": str(expected or ""),
         }
+        # Task #27: continuous score (log-prob / judge rating / BLEU /
+        # continuous grader). Optional — callers without a continuous
+        # grader leave this None and the continuous engine falls back
+        # to {0,1} from correct.
+        if score is not None:
+            try:
+                ent["score"] = float(score)
+            except (TypeError, ValueError):
+                pass
+        self.entries[_question_key(prompt, expected)] = ent
 
     def missing(self, questions: Iterable[tuple[str, str | None]]) -> list[tuple[str, str | None]]:
         """Return the subset of (prompt, expected) tuples not in cache."""
@@ -130,16 +151,21 @@ class BaseHeldoutCache:
     # ---- per_question conversion -----------------------------------------
 
     def to_per_question_records(self) -> list[dict]:
-        """Export as a list of per-question records in the shape
-        paired_eval.paired_delta expects: {'prompt','expected','correct'}."""
-        return [
-            {
+        """Export as a list of per-question records in the shape paired
+        eval engines expect: {'prompt','expected','correct'}. Task #27:
+        when a `score` was stored (continuous grader), also populate
+        `score` so continuous_paired_delta can exploit the real σ²."""
+        out = []
+        for ent in self.entries.values():
+            rec = {
                 "prompt": ent.get("prompt", ""),
                 "expected": ent.get("expected", ""),
                 "correct": bool(ent.get("correct", False)),
             }
-            for ent in self.entries.values()
-        ]
+            if "score" in ent:
+                rec["score"] = float(ent["score"])
+            out.append(rec)
+        return out
 
 
 def populate_from_eval(
@@ -160,11 +186,19 @@ def populate_from_eval(
             continue
         if cache.has(prompt, expected):
             continue
+        # Task #27: propagate continuous score when the upstream eval
+        # records one. Falls through to the binary path when absent.
+        score_val = rec.get("score")
+        try:
+            score_arg = float(score_val) if score_val is not None else None
+        except (TypeError, ValueError):
+            score_arg = None
         cache.put(
             prompt=prompt,
             expected=expected,
             correct=bool(rec.get("correct", False)),
             prediction=str(rec.get("response", "")),
+            score=score_arg,
         )
         added += 1
     return added

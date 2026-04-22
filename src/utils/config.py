@@ -738,6 +738,24 @@ class OrchestratorConfig:
     # abbcb06). Loop pairs current vs previous cycle's per-question records
     # and reports mean delta ± paired SE.
     paired_eval_enabled: bool = True
+    # Task #27: held-out eval statistical mode.
+    #   "binary"     — legacy McNemar on {0,1} correctness (pre task-#25).
+    #   "continuous" — continuous per-question score (defaults to {0,1}
+    #                  correctness fallback when records carry no 'score'
+    #                  field). SE = sqrt(2σ²(1-ρ)/N). Matches the paired
+    #                  schema (mean, se, z, n) so the downstream
+    #                  regression_revert_threshold comparison is unchanged.
+    # Default "continuous" (task #27 landing). Flip back to "binary" to
+    # reproduce pre-task-#25 MDE math.
+    heldout_eval_mode: str = "continuous"
+    # Task #27: group-sequential early-stop for held-out eval. When True
+    # and heldout_repetitions >= 2, sprt_decide() is called after each
+    # rep; break the rep loop on stop_reject_null (signal confirmed).
+    # Uses OBF K=3 α=0.05 critical values from sequential_eval.
+    # Safety gates (promotion eligibility, capture alarm, mode-collapse,
+    # regression guard) are untouched — early-stop is a throughput knob
+    # only, not a decision-rule change.
+    sprt_early_stop_enabled: bool = True
     # meta_meta append-only history (src/orchestrator/meta_meta.py). Written
     # each cycle when meta_meta_enabled.
     meta_meta_history_path: str = "outputs/meta_meta_history.jsonl"
@@ -832,6 +850,11 @@ class OrchestratorConfig:
             raise ValueError(f"plateau_patience must be >= 1, got {self.plateau_patience}")
         if self.heldout_repetitions < 1:
             raise ValueError(f"heldout_repetitions must be >= 1, got {self.heldout_repetitions}")
+        if self.heldout_eval_mode not in ("binary", "continuous"):
+            raise ValueError(
+                f"heldout_eval_mode must be 'binary' or 'continuous', "
+                f"got {self.heldout_eval_mode!r}"
+            )
         if self.quick_regression_skip_threshold < 0:
             raise ValueError(
                 "quick_regression_skip_threshold must be >= 0, "

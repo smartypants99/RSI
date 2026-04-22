@@ -2626,11 +2626,22 @@ class ImprovementLoop:
                 )
                 result.anchor_score = summary["anchor_score"]
                 logger.info(
-                    "  anchor eval: %.3f (n=%d) per_bench=%s per_bench_n=%s distinct=%s",
+                    "  anchor eval: %.3f (n=%d) per_bench=%s per_bench_n=%s distinct=%s offline=%s",
                     result.anchor_score, summary["n"], summary["per_benchmark"],
                     summary.get("per_benchmark_n", {}),
                     summary.get("per_benchmark_distinct", {}),
+                    summary.get("per_benchmark_offline", {}),
                 )
+                # Task #9: per-benchmark suspicious-clean alarms (degenerate
+                # predictions or offline-fixture-only score). Logged as WARN
+                # inside run_anchor_eval; surface here so cycle_metrics JSON
+                # carries the list for cross-reviewer inspection.
+                _suspect = summary.get("per_benchmark_suspect") or []
+                if _suspect:
+                    logger.warning(
+                        "  anchor eval SUSPECT per-benchmark alarms: %s",
+                        _suspect,
+                    )
                 # Baseline-drift canary (task #4). The cycle_0 anchor score
                 # is frozen here; every 10 cycles we compare the current
                 # anchor to that baseline. If drift > ±0.01 we HALT self-edit

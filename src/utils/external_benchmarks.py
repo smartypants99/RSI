@@ -80,6 +80,11 @@ class BenchmarkItem:
 # answers chosen so a grader can check them exactly.
 # ---------------------------------------------------------------------------
 
+# NOTE: Every offline fixture row carries meta["source"]="offline_fixture".
+# run_anchor_eval checks this marker and emits an alarm when an anchor
+# benchmark is populated entirely from the offline fallback — without it,
+# a gsm8k=1.0 result from the 12-item toy fixture is indistinguishable
+# in telemetry from gsm8k=1.0 on the 1319-item HF test set. Closes task #9.
 _OFFLINE_FIXTURES: dict[str, list[dict]] = {
     "humaneval": [
         {"item_id": f"HE/{i}",
@@ -87,6 +92,7 @@ _OFFLINE_FIXTURES: dict[str, list[dict]] = {
          "answer": f"def add_{i}(a, b):\n    return a + b\n",
          "domain": "code",
          "meta": {
+             "source": "offline_fixture",
              "entry_point": f"add_{i}",
              "test": (
                  "def check(candidate):\n"
@@ -103,6 +109,7 @@ _OFFLINE_FIXTURES: dict[str, list[dict]] = {
          "answer": f"def mul_{i}(a, b):\n    return a * b\n",
          "domain": "code",
          "meta": {
+             "source": "offline_fixture",
              "entry_point": f"mul_{i}",
              "test_list": [
                  f"assert mul_{i}(2, 3) == 6",
@@ -116,14 +123,16 @@ _OFFLINE_FIXTURES: dict[str, list[dict]] = {
         {"item_id": f"GSM/{i}",
          "prompt": f"If I have {i} apples and buy {i} more, how many apples do I have?",
          "answer": str(i + i),
-         "domain": "math"}
+         "domain": "math",
+         "meta": {"source": "offline_fixture"}}
         for i in range(12)
     ],
     "math": [
         {"item_id": f"MATH/{i}",
          "prompt": f"Compute {i} * {i}.",
          "answer": str(i * i),
-         "domain": "math"}
+         "domain": "math",
+         "meta": {"source": "offline_fixture"}}
         for i in range(12)
     ],
 }
@@ -490,11 +499,65 @@ def run_anchor_eval(
         seen_by_bench[it.benchmark].add((pred or "").strip()[:256])
     for b in per_bench_distinct:
         per_bench_distinct[b] = len(seen_by_bench[b])
+
+    # Offline-fixture detection per benchmark (task #9): gsm8k=1.0 in the
+    # overnight run turned out to be the 12-item offline fixture — trivial
+    # arithmetic the model always gets right — not real HF gsm8k. Mark any
+    # benchmark whose sampled items are entirely stamped with
+    # meta["source"] == "offline_fixture" so telemetry callers can
+    # distinguish "true held-out result" from "toy-fixture placeholder".
+    per_bench_offline: dict[str, bool] = {b: False for b in per_bench_total}
+    offline_counts: dict[str, int] = {b: 0 for b in per_bench_total}
+    for it in sample:
+        if (it.meta or {}).get("source") == "offline_fixture":
+            offline_counts[it.benchmark] = offline_counts.get(it.benchmark, 0) + 1
+    for b in per_bench_offline:
+        total = per_bench_total.get(b, 0)
+        per_bench_offline[b] = total > 0 and offline_counts.get(b, 0) == total
+
+    # Suspiciously-clean alarm (task #9): per-benchmark score >= 0.95 while
+    # either (a) fewer than 15% of predictions were distinct (degenerate
+    # output — model is emitting ~the same string every time and the grader
+    # is accepting it), or (b) the benchmark is running on the offline
+    # fixture (non-signal: toy arithmetic the model cannot fail). Returned
+    # as a list so cycle telemetry can log + alarm without recomputing.
+    per_bench_suspect: list[dict] = []
+    CLEAN_SCORE = 0.95
+    LOW_DIVERSITY_RATIO = 0.15
+    for b, score in per_bench.items():
+        total = per_bench_total.get(b, 0)
+        distinct = per_bench_distinct.get(b, 0)
+        diversity_ratio = (distinct / total) if total else 1.0
+        reasons: list[str] = []
+        if per_bench_offline.get(b):
+            reasons.append("offline_fixture")
+        if score >= CLEAN_SCORE and diversity_ratio <= LOW_DIVERSITY_RATIO:
+            reasons.append(
+                f"degenerate_predictions(distinct={distinct}/{total})"
+            )
+        if reasons and score >= CLEAN_SCORE:
+            # Only alarm when the score itself is clean — a failing
+            # benchmark on offline fixtures is still informative.
+            per_bench_suspect.append({
+                "benchmark": b,
+                "score": score,
+                "n": total,
+                "distinct": distinct,
+                "reasons": reasons,
+            })
+            logger.warning(
+                "anchor_eval suspicious-clean: benchmark=%s score=%.3f n=%d "
+                "distinct=%d reasons=%s — score is NOT a valid held-out signal",
+                b, score, total, distinct, ",".join(reasons),
+            )
+
     return {
         "anchor_score": anchor_score,
         "per_benchmark": per_bench,
         "per_benchmark_n": dict(per_bench_total),
         "per_benchmark_distinct": per_bench_distinct,
+        "per_benchmark_offline": per_bench_offline,
+        "per_benchmark_suspect": per_bench_suspect,
         "n": n,
         "timestamp": time.time(),
     }

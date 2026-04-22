@@ -259,3 +259,125 @@ def test_seed_adversarial_bank_from_external(tmp_path):
     for e in bank.entries:
         assert e["candidate"]
         assert "return a + b" not in e["candidate"] or "return a - b" in e["candidate"] or "+ 1" in e["candidate"]
+
+
+# --- Task #9: gsm8k=1.0 audit — offline-fixture + degenerate-prediction alarms ---
+
+
+def test_offline_fixtures_are_tagged_with_source(tmp_path):
+    """Every offline fixture row must carry meta['source']='offline_fixture'
+    so run_anchor_eval can distinguish toy-fixture scores from real HF
+    benchmark scores. Without this marker, gsm8k=1.0 on the 12-item
+    offline fixture is indistinguishable in telemetry from gsm8k=1.0 on
+    the 1319-item HF test set."""
+    for bench in SUPPORTED_BENCHMARKS:
+        items = load_benchmark(bench, cache_dir=tmp_path, force_offline=True)
+        assert items, bench
+        for it in items:
+            assert (it.meta or {}).get("source") == "offline_fixture", (
+                f"{bench}/{it.item_id} missing offline_fixture source tag"
+            )
+
+
+def test_run_anchor_eval_flags_offline_fixture_clean_score(tmp_path):
+    """gsm8k=1.0 on offline fixture must appear in per_benchmark_suspect
+    with reason='offline_fixture'. Regression guard for the overnight-run
+    bug where gsm8k=1.0 looked like a real held-out signal."""
+    items_by_bench = {
+        b: load_benchmark(b, cache_dir=tmp_path, force_offline=True)
+        for b in SUPPORTED_BENCHMARKS
+    }
+    answers = {it.prompt: it.answer for its in items_by_bench.values() for it in its}
+
+    def oracle(prompt: str) -> str:
+        return answers.get(prompt, "")
+
+    result = run_anchor_eval(
+        oracle,
+        benchmarks=SUPPORTED_BENCHMARKS,
+        per_benchmark=5,
+        cache_dir=tmp_path,
+    )
+    # Every benchmark is running on offline fixture → per_benchmark_offline true.
+    assert all(result["per_benchmark_offline"].values()), result["per_benchmark_offline"]
+    # Clean scores (~1.0) on offline → all must be flagged suspect.
+    suspect_benches = {row["benchmark"] for row in result["per_benchmark_suspect"]}
+    assert suspect_benches == set(SUPPORTED_BENCHMARKS), suspect_benches
+    for row in result["per_benchmark_suspect"]:
+        assert "offline_fixture" in row["reasons"]
+
+
+def test_run_anchor_eval_flags_degenerate_predictions(tmp_path):
+    """Score >= 0.95 with fewer than ~15% distinct predictions is the
+    signature of 'model emits same string and grader accepts it' — must
+    be flagged regardless of offline status."""
+    items_by_bench = {
+        "gsm8k": load_benchmark("gsm8k", cache_dir=tmp_path, force_offline=True),
+    }
+    # Hand-craft an item set where ALL canonical answers are the same
+    # number, and model outputs that number for everything. distinct=1.
+    # Use only gsm8k so the test stays focused.
+
+    def always_zero(prompt: str) -> str:
+        return "0"
+
+    # Patch the fixture: set all answers to "0" so always_zero scores 1.0.
+    # We write a custom cache to bypass the offline fixture for this test.
+    from src.utils.external_benchmarks import BenchmarkItem, _write_cache
+    custom = [
+        BenchmarkItem(
+            benchmark="gsm8k", item_id=f"custom/{i}",
+            prompt=f"Question {i}?",
+            answer="0",
+            domain="math",
+            meta={"source": "hf_test"},  # NOT offline_fixture
+        )
+        for i in range(10)
+    ]
+    _write_cache(tmp_path / "gsm8k.jsonl", custom)
+
+    result = run_anchor_eval(
+        always_zero,
+        benchmarks=["gsm8k"],
+        per_benchmark=10,
+        cache_dir=tmp_path,
+    )
+    assert result["per_benchmark"]["gsm8k"] == pytest.approx(1.0)
+    assert result["per_benchmark_distinct"]["gsm8k"] == 1
+    # Not offline-tagged, but must still be flagged as degenerate.
+    assert result["per_benchmark_offline"]["gsm8k"] is False
+    suspect = result["per_benchmark_suspect"]
+    assert len(suspect) == 1
+    assert suspect[0]["benchmark"] == "gsm8k"
+    assert any("degenerate_predictions" in r for r in suspect[0]["reasons"])
+
+
+def test_run_anchor_eval_no_suspect_when_legitimately_varied(tmp_path):
+    """High score + diverse predictions must NOT trigger the alarm — the
+    alarm should only fire on degenerate or offline-fixture cases."""
+    from src.utils.external_benchmarks import BenchmarkItem, _write_cache
+    # 10 distinct questions each with its own canonical answer.
+    custom = [
+        BenchmarkItem(
+            benchmark="gsm8k", item_id=f"custom/{i}",
+            prompt=f"Q{i}?", answer=str(i),
+            domain="math",
+            meta={"source": "hf_test"},
+        )
+        for i in range(10)
+    ]
+    _write_cache(tmp_path / "gsm8k.jsonl", custom)
+
+    def oracle(prompt: str) -> str:
+        # Return the index embedded in the prompt.
+        import re as _re
+        m = _re.search(r"Q(\d+)\?", prompt)
+        return m.group(1) if m else ""
+
+    result = run_anchor_eval(
+        oracle, benchmarks=["gsm8k"], per_benchmark=10, cache_dir=tmp_path,
+    )
+    assert result["per_benchmark"]["gsm8k"] == pytest.approx(1.0)
+    assert result["per_benchmark_distinct"]["gsm8k"] == 10
+    assert result["per_benchmark_offline"]["gsm8k"] is False
+    assert result["per_benchmark_suspect"] == []

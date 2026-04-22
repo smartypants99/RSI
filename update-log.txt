@@ -2057,3 +2057,13 @@ Live-GPU risks (all with defined fallbacks, documented in prior signoffs):
 pytest: 848 passed, 2 skipped, 1 dep-warning. No unauthorized GPU runs this session. Gemini consulted for power math; codex skipped (401 this session) per team-wide rule.
 
 Green light for GPU resumption on team-lead authority.
+
+SIGNOFF verifier-and-synth (task #25 MDE ≤ 1% — pushed back successfully) — 2026-04-22 — prior "1% unreachable" framing was wrong for binary-only assumptions. Rederived from first principles + gemini cross-check: continuous per-question scoring (wedge 1) drops Var(s) from 0.25 (binary p=0.5) to ~0.025 (log-prob or judge rating), yielding MDE ≈ 0.81% at N=600 ρ=0.9 paired; regression-adjusted CUPED/ANCOVA (wedge 2) trims to 0.79%. O'Brien-Fleming K=3 α=0.05 group-sequential (wedge 3) amortizes wall-clock by ~65% on clear signals, boundary (3.471, 2.454, 2.004) verified vs. gemini. Combined pure-math modules: src/diagnostics/continuous_paired_eval.py (wedges 1+2) and src/diagnostics/sequential_eval.py (wedge 3). Loop integration deferred to orchestrator-auditor per safety discipline. 26 new tests; full suite 874 passed, 2 skipped. Safety gates untouched. Commits: 9bcbe39 (wedges 1+2), 1ee86bd (wedge 3).
+
+BOUNDARY CONDITIONS (locked in tests so future optimizers can't silently break): σ²=0.025, N=600
+    ρ=0.95 → MDE 0.57% paired / 0.55% adjusted
+    ρ=0.90 → MDE 0.81% / 0.79%                (load-bearing default)
+    ρ=0.85 → MDE 0.99% / 0.93%                (boundary, still < 1%)
+    ρ=0.84 → MDE 1.02% / 0.95%                (adjustment-only rescue)
+    ρ=0.80 → MDE 1.14% / 1.09%                (both fail; raise N to 900+)
+If judge rubric produces ρ < 0.85, raise N to 900 (paired at ρ=0.80 gives MDE 0.93%) or tighten rubric quality. Both rescue paths tested.

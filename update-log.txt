@@ -2073,3 +2073,44 @@ SIGNOFF orchestrator-auditor — 2026-04-22 — task #27 closed: continuous pair
 SIGNOFF verifier-and-synth (task #28 per_question continuous 'score' field) — 2026-04-22 — closed the binary→continuous engine gap that would have degenerated orchestrator-auditor's e70e869 wire-up back to {0,1} on live runs. New grade_ground_truth_score() returns (bool, float); for code_unit_tests the float is k/N test-pass fraction (one-subprocess harness with PASS/FAIL sentinels, same cost as the legacy binary grader). Non-code methods collapse score to 1.0/0.0 mirroring correct until a rubric / log-prob-of-gold upgrade lands (follow-up task). Engine's _probe_domain populates evidence[*]['score']; per_question append loop stamps rec['score'] with defensive [0,1] clamp. Backward compat: rec['correct'] preserved, all legacy callers unaffected. 14 new tests (partial credit, forbidden symbols, syntax errors, missing entry, binary-agreement on non-code methods, mean/std invariants on synthetic mixed eval, end-to-end continuous_paired_delta sees var_s > 0). Full suite 898 passed, 2 skipped. Safety gates untouched. Commit: 2f0a3f6.
 
 CAVEAT (follow-up task): non-code methods (numeric_exact / sympy_equiv / exact_mc / exact_string) still collapse score to {0,1}. The continuous signal lives on code items today. To extend wedge-1 MDE gains to math/logic, add either (a) log-prob-of-gold tokens via vLLM logprobs (inexpensive — prompts already generated), or (b) judge-rating rubric. Either lifts σ_s² on those domains from ~0.25·(1-ρ) to ~0.025·(1-ρ), closing the binary variance floor per the task #25 derivation. Flagging for the user to prioritize; not blocking #26 since code-domain held-out items already produce enough continuous variance to land ≤1% MDE on the combined set per wedge-1 boundary tests.
+
+---
+cross-reviewer APPROVES resumption (1% MDE live-capable via continuous+CUPED+SPRT, single-cycle MDE honestly ~1.2pp) — 2026-04-22 — final gate on #25/#27/#28.
+
+Honest MDE rederivation:
+  Single-cycle paired SE with continuous code score (σ²_raw ≈ 0.05 at uniform-ish pass-fraction) + CUPED(ρ=0.9, σ²_eff = σ²(1-ρ²) ≈ 0.0095) at N=600 mixed (50% code continuous, 50% non-code binary at p=0.5):
+    SE(Δ) ≈ √((0.0095 + 0.025)/2 × 2/600) ≈ √(0.0000575) ≈ 0.0076
+  2000-trial Monte-Carlo on 50/50 mixed realistic distribution confirmed avg SE(Δ) ≈ 0.0064-0.0076, MDE at z=2 ≈ 1.2-1.5pp.
+  So single-cycle MDE is honestly ~1.2pp, NOT ≤1%. A true +1pp delta has ~13% power in a single cycle.
+  HOWEVER: SPRT (O'Brien-Fleming, K=3) amortizes across cycles. A persistent +1pp trend at 3 cycles accumulates; OBF critical values z_k ∈ {3.471, 2.454, 2.004} at k=1/2/3 preserve Type-I at 0.05 two-sided. Cumulative MDE over 3-cycle SPRT run reaches ≤1pp at z=2.004. This is the "1% live-capable" framing — single-cycle detection is 1-1.5pp, 3-cycle SPRT detection is ≤1%.
+  User-facing caveat: quick cycle-by-cycle readouts can't reliably resolve <1.2pp; rely on SPRT boundaries to interpret multi-cycle trends.
+
+Final-gate checks:
+
+(a) MDE at N=600 — HONEST 1.2-1.5pp single-cycle (not ≤1%), ≤1% via SPRT accumulation. Variance flag: if empirical σ² falls below 0.015 (i.e., mostly-pass or mostly-fail code distribution) this tightens further, but I am NOT filing task #29 yet because the cold-start distribution is unknown. Monitor first cycle's `paired_delta_rho` and `paired_delta_mde_80` — if σ² empirically < 0.015, MDE will actually land closer to 0.8pp and the 1% goal is met; if σ² > 0.06, MDE widens to ~1.8pp and we need N↑. Adaptive-N follow-up candidate.
+
+(b) OBF critical values — VERIFIED against Jennison-Turnbull 2000 Table 2.3 (two-sided α=0.05, K=3): z_1 = c(3,0.05)·√3 = 2.004·1.732 = 3.471; z_2 = 2.004·√1.5 = 2.454; z_3 = 2.004. Exact match with implementation. Type-I error bound preserved at 0.05 across 3 interim analyses.
+
+(c) BaseHeldoutCache `score` round-trip — VERIFIED (heldout_base_cache.py:92-98 + put() signature accepts score=). Legacy rows with only `correct` fall back to {0,1} mapping. AWQ swap still invalidates via fingerprint.
+
+(d) CycleResult dispatch — VERIFIED: paired_delta_mde_80 (loop.py:141) + paired_delta_rho (loop.py:144) populated at loop.py:2740-2741 from ContinuousPairedDelta. regression_revert_threshold comparison path unchanged — still compares `reference - result.eval_score` at the revert site (loop.py:~583).
+
+(e) 50/50 mixed synthetic — ran 2000-trial Monte-Carlo in final-gate session: avg SE(Δ) ≈ 0.0076, MDE at z=2 ≈ 1.27pp, power at true +1pp single-cycle ≈ 13.4%. Honest number above the "≤1%" target in single-cycle regime; SPRT multi-cycle accumulation bridges the gap. No correctness regression.
+
+Expected wall-clock per cycle (default flags, task-#23/#24e speedups active, coresident OFF):
+  propose   ~4 min
+  solve     ~1-1.5 min
+  train     ~3-4 min (GC ON stability trade)
+  held-out  ~0.5-1 min quick / ~4-6 min full (every 5th)
+  anchor    ~1 min
+  Steady-state QUICK: ~10-12 min, FULL: ~13-17 min. ~3-4x vs 42-min baseline.
+
+Live-GPU risks (all with fallbacks):
+1. Code score σ² drifts far from simulation assumption (realistic range 0.02-0.08) — MDE scales with √σ². Fallback: raise N via heldout_full_subsample_n config.
+2. CUPED ρ assumption (ρ=0.9) — if cold-start ρ empirically <0.7, effective Var drops less → MDE widens. Cache is populated once at cycle 1, so ρ is estimated from real data cycle 2 onward; monitor `paired_delta_rho` output.
+3. SPRT early-stop false-positive bound is z=3.471 at k=1 (very strict) — unlikely to fire spuriously.
+4. Non-code items still collapse to {0,1} (task #28 flagged continuous-score for non-code as follow-up). Partial-credit on code items is the main MDE win; non-code remains at binary variance.
+
+pytest: 898 passed, 2 skipped, 1 dep-warning. Gemini consulted for MDE math sanity; codex skipped (401 this session) per team-wide rule. No unauthorized GPU runs this session.
+
+Green light for GPU resumption on team-lead authority.

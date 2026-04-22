@@ -25,6 +25,15 @@ def test_quick_eval_target_128_four_domains_lands_within_tolerance():
     assert 124 <= expected <= 132, (pre, expected)
 
 
+def test_quick_eval_target_96_four_domains_lands_within_tolerance():
+    """Task #22 speed-round-2 default: heldout_quick_subsample_n=96, 4 domains.
+    24 per-domain → expected total = 96; spec tolerance ±(N_domains/2)=±2."""
+    pre, expected = _quick_eval_stratified_targets(
+        target_n=96, n_domains=4,
+    )
+    assert 94 <= expected <= 98, (pre, expected)
+
+
 def test_quick_eval_target_128_three_domains_is_proportional():
     """With 3 domains the expected total is round(128/3)*3 = 43*3 = 129,
     also within the [124, 132] band."""

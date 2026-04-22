@@ -599,7 +599,12 @@ class OrchestratorConfig:
     # matches the revert gate, and finer <1pp measurement is only needed
     # on the cadence the full sweep already provides.
     # Set heldout_quick_subsample_n=0 to disable (always run full).
-    heldout_quick_subsample_n: int = 128
+    # Task #22 speed-round-2: 128 → 96. With 4 active domains quick eval
+    # lands ~96 post-filter (SE(Δ) ≈ √(0.05/96) ≈ 0.023 → z=2 at ≈4.6pp),
+    # still matched to regression_revert_threshold=0.03 and the full-sweep
+    # every 5 cycles provides the <1pp resolution. Shaves ~25% off quick
+    # eval wall-clock on the 8-11 min quick cycle.
+    heldout_quick_subsample_n: int = 96
     heldout_full_every: int = 5
     # Substrate update: promote the merged checkpoint to a new base every N
     # training cycles. LoRA on a frozen 4-bit base has a fixed ceiling (the
@@ -963,10 +968,12 @@ class SynthesisConfig:
     # 1 passing candidate across ~60 attempts with k=3; at k=6 with reference
     # as candidate 0, every well-formed proposal should yield ≥1 sample.
     # Task #10 speed pass: 6 → 3. Reference (candidate 0, guaranteed-pass when
-    # the model wrote self-consistent tests) plus 2 fresh samples. Halves
-    # solve-phase wall-clock. Quorum threshold unchanged: any well-formed
-    # proposal still needs to pass the property check via reference.
-    candidates_per_problem: int = 3
+    # the model wrote self-consistent tests) plus 2 fresh samples.
+    # Task #22 speed-round-2: 3 → 2. Reference (candidate 0) + 1 fresh sample.
+    # Every well-formed proposal still yields ≥1 passing candidate via the
+    # reference; the fresh sample supplies diversity for DPO negatives. Cuts
+    # solve-phase wall-clock by another ~33% on top of #10's halving.
+    candidates_per_problem: int = 2
     # If True, rsi_tick uses the builtin-based code-proposal path
     # (PROBLEM + ENTRY + REFERENCE + TESTS → trusted builtin checks).
     # This is the only path that actually produces training samples with

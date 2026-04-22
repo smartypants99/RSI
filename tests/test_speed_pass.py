@@ -22,7 +22,8 @@ from src.utils.fast_student import FastStudentConfig
 def test_synthesis_defaults_speed_pass():
     cfg = SynthesisConfig()
     assert cfg.tasks_per_cycle == 12
-    assert cfg.candidates_per_problem == 3
+    # Task #22 speed-round-2: 3 → 2 (reference + 1 fresh sample).
+    assert cfg.candidates_per_problem == 2
     assert cfg.proposer_max_new_tokens == 600
     assert cfg.solver_max_new_tokens == 1200
 
@@ -34,7 +35,8 @@ def test_generator_defaults_speed_pass():
 
 def test_orchestrator_quick_eval_defaults():
     cfg = OrchestratorConfig()
-    assert cfg.heldout_quick_subsample_n == 128
+    # Task #22 speed-round-2: 128 → 96 (SE still matches revert threshold).
+    assert cfg.heldout_quick_subsample_n == 96
     assert cfg.heldout_full_every == 5
 
 

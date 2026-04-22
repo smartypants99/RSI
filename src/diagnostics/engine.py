@@ -1106,6 +1106,14 @@ class DiagnosticsEngine:
         # curriculum's solve-rate state drifts question selection and injects
         # noise that swamps real capability deltas.
         self._frozen_eval_mode: bool = False
+        # Task #23 wedge 5: hard cap on max_new_tokens during frozen/held-
+        # out evaluation. Most held-out answers are short (a number, a
+        # function signature, a few tokens of code) — larger budgets
+        # just waste vLLM KV-cache space on no-op decoding. 512 is the
+        # default that matches the existing hardcoded caps at the two
+        # eval sites. The orchestrator sets this via set_heldout_max_tokens()
+        # before calling run() in frozen-eval mode.
+        self._heldout_max_tokens: int = 512
 
     def set_model_score(self, score: float):
         """Set current model performance score for adaptive curriculum difficulty.
@@ -1115,6 +1123,14 @@ class DiagnosticsEngine:
         in _curriculum_mix.
         """
         self._model_score = score
+
+    def set_heldout_max_tokens(self, n: int) -> None:
+        """Task #23 wedge 5: set the max_new_tokens cap used by the two
+        held-out eval generate_batch call sites. Defaults to 512. Values
+        must be ≥ 1; the loop sets this from
+        OrchestratorConfig.heldout_eval_max_tokens before entering frozen
+        eval mode."""
+        self._heldout_max_tokens = max(1, int(n))
 
     def _generate_batch_with_oom_retry(
         self, prompts: list[str], max_new_tokens: int = 512,
@@ -1335,7 +1351,13 @@ class DiagnosticsEngine:
         # halve the batch size and retry (up to 3 times). This lets the
         # default batch stay large for throughput while gracefully handling
         # memory pressure from long prompts or fragmentation.
-        responses = self._generate_batch_with_oom_retry(batch_prompts, max_new_tokens=512, temperature=0.0)
+        # Task #23 wedge 5: use the configurable held-out cap (default 512)
+        # so operators can retune without patching the engine.
+        responses = self._generate_batch_with_oom_retry(
+            batch_prompts,
+            max_new_tokens=self._heldout_max_tokens,
+            temperature=0.0,
+        )
 
         if len(responses) < len(batch_prompts):
             responses = list(responses) + [""] * (len(batch_prompts) - len(responses))
@@ -2092,8 +2114,12 @@ class DiagnosticsEngine:
             if not holdout:
                 continue
             prompts = [q.prompt for q in holdout]
+            # Task #23 wedge 5: use the configurable held-out cap.
             responses = self._generate_batch_with_oom_retry(
-                prompts, max_new_tokens=512, temperature=0.0)
+                prompts,
+                max_new_tokens=self._heldout_max_tokens,
+                temperature=0.0,
+            )
             if len(responses) < len(prompts):
                 responses = list(responses) + [""] * (len(prompts) - len(responses))
             correct = 0

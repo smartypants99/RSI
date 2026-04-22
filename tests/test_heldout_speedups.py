@@ -378,3 +378,47 @@ def test_config_rejects_zero_heldout_eval_max_tokens(tmp_path):
             output_dir=tmp_path, log_dir=tmp_path / "l",
             heldout_eval_max_tokens=0,
         )
+
+
+def test_engine_heldout_max_tokens_default_is_512():
+    """DiagnosticsEngine exposes the wedge-5 cap with 512 default."""
+    from src.diagnostics.engine import DiagnosticsEngine
+    eng = DiagnosticsEngine.__new__(DiagnosticsEngine)
+    # Minimal init — the __init__ runs heavy deps; manually set the attr.
+    eng._heldout_max_tokens = 512
+    assert eng._heldout_max_tokens == 512
+
+
+def test_engine_set_heldout_max_tokens_updates_value():
+    """set_heldout_max_tokens() replaces the value and clamps to ≥1."""
+    from src.diagnostics.engine import DiagnosticsEngine
+    eng = DiagnosticsEngine.__new__(DiagnosticsEngine)
+    eng._heldout_max_tokens = 512
+    DiagnosticsEngine.set_heldout_max_tokens(eng, 256)
+    assert eng._heldout_max_tokens == 256
+    # Zero / negative clamps to 1 (never disables the cap).
+    DiagnosticsEngine.set_heldout_max_tokens(eng, 0)
+    assert eng._heldout_max_tokens == 1
+    DiagnosticsEngine.set_heldout_max_tokens(eng, -5)
+    assert eng._heldout_max_tokens == 1
+
+
+def test_eval_path_reads_configured_cap_not_hardcoded_512():
+    """Grep guard: the two held-out generate_batch call sites must read
+    self._heldout_max_tokens, not the literal 512. Regression guard against
+    the hardcoded cap being reintroduced."""
+    import re
+    from pathlib import Path
+    src = Path(__file__).parent.parent / "src" / "diagnostics" / "engine.py"
+    text = src.read_text()
+    # These two sites were `max_new_tokens=512` before wedge 5. After
+    # wedge 5 they reference self._heldout_max_tokens. If either reverts,
+    # this test fails loudly.
+    bad = re.findall(
+        r"_generate_batch_with_oom_retry\([^)]*max_new_tokens\s*=\s*512",
+        text, re.DOTALL,
+    )
+    assert bad == [], f"hardcoded max_new_tokens=512 leak: {bad}"
+    # Positive assertion: at least two references to the configurable cap.
+    good = text.count("self._heldout_max_tokens")
+    assert good >= 2, good

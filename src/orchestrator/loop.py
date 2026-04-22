@@ -2733,6 +2733,18 @@ class ImprovementLoop:
             )
         prev_mode = getattr(self.diagnostics, "_frozen_eval_mode", False)
         self.diagnostics._frozen_eval_mode = True
+        # Task #23 wedge 5: apply the configured held-out max_new_tokens
+        # cap before frozen eval runs. Setter is defensive — if the
+        # diagnostics engine is older (no set_heldout_max_tokens), we
+        # silently skip; the hardcoded 512 default remains.
+        _heldout_tok_cap = int(getattr(
+            self.config.orchestrator, "heldout_eval_max_tokens", 512,
+        ))
+        if hasattr(self.diagnostics, "set_heldout_max_tokens"):
+            try:
+                self.diagnostics.set_heldout_max_tokens(_heldout_tok_cap)
+            except Exception as _exc:  # pragma: no cover
+                logger.debug("set_heldout_max_tokens failed (%s)", _exc)
         try:
             cfg.max_questions_per_domain = max(orig_max, heldout_target_per_domain)
             cfg.questions_per_domain = heldout_target_per_domain

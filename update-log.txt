@@ -2012,3 +2012,48 @@ CAVEAT vs task spec: "sensitivity floor ≥1% delta detectable at N=600 VR=2.5" 
 NO GPU RUN STARTED — all work static, confirmed wall-clock savings are engine-reload-time and deferred to live-run validation by cross-reviewer / orchestrator-auditor.
 
 SIGNOFF orchestrator-auditor — 2026-04-22 — task #24(e) closed: wedge-3 BaseHeldoutCache wired into live eval path. ImprovementLoop.__init__ constructs cache keyed by base model_id; _eval_phase populates once on first full-eval under the frozen base (guarded by heldout_eval_kind=="full" + no prior trained cycle) and uses it as the paired_delta reference whenever overlap matches or exceeds prev-cycle overlap. Unlocks paired_delta on cycle 1 (previously skipped — no prev-cycle ref), and gives every subsequent quick-eval the stable N≈600 reference that makes VR≈2.5 achievable. 10 new loop-wiring tests (cache attach, populate-once, readback across processes, quick-eval skip, trained-cycle skip, cycle-1 base-cache path, tie-break, legacy fallback, no-op, model_id swap invalidates). 756 passed. Commit: 0a244ac.
+
+---
+cross-reviewer APPROVES resumption (held-out eval 4-5x faster, MDE trade documented) — 2026-04-22 — final gate on #23 + #24e.
+
+Honest power math (McNemar-style paired binary, σ²(Δ) = 2p(1-p)(1-ρ)/N at p=0.5):
+  N=128 quick:  ρ=0.8 → SE≈0.028 → MDE z=2 ≈ 5.6pp; ρ=0.5 → MDE ≈ 8.9pp
+  N=600 full-subsample:  ρ=0.8 → SE≈0.013 → MDE z=2 ≈ 2.6pp; ρ=0.5 → MDE ≈ 4.1pp
+  gemini's "N=600, VR=2.5 → ~5pp MDE" matches the ρ≈0.5-0.7 regime (conservative). Honest range: 3-5pp depending on per-question correlation.
+  Trade vs old N=1200 default: MDE goes ~1.5pp → ~3-5pp. Real deltas at that size (3pp+) are still detectable; sub-3pp deltas now need multiple cycles to accumulate.
+
+Final-gate checks:
+
+(a) N=600 MDE: honestly ~3-5pp at z=2 (NOT 1pp). User-facing MDE caveat stated inline; trade is intentional per team-lead authorization — 40-min→8-min full eval worth losing sub-3pp detection since cycle-to-cycle deltas in overnight run were 5-20pp.
+
+(b) BaseHeldoutCache model fingerprint: verified sha256(model_id)[:16] at heldout_base_cache.py:43. load_or_new skips entries with mismatched model_fp on disk load (line 81), so swapping to AWQ → new model_id → fingerprint mismatch → old entries discarded → cache behaves as empty on first post-swap read. Test coverage includes explicit model-id-swap-invalidates case.
+
+(c) max_num_seqs=96 during held-out only: KV math at 48GB A6000 with 32B-bnb-4bit. Held-out prompts ~300 input + 512 gen (wedge-5 cap) = 812 tokens/seq. 96 × 812 × 256 KB/token ≈ 20 GB KV. Budget: 48 GB - 16 GB weights - 2 GB CUDA graphs - 1 GB overhead = 29 GB. Fits with ~9 GB headroom. coresident_training_enabled=False means NO HF trainer competing for VRAM during held-out phase. Safe.
+
+(d) skip-full-on-quick-regressed: triggers at improvement < -0.10. With quick MDE ≈ 5.6pp at ρ=0.8, a −10pp reading is ~1.8σ from zero and ~1.4σ from MDE — high probability the regression is real, low probability of false-positive skip on a truly-improving cycle. Cycle that would be skipped is ALSO already ineligible for best-promotion via streak guard (_check_early_stopping's not_regressed_vs_best gate), so skipping only saves wall-clock on a known-bad cycle.
+
+(e) wedge-3 BaseHeldoutCache wire-up: VERIFIED landed in 0a244ac. Previously dormant. Now loaded in ImprovementLoop.__init__, populated once per model_id on first full held-out, invalidated automatically via fingerprint on AWQ swap. 10 new wire-up tests (populate-once, model-id-swap, paired-delta read-back, etc.). 848 pytest pass on be81ab9.
+
+Expected wall-clock per cycle (task #10 baseline + #18/#19/#20/#22/#23 layered, default flags: coresident OFF, Liger ON, chunked prefill ON, dynamic padding ON, GC ON [OOM fix in 5f8221e], max_num_seqs=48 solve / 96 held-out, held-out quick subsample 128, full subsample 600 every 5th, skip-on-quick-regress ON):
+  propose   ~4 min  (task #10 caps + max_num_seqs=48 + chunked prefill)
+  solve     ~1-1.5 min (vLLM 1.6-1.8x, candidates_per_problem=2)
+  train     ~3-4 min (Liger-dependent; GC-on recovered stability at some throughput cost per 5f8221e)
+  quick eval ~0.5-1 min (N=128 × 512 max_tokens at max_num_seqs=96)
+  full eval ~4-6 min (N=600 × 512 max_tokens, every 5th cycle)
+  anchor    ~1 min (batched from Part A)
+
+Steady-state QUICK cycle:  ~9-12 min (target ≤5 min NOT met with current defaults; Liger actual live-GPU gain unknown; AWQ/speculative still gated)
+Steady-state FULL cycle (every 5th): ~13-17 min
+
+Combined speedup vs ~42-min baseline: ~3-4x. User target of 5 min not met by this round; remaining gaps: (i) AWQ + speculative decoding (foom-activator plumbed the config in 61a13c2 but defaults are off pending live-GPU quality validation), (ii) propose/verify async parallelism (orchestrator #22 closed-no-code: structurally unachievable with current vLLM+PyTorch on single GPU). ~5 min cycle will require AWQ ship + foom-style self-improvement to reduce propose further.
+
+Live-GPU risks (all with defined fallbacks, documented in prior signoffs):
+1. Liger gradient-flow — cycle-1 loss watch; disable via TrainerConfig.use_liger_kernels=False.
+2. max_num_seqs=96 OOM on held-out engine reload — drop to 64 via config.
+3. GC-on overhead +10-15% training wall-clock (intentional trade from 5f8221e OOM fix).
+4. N=600 MDE ~3-5pp: sub-3pp true improvements may need 2-3 cycles to accumulate; noted user-facing.
+5. coresident stays OFF first run; enable only after 48GB headroom is empirically confirmed.
+
+pytest: 848 passed, 2 skipped, 1 dep-warning. No unauthorized GPU runs this session. Gemini consulted for power math; codex skipped (401 this session) per team-wide rule.
+
+Green light for GPU resumption on team-lead authority.

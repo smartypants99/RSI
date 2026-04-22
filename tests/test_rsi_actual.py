@@ -380,6 +380,61 @@ class TestVoVWithRealProperty:
         verdict_classes = vrecord.distinct_classes
         assert "algebra.symbolic" in verdict_classes
 
+    def test_verify_populates_backend_field_for_model_authored_python(self):
+        """Task #8 visibility: PropertyVerdict.backend is populated from the
+        property's language field for model-authored properties, so operators
+        can tell whether python/z3/sympy/unit_test actually ran (vs. silent
+        skip). Previously only independence_class was visible, which is
+        semantic-level and did not reveal which backend executed."""
+        from src.verifier.property_engine import verify
+
+        prop = _make_prop(
+            name="backend_python",
+            source="def check(problem, candidate): return candidate == 'ok'",
+            confirmer_example="ok",
+            falsifier_example="nope",
+            language="python",
+        )
+        executor = MockExecutor()
+        assert admit(prop, executor=executor).admitted is True
+        vrecord = verify(
+            problem_id=prop.problem_id,
+            candidate="ok",
+            admitted_properties=[prop],
+            executor=executor,
+            min_properties=1,
+            quorum_distinct_classes_required=1,
+        )
+        assert len(vrecord.per_property) == 1
+        # MockExecutor runs python bodies in-process; backend label is
+        # driven by prop.language, not by where execution happened.
+        assert vrecord.per_property[0].backend == "python"
+
+    def test_verify_populates_backend_field_for_trusted_builtin(self):
+        """Trusted builtin properties get backend='trusted' (or a more
+        specific label for simulator/z3 backends). This closes the task-#8
+        silent-skip visibility gap — operators can grep verify logs for
+        'backends=[' and see exactly which backends participated."""
+        from src.verifier.property_engine import verify, builtin_properties
+        builtins = builtin_properties()
+        assert builtins, "builtin catalog should not be empty"
+        # Any builtin with a short, reason-agnostic check_fn works.
+        prop = builtins[0]
+        executor = MockExecutor()
+        vrecord = verify(
+            problem_id="test_problem",
+            candidate="whatever",
+            admitted_properties=[prop],
+            executor=executor,
+            min_properties=1,
+            quorum_distinct_classes_required=1,
+        )
+        assert len(vrecord.per_property) == 1
+        # Backend must be one of the trusted-family labels, never "unknown".
+        assert vrecord.per_property[0].backend in (
+            "trusted", "simulator", "z3"
+        ), vrecord.per_property[0].backend
+
     def test_vov_real_property_getattr_duck_typing(self):
         """VoV accesses real Property attributes via getattr (name, author, etc.)."""
         prop = _make_prop(

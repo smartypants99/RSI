@@ -248,6 +248,41 @@ class ImprovementLoop:
         self._synthesis_enabled = getattr(
             getattr(config, "synthesis", None), "enable_task_synthesis", False
         )
+        # Fast-student manager (src/utils/fast_student.py). Constructed when
+        # orchestrator.use_fast_student is True so the RSI solve_batch path
+        # can harvest (prompt, completion) pairs for periodic distillation.
+        # Kept here (pre-synthesis) so meta_meta records reflect the config
+        # state even if synthesis itself is disabled on a given run.
+        self._fast_student_mgr = None
+        if getattr(config.orchestrator, "use_fast_student", False):
+            try:
+                from ..utils.fast_student import (
+                    FastStudentConfig,
+                    FastStudentManager,
+                )
+                fs_cfg = FastStudentConfig(
+                    enabled=True,
+                    model_name=getattr(
+                        config.orchestrator,
+                        "fast_student_model_name",
+                        "Qwen/Qwen2.5-Coder-1.5B-Instruct",
+                    ),
+                    checkpoint_root=Path(
+                        getattr(config.orchestrator, "output_dir", Path("outputs"))
+                    ) / "fast_student",
+                )
+                self._fast_student_mgr = FastStudentManager(fs_cfg)
+                logger.info(
+                    "fast_student: manager constructed (model=%s, redistill_every=%d)",
+                    fs_cfg.model_name, fs_cfg.redistill_every,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "fast_student: manager init failed (%s: %s) — disabled",
+                    type(exc).__name__, exc,
+                )
+                self._fast_student_mgr = None
+
         self._task_synthesizer = None
         if self._synthesis_enabled:
             try:
@@ -1559,6 +1594,51 @@ class ImprovementLoop:
         logger.info("[RSI tick %d] Step 3: solve phase took %.1fs",
                     cycle, result.phase_times["rsi_step3_solve"])
 
+        # ── Fast-student harvest (Task #3 activation) ─────────────────────
+        # Record (prompt, completion) pairs from the teacher's solve_batch
+        # so FastStudentManager can distill periodically. Harvest is bounded
+        # by the manager's rolling buffer; the call is a no-op when
+        # fast_student is disabled.
+        if self._fast_student_mgr is not None:
+            try:
+                harvest_prompts: list[str] = []
+                harvest_completions: list[str] = []
+                for _p in proposed_problems:
+                    pid = getattr(_p, "problem_id", None)
+                    if not pid:
+                        continue
+                    entry = (getattr(_p, "problem_ctx", None) or {}).get(
+                        "entry_point"
+                    ) or "solve"
+                    # Mirror solve_batch's prompt structure without the
+                    # strategy prefix (prefix is a session-local decoration).
+                    _prompt = (
+                        "Write a Python function to solve this problem.\n\n"
+                        f"PROBLEM: {getattr(_p, 'problem_text', '')}\n\n"
+                        f"Requirements: the function MUST be named "
+                        f"`{entry}` exactly, and be a single self-contained "
+                        "definition."
+                    )
+                    for comp in candidates_by_problem.get(pid, []) or []:
+                        if not comp:
+                            continue
+                        harvest_prompts.append(_prompt)
+                        harvest_completions.append(comp)
+                if harvest_prompts:
+                    self._fast_student_mgr.record_teacher_generation(
+                        harvest_prompts, harvest_completions, cycle=cycle,
+                    )
+                    logger.debug(
+                        "fast_student: recorded %d pairs (buffer=%d)",
+                        len(harvest_prompts),
+                        self._fast_student_mgr.buffer_size(),
+                    )
+            except Exception as _fs_exc:
+                logger.debug(
+                    "fast_student: record_teacher_generation failed (%s): %s",
+                    type(_fs_exc).__name__, _fs_exc,
+                )
+
         # ── STEP 3b: solution-diversity tracker (task #4) ───────────────────
         # Leading indicator for mode collapse: if the k-candidate set per
         # problem collapses onto one canonical answer, the held-out benchmark
@@ -1997,6 +2077,18 @@ class ImprovementLoop:
                         # still flushed (those samples were already used).
                         self._rsi_pending_pool.clear()
                         self._rsi_pool_accumulated_cycles = 0
+
+                        # Fast-student: count this cycle as "trained". When
+                        # the manager hits redistill_every AND has enough
+                        # buffered pairs, it fires a distill in-line.
+                        if self._fast_student_mgr is not None:
+                            try:
+                                self._fast_student_mgr.on_trained_cycle(cycle)
+                            except Exception as _fs_exc:
+                                logger.debug(
+                                    "fast_student: on_trained_cycle failed (%s): %s",
+                                    type(_fs_exc).__name__, _fs_exc,
+                                )
 
                         # ── FOOM consolidation hooks (Tasks #7, #8) ──────────
                         # Gated by config; default 0 = no-op. Wrapped in broad
@@ -2763,8 +2855,16 @@ class ImprovementLoop:
                 from .meta_meta import record_cycle as _mm_record
                 ocfg = self.config.orchestrator
                 scfg = self.config.synthesis
+                # fast_student is "active" when the manager was constructed
+                # and its config.enabled is True — that means the solve_batch
+                # harvest path is live and on_trained_cycle is being called.
+                _fs_mgr = getattr(self, "_fast_student_mgr", None)
+                _fs_active = bool(
+                    _fs_mgr is not None
+                    and getattr(getattr(_fs_mgr, "cfg", None), "enabled", False)
+                )
                 components_active = {
-                    "fast_student": False,  # not wired into propose/solve yet
+                    "fast_student": _fs_active,
                     "ood": bool(getattr(scfg, "ood_enabled", False)),
                     "curriculum_ratchet": bool(
                         getattr(self.config.diagnostics, "difficulty_curriculum", False)

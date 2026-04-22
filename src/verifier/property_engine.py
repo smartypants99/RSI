@@ -609,6 +609,21 @@ class PropertyVerdict:
     reason: str = ""
     witness: Any = None
     duration_ms: int = 0
+    # Which backend actually ran this verdict. Populated at verify-time by
+    # _run_one() in `verify()`. Values:
+    #   "trusted"            — trusted builtin check_fn executed in-process
+    #   "python" / "sympy"   — model-authored property, sandbox subprocess
+    #   "z3"                 — SMT backend (property language == "z3")
+    #   "unit_test"          — assert-based sandbox run
+    #   "nl_reformulation"   — NL/peer reformulation (non-executing)
+    #   "simulator"          — simulator_backend trusted builtin
+    #   "peer_jury"          — jury fallback row (see peer_jury_fallback)
+    #   "unknown"            — executor returned something un-classifiable
+    # This closes the task-#8 silent-skip visibility gap: before this, the
+    # only backend hint was `independence_class`, which is semantic-level
+    # ("algebraic.substitution") and didn't tell an operator whether Z3 or
+    # Python actually ran. See the per-verify summary emitted below.
+    backend: str = "unknown"
 
 
 @dataclass
@@ -665,6 +680,24 @@ def verify(
     props_to_run = [p for p in admitted_properties if p.independence_class not in suspended]
 
     def _run_one(prop: Property) -> PropertyVerdict:
+        # Resolve the backend label once, up front. Trusted builtins are
+        # named via author prefix ("builtin:simulator_backend" -> simulator,
+        # others -> "trusted"); model-authored properties use their
+        # declared `language`. This is the label that goes into the
+        # VerificationRecord row and the per-verify summary log.
+        backend = "unknown"
+        if is_trusted(prop):
+            author = str(prop.author or "")
+            if author == "builtin:simulator_backend":
+                backend = "simulator"
+            elif author == "builtin:z3_backend":
+                backend = "z3"
+            else:
+                backend = "trusted"
+        else:
+            lang = str(getattr(prop, "language", "") or "").strip().lower()
+            if lang in ("python", "sympy", "z3", "unit_test", "nl_reformulation"):
+                backend = lang
         try:
             callable_ = _TRUSTED_CHECK_FNS.get(prop.property_id) or executor.materialize(prop)
         except Exception as e:
@@ -673,6 +706,7 @@ def verify(
                 independence_class=prop.independence_class,
                 author=prop.author, name=prop.name,
                 reason=f"materialize: {type(e).__name__}: {e}",
+                backend=backend,
             )
         v_start = time.time()
         verdict, reason = _invoke_callable(
@@ -685,6 +719,7 @@ def verify(
             author=prop.author, name=prop.name,
             reason=reason,
             duration_ms=int((time.time() - v_start) * 1000),
+            backend=backend,
         )
 
     if len(props_to_run) <= 1:
@@ -732,6 +767,33 @@ def verify(
         reject_reason = "two PASSing properties share author run_id (§2.1 rule 4)"
     else:
         accepted = True
+
+    # Backend visibility (task #8): emit a structured INFO line per verify()
+    # call listing which backends actually ran. Before this, operators could
+    # see only the per-class distinct count — there was no way to tell
+    # whether Z3 or the simulator was silently skipped vs. genuinely
+    # participating. Count verdicts per (backend, outcome) and log as one
+    # line so runbook grep stays cheap.
+    try:
+        from collections import Counter as _Counter
+        backend_counter: _Counter = _Counter()
+        for v in verdicts:
+            backend_counter[(v.backend, v.verdict)] += 1
+        if backend_counter:
+            backend_summary = ",".join(
+                f"{bk}:{out}={n}"
+                for (bk, out), n in sorted(backend_counter.items())
+            )
+            logger.info(
+                "verify[%s] problem=%s accepted=%s n=%d pass=%d fail=%d err=%d "
+                "classes=%d backends=[%s]%s",
+                record_id, problem_id, accepted, len(verdicts),
+                pass_count, fail_count, error_count, len(distinct_classes),
+                backend_summary,
+                f" reject={reject_reason}" if reject_reason else "",
+            )
+    except Exception as _e:  # pragma: no cover — telemetry must never break verify
+        logger.debug("verify backend-summary log failed (%s)", _e)
 
     return VerificationRecord(
         record_id=record_id,
@@ -812,6 +874,7 @@ def peer_jury_fallback(
         author="builtin:peer_jury",
         name="peer_review_consensus",
         reason=jr.rationale,
+        backend="peer_jury",
     )
     new_per = list(record.per_property) + [jury_row]
     new_accepted = record.accepted

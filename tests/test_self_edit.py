@@ -274,3 +274,37 @@ def test_meta_cycle_candidate_missing(tmp_path: Path):
     )
     assert out.decision == "error"
     assert any("failed to read candidate" in r for r in out.reasons)
+
+
+# ---------------------------------------------------------------------------
+# subprocess_smoke_eval integration — proves the eval actually differs for
+# clean vs broken code (un-breaking the always-reject pathology).
+# ---------------------------------------------------------------------------
+
+
+def test_subprocess_smoke_eval_clean_repo_is_positive():
+    """On a clean repo checkout, subprocess_smoke_eval must return > 0.
+
+    If this returns 0.0, the harness itself is broken and no patch will
+    ever score higher than baseline — restoring the always-reject bug.
+    """
+    score = se.subprocess_smoke_eval(_repo_root(), timeout_s=60)
+    assert score > 0.0, f"clean repo scored {score}, harness is broken"
+
+
+def test_subprocess_smoke_eval_broken_import_scores_zero(tmp_path: Path):
+    """A worktree whose candidate module raises on import must score 0.0.
+
+    This is the evidence that subprocess_smoke_eval detects mutation. If
+    it scored the same as clean, self-edit would still always-reject.
+    """
+    import shutil
+    # Minimal fake repo mirroring the import graph the harness needs.
+    (tmp_path / "src" / "generator").mkdir(parents=True)
+    (tmp_path / "src" / "__init__.py").write_text("")
+    (tmp_path / "src" / "generator" / "__init__.py").write_text("")
+    (tmp_path / "src" / "generator" / "task_synthesizer.py").write_text(
+        "raise RuntimeError('patched to break')\n"
+    )
+    score = se.subprocess_smoke_eval(tmp_path, timeout_s=60)
+    assert score == 0.0

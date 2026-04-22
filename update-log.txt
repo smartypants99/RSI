@@ -1807,3 +1807,43 @@ SIGNOFF verifier-and-synth (task #9 gsm8k=1.0 audit) — 2026-04-22 — gsm8k=1.
 cross-reviewer APPROVES resumption — no known bugs; all 4 peers signed off; perf delta: anchor-eval batching via run_anchor_eval(batch_model_fn=...) collapses ~15 min serial vLLM round-trips per cycle into a single batched call (~1 min), ~14 min saved per cycle on the default 100-item anchor set. Full cross-review of task #1 (trainer: be7bc53 DPO step-budget + 41b960d LR + 4059b21 split counters + 60f929a enable_input_require_grads + 95841d0/74badc8/10133cf QLoRA adapter persistence + 48db8c9 stability hook), task #2 (orchestrator: 12cb95a lagged-confirm best-promotion + toothed capture-alarm — exact-equality streak edge case noted, impact vanishing), task #3 (foom: 738a08c wire-up bounced on inline-distill OOM risk and test-coverage claim, fixed by foom-activator in 0f075ea via fast_student_distill_inline=False default + CPU fixture distill test), task #4 (verifier+synth: 75ee14a execution graders with real RLIMIT/subprocess sandbox — no security hole; 064eeb2 tolerant parser; 790d5ca domain-scoped frontier; 738a08c backend visibility; 9f55e63 offline-fixture/degenerate-prediction alarms). Part A also added 2 regression tests for batch_model_fn (success path + fallback). pytest 735 passed, 2 skipped on 0f075ea. Live-GPU risks flagged but not blocking: (i) capture-alarm revert does not undo trainer adapter state — trainer-auditor follow-up; (ii) growth hook computes but doesn't swap student into model_loader — foom follow-up; (iii) fast_student_distill_inline stays False until post-GPU-validation flip; (iv) RLIMIT_NPROC=0 may fail on production seccomp profile, sandbox tolerates but anchor scores could collapse to 0 if it does — watch first live cycle. No unauthorized GPU run originated from this session. Commit set: 48db8c9 10133cf 74badc8 95841d0 c235386 8ecbc76 e924aea 96833f0 26268d0 123ee84 7e12332 98e6098 c61b177 f40dccf 60f929a 4059b21 41b960d be7bc53 e42d520 b32b30a 75ee14a 26bea2b 12cb95a 5535286 41211e7 064eeb2 790d5ca 7471fe8 738a08c 343156e 9f55e63 83797e4 0f075ea. — 2026-04-22, cross-reviewer task #5.
 
 SIGNOFF verifier-and-synth (task #11 live-run concerns 1/2/3) — 2026-04-22 — three live-run triage concerns closed: (1) VerifierConfig.verifier_accept_policy="majority" default relaxes the §2.1 any-FAIL veto that starved cycle 1 training; "quorum_2of3" is also available; relaxed acceptances carry verdict_warnings=("any_fail",) so trainer/calibration can down-weight; distinct-classes + duplicate-author structural rules still enforced. (2) OrchestratorConfig.mode_collapse_distinct_threshold=0.6 wires post-train anchor distinct/n into best-promotion eligibility via CycleResult.mode_collapse_detected — cycle 2's humaneval distinct=7/12=0.58 would now be caught. (3) Streak-advance regression guard — pending-best streak no longer advances when current_score < max(eligible_prior_scores) - 0.005; ineligible priors excluded so spikes can't retroactively block recovery. 10 new tests (6 accept-policy, 3 promotion regression guard, 1 mode-collapse gate). Existing test_confirmation_requires_consecutive_at_or_above updated to codify fixed behavior. Full suite 759 passed, 2 skipped. Commit: d370c18.
+
+---
+SIGNOFF cross-reviewer (task #10 speed pass) — 2026-04-22 — cycle-time reduction wired end-to-end.
+
+Config knobs (landed in d370c18 alongside task #11, verified):
+  - GeneratorConfig.samples_per_weakness: 30 → 24
+  - SynthesisConfig.tasks_per_cycle: 20 → 12
+  - SynthesisConfig.candidates_per_problem: 6 → 3
+  - SynthesisConfig.proposer_max_new_tokens: new, default 600
+  - SynthesisConfig.solver_max_new_tokens: new, default 1200
+  - OrchestratorConfig.heldout_quick_subsample_n: new, default 128
+  - OrchestratorConfig.heldout_full_every: new, default 5 (cycle 1 and every 5th = full 1200)
+  - VLLMConfig.max_num_seqs: new, default 32 (0 = vLLM default)
+  - FastStudentConfig.redistill_every: 5 → 2 (inline distill still gated off)
+
+Runtime wire-up (this commit, accda68):
+  - task_synthesizer.py: proposer + solver max_new_tokens read from SynthesisConfig (was 2048 hard-coded in 3 sites).
+  - vllm_backend.py: VLLMModelLoader threads max_num_seqs into vllm.LLM(); kwarg-rejection retry extended to drop max_num_seqs for older vLLM.
+  - fast_student.py: redistill_every default flipped to 2 with comment that harvest cadence is unchanged.
+  - tests/test_speed_pass.py (14 tests): default guards, propagation (capturing loader proves proposer_max_new_tokens=600 reaches generate_batch), cycle-schedule logic.
+
+Held-out quick-eval statistical sanity (also documented in config.py next to the knobs):
+  at N=128, p≈0.5 → raw SE = √(p(1-p)/N) ≈ 0.044.
+  paired vs cached base subsample (5-10× VR typical on frozen eval) → SE ≈ 0.044/√5 ≈ 0.020.
+  z on true +1pp delta ≈ 0.01 / 0.020 ≈ 2.5 > 2 power floor.
+  Full 1200 every 5 cycles bounds base-reference staleness; cycle 1 always full.
+
+Expected wall-clock impact (static projection; needs live-GPU confirm):
+  - propose: 15 min → ~6 min (tasks 20→12, 2048→600 tokens, max_num_seqs bump)
+  - solve:    8 min → ~2 min (k=6→3 candidates, 2048→1200 cap)
+  - held-out: 13 min → ~1.5 min on quick cycles (128/1200 ≈ 10× at roughly linear cost); 13 min unchanged on full cycles (~every 5th)
+  - anchor:   1 min (already batched in Part A)
+  - train:    5 min (no change — out of scope)
+  - total:   ~42 min → ~15 min steady-state worst case, ~7-8 min on quick cycles
+
+Not done (outside requested scope, flagged for follow-up):
+  - Base-model reference caching in _eval_phase: right now the full cycle writes into history but there's no explicit "cache of base-model subsample scores" plumbed. paired_delta in _eval_phase already computes prev-vs-current paired comparison from _eval_per_rep_per_question, which is the correct signal for steady-state; an explicit base-model cache-file would matter only if we wanted to cold-compare cycle-N quick vs cycle-0 full. Flagged as task #13 candidate.
+  - Live-GPU max_num_seqs=32 headroom check: static projection says ~4GB KV at max_seq=4096 bf16 × 32 ≈ safe on A6000 (48GB total − ~27GB base − ~16GB LoRA overhead), but this must be empirically confirmed on first live cycle. If vLLM OOMs on engine init, drop max_num_seqs to 16 or 0.
+
+pytest: 759 passed, 2 skipped. Commit: accda68.

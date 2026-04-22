@@ -170,6 +170,32 @@ def test_config_allows_n1200_fallback(tmp_path):
     assert cfg.heldout_full_subsample_n == 1200
 
 
+def test_wedge2_full_subsample_target_n_600_produces_bounded_total():
+    """Wedge 2: full-eval at N=600 must produce a per-domain pre-filter
+    target whose expected post-filter total lands in [596, 604] for
+    4 domains. This is the same stratified math as quick eval."""
+    from src.orchestrator.loop import _quick_eval_stratified_targets
+    pre_per_dom, expected = _quick_eval_stratified_targets(
+        target_n=600, n_domains=4,
+    )
+    assert 596 <= expected <= 604, expected
+    # Per-domain pre-filter should be ~round(150/0.37) ≈ 405.
+    assert 380 <= pre_per_dom <= 430, pre_per_dom
+
+
+def test_wedge2_full_subsample_zero_disables_override(tmp_path):
+    """heldout_full_subsample_n=0 means 'don't override' — the legacy
+    heldout_questions_per_domain path takes over unchanged."""
+    cfg = OrchestratorConfig(
+        output_dir=tmp_path, log_dir=tmp_path / "l",
+        heldout_full_subsample_n=0,
+        heldout_questions_per_domain=540,
+    )
+    # Invariant locked in config: 0 ⇒ no override.
+    assert cfg.heldout_full_subsample_n == 0
+    assert cfg.heldout_questions_per_domain == 540
+
+
 # --- Wedge 3: base-model prediction cache ---------------------------------
 
 

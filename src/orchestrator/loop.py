@@ -2668,6 +2668,29 @@ class ImprovementLoop:
         heldout_target_per_domain = int(
             getattr(self.config.orchestrator, "heldout_questions_per_domain", 540)
         )
+        # Task #23 wedge 2: when heldout_full_subsample_n is set (default 600),
+        # derive the FULL-eval per-domain target via the same stratified
+        # formula used by the quick path so the total lands near the
+        # configured N ± (n_domains/2) after the HELD_OUT_ONLY partition
+        # filter. N=600 trades ~40min cycle → ~20min cycle at the cost of
+        # MDE moving 3.6pp → 5.1pp (VR=2.5). See config doc for math.
+        _full_n = int(getattr(
+            self.config.orchestrator, "heldout_full_subsample_n", 0,
+        ))
+        if _full_n > 0:
+            _full_pre_per_domain, _full_expected_total = (
+                _quick_eval_stratified_targets(
+                    target_n=_full_n,
+                    n_domains=max(1, len(cfg.domains)),
+                    min_per_domain=int(cfg.min_questions_per_domain),
+                )
+            )
+            # Only TIGHTEN the per-domain target — never raise it above the
+            # configured heldout_questions_per_domain (which might be
+            # explicitly set higher for ops who want the old behavior).
+            heldout_target_per_domain = min(
+                heldout_target_per_domain, _full_pre_per_domain
+            )
         # Task #10: quick-eval gating. Every heldout_full_every cycles we
         # run the full sweep; on other cycles we shrink the per-domain
         # target so the total lands near heldout_quick_subsample_n after

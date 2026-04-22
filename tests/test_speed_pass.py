@@ -69,6 +69,61 @@ def test_vllm_max_num_seqs_negative_raises():
         VLLMConfig(max_num_seqs=-1)
 
 
+def test_vllm_chunked_prefill_default_true():
+    """Task #18 step 2: chunked prefill default ON for the 120-prompt
+    solve batch. Regressing this loses ~2-3s per prefill wave."""
+    cfg = VLLMConfig()
+    assert cfg.enable_chunked_prefill is True
+
+
+def test_vllm_chunked_prefill_threaded_to_loader_kwargs():
+    """The VLLMModelLoader stores the chunked-prefill flag and would pass
+    it to vllm.LLM(). Stubs `vllm` import so no GPU is touched."""
+    import sys, types
+    fake_vllm = types.ModuleType("vllm")
+    captured: dict = {}
+
+    class _FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def get_tokenizer(self):
+            class _T:
+                pad_token = "[PAD]"
+                eos_token = "[EOS]"
+                pad_token_id = 0
+            return _T()
+
+    fake_vllm.LLM = _FakeLLM
+    fake_vllm.SamplingParams = object
+    sys.modules["vllm"] = fake_vllm
+    try:
+        from src.utils.vllm_backend import VLLMModelLoader, _check_vllm  # noqa: F401
+        # Force the module to re-check vLLM availability via the fake.
+        import src.utils.vllm_backend as vb
+        vb._VLLM_AVAILABLE = True
+
+        loader = VLLMModelLoader(
+            model_path="stub/base",
+            enable_chunked_prefill=True,
+        )
+        # Bypass CUDA check: directly call _load_vllm.
+        loader._load_vllm()
+        assert captured.get("enable_chunked_prefill") is True
+
+        captured.clear()
+        loader2 = VLLMModelLoader(
+            model_path="stub/base",
+            enable_chunked_prefill=False,
+        )
+        loader2._load_vllm()
+        # When disabled, the loader simply doesn't add the kwarg (vLLM's own
+        # default applies). Assert the key is absent, not False.
+        assert "enable_chunked_prefill" not in captured
+    finally:
+        sys.modules.pop("vllm", None)
+
+
 def test_fast_student_redistill_every_speed_pass():
     cfg = FastStudentConfig()
     assert cfg.redistill_every == 2

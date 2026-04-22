@@ -70,6 +70,10 @@ class VLLMModelLoader:
         self.enforce_eager = bool(enforce_eager)
         self.coresident_training_enabled = bool(coresident_training_enabled)
         self.coresident_vllm_mem_frac = float(coresident_vllm_mem_frac)
+        # Task #18 step 2: chunked prefill. Interleaves prefill of long
+        # prompts with decode across the 120-prompt solve batch so prefill
+        # spikes don't stall the decode pipeline.
+        self.enable_chunked_prefill = bool(enable_chunked_prefill)
         if self.coresident_training_enabled:
             # Override the effective VRAM fraction and force eager mode.
             self.gpu_memory_utilization = self.coresident_vllm_mem_frac
@@ -153,6 +157,11 @@ class VLLMModelLoader:
             # the static graph buffer is the hidden 1-2GB that OOMs the
             # backward pass). Costs ~10-15% inference throughput.
             llm_kwargs["enforce_eager"] = True
+        if self.enable_chunked_prefill:
+            # Task #18 step 2: chunked prefill. Essential for the 120-prompt
+            # solve batch with a long shared system prefix — without this,
+            # prefill waves stall decode for multiple seconds per batch.
+            llm_kwargs["enable_chunked_prefill"] = True
         if self.coresident_training_enabled:
             # Task #19: ask vLLM to support sleep_mode so we can drop KV cache
             # during the HF training span without destroying weights. Newer
@@ -186,6 +195,7 @@ class VLLMModelLoader:
             for kw in (
                 "enable_prefix_caching", "enable_lora", "max_lora_rank",
                 "max_num_seqs", "enforce_eager", "enable_sleep_mode",
+                "enable_chunked_prefill",
             ):
                 if kw in msg and kw in llm_kwargs:
                     logger.warning(f"vLLM LLM() rejected {kw} — retrying without it")

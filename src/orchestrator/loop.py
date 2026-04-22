@@ -292,6 +292,11 @@ class ImprovementLoop:
                 coresident_vllm_mem_frac=float(
                     getattr(vllm_cfg, "coresident_vllm_mem_frac", 0.42)
                 ),
+                # Task #18 step 2: chunked prefill — default True in the
+                # config, off only if the knob is explicitly flipped.
+                enable_chunked_prefill=bool(
+                    getattr(vllm_cfg, "enable_chunked_prefill", True)
+                ),
             )
         else:
             from ..utils.model_loader import ModelLoader

@@ -101,6 +101,14 @@ class GeneratorConfig:
     # (unless verified<floor, in which case we use all). Protects against
     # ranking down to a single marginal sample.
     sample_quality_floor: int = 3
+    # Sample-quality clean-floor filter (task #14). When the training pool
+    # has >= sample_quality_min_clean_floor total samples AND the clean-only
+    # subset (no "any_fail" verdict warning) is also >= this floor, drop every
+    # sample whose verdict_warnings contains "any_fail" — those are the
+    # relaxed-accept-policy (majority/quorum_2of3) admits that bypassed a FAIL
+    # verdict. Below the floor, keep all samples so starvation doesn't skip
+    # training entirely. Set to 0 to disable.
+    sample_quality_min_clean_floor: int = 16
 
     def __post_init__(self):
         if self.min_reasoning_steps < 1:
@@ -119,6 +127,11 @@ class GeneratorConfig:
             raise ValueError(f"sample_quality_top_k must be >= 0, got {self.sample_quality_top_k}")
         if self.sample_quality_floor < 1:
             raise ValueError(f"sample_quality_floor must be >= 1, got {self.sample_quality_floor}")
+        if self.sample_quality_min_clean_floor < 0:
+            raise ValueError(
+                f"sample_quality_min_clean_floor must be >= 0, "
+                f"got {self.sample_quality_min_clean_floor}"
+            )
 
 
 @dataclass

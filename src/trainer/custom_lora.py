@@ -601,6 +601,29 @@ class _EarlyStop(Exception):
     """Internal signal: loss dropped below early_stop_loss mid-training."""
 
 
+def _filter_any_fail_when_clean_enough(
+    samples: list,
+    clean_floor: int,
+) -> tuple[list, int]:
+    """Drop samples carrying a verifier 'any_fail' warning when the clean pool
+    is large enough on its own. Returns (filtered_samples, n_dropped).
+
+    When ``clean_floor <= 0`` the filter is disabled. When either the total
+    pool size OR the clean-only subset size is below the floor, the filter
+    is also disabled — we'd rather train on a mixed-quality pool than starve
+    the cycle. This is the floor-protected filter asked for in task #14.
+    """
+    if clean_floor <= 0 or not samples:
+        return list(samples), 0
+    clean = [s for s in samples
+             if "any_fail" not in (getattr(s, "verdict_warnings", ()) or ())]
+    total = len(samples)
+    if total < clean_floor or len(clean) < clean_floor:
+        return list(samples), 0
+    dropped = total - len(clean)
+    return clean, dropped
+
+
 def _plan_step_budget(
     total_batches: int,
     base_accum: int,
@@ -784,6 +807,31 @@ class CustomLoRATrainer:
         # Reset loss trajectory accumulator at the start of every train() call
         # so metrics reflect just this cycle.
         self._loss_trajectory = []
+
+        # Sample-quality clean-floor filter (task #14). Reads the floor from
+        # the generator config (where the other sample-quality knobs live)
+        # with a safe default of 0 (disabled) if the attribute is missing.
+        clean_floor = 0
+        try:
+            gen_cfg = getattr(self.model_loader, "_gen_config_hint", None)
+            if gen_cfg is None:
+                # Fallback: system-level config may not be reachable from here;
+                # plumbed-in attribute on self takes precedence.
+                clean_floor = int(getattr(self, "_sample_quality_min_clean_floor", 0))
+            else:
+                clean_floor = int(getattr(gen_cfg, "sample_quality_min_clean_floor", 0))
+        except Exception:
+            clean_floor = 0
+        if clean_floor > 0 and verified_samples:
+            filtered, dropped = _filter_any_fail_when_clean_enough(
+                verified_samples, clean_floor,
+            )
+            if dropped > 0:
+                logger.info(
+                    f"  Sample-quality filter: dropped {dropped}/{len(verified_samples)} "
+                    f"'any_fail' samples (clean pool {len(filtered)} >= floor {clean_floor})"
+                )
+                verified_samples = filtered
 
         if mode == "grpo":
             if not verified_samples:

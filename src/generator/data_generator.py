@@ -94,6 +94,13 @@ class TrainingSample:
     ground_truth_verified: bool = False
     source: str = "synthesized"  # "star" | "star_rationalized" | "synthesized"
     sample_index: int = 0  # which of the K sampled chains this is (debug)
+    # Non-fatal verifier warnings that fired during acceptance (§1.4 quorum).
+    # Populated from PropertyVerifyRecord.verdict_warnings — in particular
+    # "any_fail" marks samples that the relaxed accept_policy admitted despite
+    # one or more FAIL verdicts. Trainer-side sample-quality filter
+    # (GeneratorConfig.sample_quality_min_clean_floor) can drop these when
+    # the clean pool is large enough.
+    verdict_warnings: tuple[str, ...] = ()
 
     def __post_init__(self):
         # Sync per-step confidences from the chain if not explicitly provided.

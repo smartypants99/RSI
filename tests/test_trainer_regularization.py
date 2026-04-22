@@ -172,3 +172,64 @@ def test_overfit_detector_silent_for_healthy_run(caplog):
         if last_loss < 0.1 and samples_used < 20 and step_count > 0:
             custom_lora.logger.warning("Overfit suspected: ...")
     assert not any("Overfit suspected" in rec.message for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Task #14: sample-quality clean-floor filter
+# ---------------------------------------------------------------------------
+
+def test_clean_floor_filter_disabled_when_floor_zero():
+    from src.trainer.custom_lora import _filter_any_fail_when_clean_enough
+
+    class _S:
+        def __init__(self, warn):
+            self.verdict_warnings = warn
+
+    samples = [_S(("any_fail",)), _S(()), _S(("any_fail",)), _S(())]
+    out, dropped = _filter_any_fail_when_clean_enough(samples, clean_floor=0)
+    assert dropped == 0
+    assert len(out) == 4
+
+
+def test_clean_floor_filter_keeps_all_when_pool_below_floor():
+    """Starvation guard: don't filter when total < floor."""
+    from src.trainer.custom_lora import _filter_any_fail_when_clean_enough
+
+    class _S:
+        def __init__(self, warn):
+            self.verdict_warnings = warn
+
+    samples = [_S(("any_fail",)), _S(()), _S(("any_fail",))]
+    out, dropped = _filter_any_fail_when_clean_enough(samples, clean_floor=16)
+    assert dropped == 0
+    assert len(out) == 3
+
+
+def test_clean_floor_filter_keeps_all_when_clean_subset_below_floor():
+    """If dropping any_fail would leave clean < floor, keep all samples."""
+    from src.trainer.custom_lora import _filter_any_fail_when_clean_enough
+
+    class _S:
+        def __init__(self, warn):
+            self.verdict_warnings = warn
+
+    samples = [_S(("any_fail",))] * 14 + [_S(())] * 5
+    # total = 19 >= 16, clean = 5 < 16 → keep all.
+    out, dropped = _filter_any_fail_when_clean_enough(samples, clean_floor=16)
+    assert dropped == 0
+    assert len(out) == 19
+
+
+def test_clean_floor_filter_drops_any_fail_when_clean_enough():
+    from src.trainer.custom_lora import _filter_any_fail_when_clean_enough
+
+    class _S:
+        def __init__(self, warn):
+            self.verdict_warnings = warn
+
+    samples = [_S(("any_fail",))] * 4 + [_S(())] * 20
+    # total = 24 >= 16, clean = 20 >= 16 → drop 4 any_fail samples.
+    out, dropped = _filter_any_fail_when_clean_enough(samples, clean_floor=16)
+    assert dropped == 4
+    assert len(out) == 20
+    assert all("any_fail" not in s.verdict_warnings for s in out)

@@ -204,6 +204,92 @@ def test_config_default_cache_base_predictions_on(tmp_path):
     assert cfg.heldout_cache_base_predictions is True
 
 
+def test_heldout_base_cache_roundtrip(tmp_path):
+    """Put N entries, save, reload, all entries survive and paired-eval
+    export matches."""
+    from src.diagnostics.heldout_base_cache import BaseHeldoutCache
+    path = tmp_path / "base_cache.jsonl"
+    cache = BaseHeldoutCache.load_or_new(path, model_id="model/base")
+    cache.put(prompt="Q1?", expected="A", correct=True, prediction="A")
+    cache.put(prompt="Q2?", expected="B", correct=False, prediction="C")
+    cache.save()
+    reloaded = BaseHeldoutCache.load_or_new(path, model_id="model/base")
+    assert len(reloaded.entries) == 2
+    assert reloaded.has("Q1?", "A")
+    assert reloaded.get("Q2?", "B")["correct"] is False
+    # per-question export shape is exactly what paired_delta consumes.
+    records = reloaded.to_per_question_records()
+    keys = {(r["prompt"], r["expected"]) for r in records}
+    assert ("Q1?", "A") in keys and ("Q2?", "B") in keys
+
+
+def test_heldout_base_cache_invalidates_on_model_id_change(tmp_path):
+    """Entries written under model_id=X must NOT appear when loading
+    the same file under model_id=Y — swapping the base model invalidates
+    cached predictions (they came from a different model)."""
+    from src.diagnostics.heldout_base_cache import BaseHeldoutCache
+    path = tmp_path / "base_cache.jsonl"
+    a = BaseHeldoutCache.load_or_new(path, model_id="model/A")
+    a.put(prompt="Q1?", expected="A", correct=True)
+    a.save()
+    b = BaseHeldoutCache.load_or_new(path, model_id="model/B")
+    assert b.has("Q1?", "A") is False
+    assert len(b.entries) == 0
+
+
+def test_heldout_base_cache_populate_from_eval_skips_existing(tmp_path):
+    """populate_from_eval must be idempotent on the second pass — existing
+    entries are not overwritten by later (possibly noisy) eval rows."""
+    from src.diagnostics.heldout_base_cache import (
+        BaseHeldoutCache, populate_from_eval,
+    )
+    cache = BaseHeldoutCache.load_or_new(
+        tmp_path / "c.jsonl", model_id="m",
+    )
+    first = [
+        {"prompt": "Q1?", "expected": "A", "correct": True, "response": "A"},
+        {"prompt": "Q2?", "expected": "B", "correct": False, "response": "X"},
+    ]
+    added1 = populate_from_eval(cache, first)
+    assert added1 == 2
+    # Re-run with conflicting correctness on Q1 — cache must NOT update.
+    second = [
+        {"prompt": "Q1?", "expected": "A", "correct": False, "response": "WRONG"},
+        {"prompt": "Q3?", "expected": "C", "correct": True, "response": "C"},
+    ]
+    added2 = populate_from_eval(cache, second)
+    assert added2 == 1  # only Q3 is new
+    assert cache.get("Q1?", "A")["correct"] is True  # unchanged
+
+
+def test_heldout_base_cache_missing_reports_uncached(tmp_path):
+    from src.diagnostics.heldout_base_cache import BaseHeldoutCache
+    cache = BaseHeldoutCache.load_or_new(
+        tmp_path / "c.jsonl", model_id="m",
+    )
+    cache.put(prompt="Q1?", expected="A", correct=True)
+    missing = cache.missing([
+        ("Q1?", "A"),
+        ("Q2?", "B"),
+        ("Q3?", None),
+    ])
+    assert missing == [("Q2?", "B"), ("Q3?", None)]
+
+
+def test_heldout_base_cache_question_key_disambiguates_expected(tmp_path):
+    """Same prompt + different expected answer must hash to different
+    keys (otherwise two distinct questions alias in the cache)."""
+    from src.diagnostics.heldout_base_cache import BaseHeldoutCache
+    cache = BaseHeldoutCache.load_or_new(
+        tmp_path / "c.jsonl", model_id="m",
+    )
+    cache.put(prompt="Q?", expected="A", correct=True)
+    cache.put(prompt="Q?", expected="B", correct=False)
+    assert len(cache.entries) == 2
+    assert cache.get("Q?", "A")["correct"] is True
+    assert cache.get("Q?", "B")["correct"] is False
+
+
 # --- Wedge 4: heldout max_num_seqs -----------------------------------------
 
 

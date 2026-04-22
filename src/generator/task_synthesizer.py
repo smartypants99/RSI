@@ -3039,6 +3039,25 @@ _CODE_BLOCK_LABELS = (
     "DIFFICULTY:", "DIFFICULTY_REASON:",
 )
 
+# Aliases observed in model output that refer to the same logical block.
+# The parser treats any alias as equivalent to its canonical label. This
+# closes the ~30% missing_problem/missing_entry/missing_reference/too_few_tests
+# failure rate seen in cycles 1–7 of the overnight run: the base model
+# consistently emits e.g. "Problem Statement:", "Function:", "Example Tests:",
+# and the old strict label match counted those as failures.
+_LABEL_ALIASES: dict[str, tuple[str, ...]] = {
+    "PROBLEM:": ("PROBLEM STATEMENT:", "TASK:", "QUESTION:", "DESCRIPTION:"),
+    "ENTRY:": ("ENTRY POINT:", "ENTRY_POINT:", "FUNCTION:", "FUNCTION NAME:",
+               "FUNCTION_NAME:", "NAME:"),
+    "REFERENCE:": ("SOLUTION:", "REFERENCE SOLUTION:", "REFERENCE_SOLUTION:",
+                   "CODE:", "IMPLEMENTATION:"),
+    "TESTS:": ("TEST CASES:", "TEST_CASES:", "EXAMPLES:", "ASSERTIONS:"),
+    "EXPECTED_TYPE:": ("RETURN TYPE:", "RETURN_TYPE:", "EXPECTED TYPE:"),
+    "DIFFICULTY_REASON:": ("REASONING:", "DIFFICULTY REASON:"),
+    "SAMPLE_INPUT:": ("SAMPLE INPUT:", "EXAMPLE INPUT:", "EXAMPLE_INPUT:"),
+    "EMPTY_INPUT:": ("EMPTY INPUT:", "MINIMAL INPUT:"),
+}
+
 # Minimum self-reported difficulty (= P[model fails on first attempt])
 # below which we reject the proposal outright — matches spec §3.2.1.
 # Floor disabled (0.0) after run-12: at 0.15 the model STILL couldn't write
@@ -3110,17 +3129,28 @@ def parse_code_proposal(
     # We strip common decoration chars before the label when scanning.
     positions: dict[str, int] = {}
     for label in _CODE_BLOCK_LABELS:
-        label_no_colon = label.rstrip(":")
-        # Match: optional markdown/bullet prefix, then the label name,
-        # optional space, then colon.
-        pattern = (
-            r"(?im)^[\s*#>\-\d.`'\"]*"     # decoration / bullets / quotes
-            + re.escape(label_no_colon)
-            + r"\s*[:：]"                   # colon (ASCII or fullwidth)
-        )
-        m = re.search(pattern, raw)
-        if m:
-            positions[label] = m.start()
+        # Try canonical label first, then any aliases; first match wins.
+        candidates = [label.rstrip(":")] + [
+            a.rstrip(":") for a in _LABEL_ALIASES.get(label, ())
+        ]
+        best: Optional[int] = None
+        for name in candidates:
+            # Match: optional markdown/bullet prefix, then the label name,
+            # optional space, then colon. Accept either ASCII ':' or
+            # fullwidth '：' (some model outputs slip CJK punctuation in).
+            # Label names with internal spaces (e.g. "PROBLEM STATEMENT")
+            # are handled by matching a single \s between tokens.
+            name_pattern = r"\s+".join(re.escape(tok) for tok in name.split())
+            pattern = (
+                r"(?im)^[\s*#>\-\d.`'\"]*"     # decoration / bullets / quotes
+                + name_pattern
+                + r"\s*[:：]"                   # colon (ASCII or fullwidth)
+            )
+            m = re.search(pattern, raw)
+            if m and (best is None or m.start() < best):
+                best = m.start()
+        if best is not None:
+            positions[label] = best
     if "PROBLEM:" not in positions:
         out.issues.append("missing_problem")
         # Dump the first 300 chars of the response so operators can see what
@@ -3135,28 +3165,44 @@ def parse_code_proposal(
     for i, (label, start) in enumerate(ordered):
         end = ordered[i + 1][1] if i + 1 < len(ordered) else len(raw)
         body = raw[start:end]
-        # Strip the matched label (including decoration and colon) — same
-        # tolerant pattern as above, then trim.
-        label_no_colon = label.rstrip(":")
-        body = re.sub(
-            r"(?i)^[\s*#>\-\d.`'\"]*"
-            + re.escape(label_no_colon)
-            + r"\s*[:：]\s*",
-            "",
-            body,
-            count=1,
-        )
+        # Strip the matched label (including decoration and colon). Try each
+        # alias in addition to the canonical name so aliased-label bodies
+        # don't retain a stray "Problem Statement:" at the top of the block.
+        label_names = [label.rstrip(":")] + [
+            a.rstrip(":") for a in _LABEL_ALIASES.get(label, ())
+        ]
+        for name in label_names:
+            name_pattern = r"\s+".join(re.escape(tok) for tok in name.split())
+            new_body, n = re.subn(
+                r"(?i)^[\s*#>\-\d.`'\"]*" + name_pattern + r"\s*[:：]\s*",
+                "",
+                body,
+                count=1,
+            )
+            if n:
+                body = new_body
+                break
         # Also trim stray closing markdown bold after the label (e.g.
         # "**PROBLEM:** reverse a list" leaves a leading "**" without this).
         body = re.sub(r"^\**", "", body).strip()
         blocks[label] = body
 
     out.problem_text = blocks.get("PROBLEM:", "").strip()
-    out.entry_point = blocks.get("ENTRY:", "").strip().split()[0] if blocks.get("ENTRY:", "").strip() else ""
+    # Entry-point: take the first "word", then strip common decoration
+    # (backticks, parentheses, quotes, colons). Previously "`solve`" leaked
+    # backticks through and downstream code tried to call `solve` which
+    # blew up. Also strip any trailing "()" if the model wrote "solve()".
+    entry_raw = blocks.get("ENTRY:", "").strip()
+    if entry_raw:
+        # Take first whitespace-separated token, then strip decoration.
+        tok = entry_raw.split()[0]
+        tok = tok.strip("`'\"*_()[]{}:,;")
+        # If still empty (e.g. just a backtick line), fall through.
+        out.entry_point = tok
 
     ref_block = blocks.get("REFERENCE:", "")
     # Pull the python fence if present, else take the block as-is
-    m = re.search(r"```(?:python)?\s*\n(.*?)```", ref_block, re.DOTALL)
+    m = re.search(r"```(?:python|py)?\s*\n?(.*?)```", ref_block, re.DOTALL)
     if m:
         out.reference = m.group(1).strip()
     else:
@@ -3165,15 +3211,26 @@ def parse_code_proposal(
         out.reference = m.group(1).strip() if m else ref_block.strip()
 
     tests_block = blocks.get("TESTS:", "")
-    for line in tests_block.splitlines():
+    # Models sometimes wrap all tests inside a single ```python ... ``` fence.
+    # Extract the fenced content first, then fall back to the raw block.
+    fence_m = re.search(r"```(?:python|py)?\s*\n?(.*?)```", tests_block, re.DOTALL)
+    tests_source = fence_m.group(1) if fence_m else tests_block
+    for line in tests_source.splitlines():
         s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        # Strip leading bullet/hyphen/numbered-list if present.
+        s = re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", s)
+        # Strip leading ">>> " REPL prompt style.
+        s = re.sub(r"^>>>\s+", "", s)
+        # Strip trailing comments.
+        s = re.sub(r"\s+#.*$", "", s).rstrip()
         if not s:
             continue
-        # Strip leading bullet/hyphen if present
-        s = re.sub(r"^\s*[-*]\s+", "", s)
         if s.startswith("assert ") or s.startswith("assert("):
             out.tests.append(s)
         elif "==" in s:
+            # Accept bare equality lines like `solve(1, 2) == 3`.
             out.tests.append(f"assert ({s})")
     out.empty_input = blocks.get("EMPTY_INPUT:", "").strip()
     out.sample_input = blocks.get("SAMPLE_INPUT:", "").strip()
@@ -3191,6 +3248,14 @@ def parse_code_proposal(
                 out.difficulty = 0.0
     out.difficulty_reason = blocks.get("DIFFICULTY_REASON:", "").strip()
 
+    # Derive entry_point from reference if missing: common model omission
+    # is to emit REFERENCE: with `def foo(...)` but skip the ENTRY: label.
+    # We can recover without losing ground-truth because the reference IS
+    # the source of truth for which function the tests are calling.
+    if not out.entry_point and out.reference:
+        m = re.search(r"def\s+(\w+)\s*\(", out.reference)
+        if m:
+            out.entry_point = m.group(1)
     if not out.entry_point:
         out.issues.append("missing_entry")
     if not out.reference:

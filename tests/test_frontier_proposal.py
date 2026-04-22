@@ -223,3 +223,80 @@ DIFFICULTY_REASON: pretend
     s = _make_synth(gen_fn, gate=False)
     kept = s.propose_batch_code(1)
     assert len(kept) == 1
+
+
+# --- Parser tolerance (task #6: tighten propose_batch_code 30% failure) ---
+
+
+_ALIAS_PROPOSAL = """\
+## Problem Statement: Count the number of distinct paths in an n×n grid
+from top-left to bottom-right, moving only right or down, avoiding blocked
+cells.
+
+**Function Name:** `count_paths`
+
+Reference Solution:
+```python
+def count_paths(grid):
+    n = len(grid)
+    if not n or grid[0][0] == 1 or grid[-1][-1] == 1:
+        return 0
+    dp = [[0] * n for _ in range(n)]
+    dp[0][0] = 1
+    for i in range(n):
+        for j in range(n):
+            if grid[i][j] == 1:
+                dp[i][j] = 0
+                continue
+            if i:
+                dp[i][j] += dp[i-1][j]
+            if j:
+                dp[i][j] += dp[i][j-1]
+    return dp[-1][-1]
+```
+
+Test Cases:
+```python
+assert count_paths([[0,0],[0,0]]) == 2
+assert count_paths([[0,1],[0,0]]) == 1
+assert count_paths([[1,0],[0,0]]) == 0
+1. assert count_paths([[0]]) == 1
+>>> count_paths([[0,0,0],[0,1,0],[0,0,0]]) == 2
+```
+
+DIFFICULTY: 0.45
+Reasoning: Classic DP, edge-case heavy.
+"""
+
+
+def test_parse_accepts_alias_labels_and_fenced_tests():
+    """Model output with 'Problem Statement:', 'Function Name:',
+    'Reference Solution:', 'Test Cases:' (aliases) must parse as ok.
+    Also: tests inside a single python fence, a numbered-list test, and
+    a >>> REPL-prefixed test must all be accepted."""
+    p = parse_code_proposal(_ALIAS_PROPOSAL)
+    assert p.ok, p.issues
+    assert p.entry_point == "count_paths"
+    assert "def count_paths" in p.reference
+    # At least 4 of the 5 test variants should be captured (assert x3 +
+    # numbered + REPL-prefixed). Accept >=4 to leave a little slack.
+    assert len(p.tests) >= 4, p.tests
+    for t in p.tests:
+        assert t.startswith("assert"), t
+
+
+def test_parse_strips_backticks_from_entry():
+    """ENTRY: `solve` must yield entry_point='solve', not '`solve`'."""
+    raw = _HARD_PROPOSAL.replace("ENTRY: solve", "ENTRY: `solve`")
+    p = parse_code_proposal(raw)
+    assert p.ok, p.issues
+    assert p.entry_point == "solve"
+
+
+def test_parse_derives_entry_from_reference_when_missing():
+    """Omitting ENTRY: entirely must still parse ok if the reference
+    contains a def — this was the #1 missing_entry failure mode."""
+    raw = re.sub(r"ENTRY:.*\n", "", _HARD_PROPOSAL, count=1)
+    p = parse_code_proposal(raw)
+    assert p.ok, p.issues
+    assert p.entry_point == "solve"

@@ -301,6 +301,11 @@ class ImprovementLoop:
         # orchestrator is asked to (e.g. for cycle_metrics dumps).
         if getattr(config.orchestrator, "collect_training_loss_trajectory", False):
             self.trainer.set_collect_loss_trajectory(True)
+        # Task #14: sample-quality clean-floor filter plumbed from generator
+        # config through a trainer attribute. Trainer reads it at train() time.
+        self.trainer._sample_quality_min_clean_floor = int(
+            getattr(config.generator, "sample_quality_min_clean_floor", 0)
+        )
 
         # Synthesis-mode components — instantiated only when the flag is on so
         # the classic path has zero overhead.

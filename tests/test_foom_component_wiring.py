@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from src.orchestrator import meta_meta as mm
 from src.utils.fast_student import (
     DistillPair,
@@ -170,6 +172,137 @@ def test_fast_student_disabled_noops_harvest(tmp_path: Path):
     assert mgr.buffer_size() == 0, "disabled manager must not buffer"
     mgr.on_trained_cycle(1)
     assert mgr.current_checkpoint() is None
+
+
+def test_default_distill_fn_runs_end_to_end_on_cpu_fixture(tmp_path: Path, monkeypatch):
+    """Exercise src.utils.fast_student._default_distill_fn on a CPU-sized
+    fixture by injecting fake transformers/peft into sys.modules. Catches
+    the regression class "production distill path has never run" that an
+    injected-distill_fn test can't cover (cross-review issue B).
+
+    Fake transformers exposes AutoTokenizer.from_pretrained →
+    callable-tokenizer and AutoModelForCausalLM.from_pretrained → a tiny
+    nn.Module with a .loss-returning forward + save_pretrained +
+    merge_and_unload. The real torch.AdamW step runs on CPU in <1s; the
+    test asserts a checkpoint lands on disk.
+    """
+    import sys
+
+    import torch
+    import torch.nn as nn
+    from src.utils.fast_student import (
+        DistillPair,
+        FastStudentConfig,
+        _default_distill_fn,
+    )
+
+    transformers = pytest.importorskip("transformers")
+
+    class _FakeTokenizer:
+        pad_token_id = 0
+        eos_token = "<eos>"
+        pad_token = None
+
+        def __call__(self, text, return_tensors=None, truncation=False, max_length=None):
+            n = max(2, min(32, len(text) // 4))
+            ids = torch.arange(n, dtype=torch.long).unsqueeze(0)
+            return {"input_ids": ids}
+
+        def save_pretrained(self, path):
+            Path(path).mkdir(parents=True, exist_ok=True)
+            (Path(path) / "tokenizer.json").write_text("{}")
+
+    class _FakeAutoTokenizer:
+        @staticmethod
+        def from_pretrained(name, trust_remote_code=False):
+            return _FakeTokenizer()
+
+    class _FakeCausalOut:
+        def __init__(self, loss):
+            self.loss = loss
+
+    class _FakeCausalLM(nn.Module):
+        def __init__(self, vocab=64, dim=8):
+            super().__init__()
+            self.emb = nn.Embedding(vocab, dim)
+            self.head = nn.Linear(dim, vocab)
+            self._vocab = vocab
+
+        def forward(self, input_ids=None, labels=None, **_):
+            h = self.emb(input_ids)
+            logits = self.head(h)
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+            loss = loss_fct(logits.view(-1, self._vocab), labels.view(-1))
+            return _FakeCausalOut(loss)
+
+        def merge_and_unload(self):
+            return self
+
+        def save_pretrained(self, path):
+            Path(path).mkdir(parents=True, exist_ok=True)
+            (Path(path) / "model.safetensors").write_bytes(b"fake")
+
+    class _FakeAutoModelForCausalLM:
+        @staticmethod
+        def from_pretrained(name, torch_dtype=None, trust_remote_code=False):
+            return _FakeCausalLM()
+
+    # Patch the real transformers module's attributes so the
+    # `from transformers import AutoModelForCausalLM, AutoTokenizer` line
+    # inside _default_distill_fn picks up our fakes, but the rest of
+    # transformers (tokenization_utils_tokenizers etc.) remains intact.
+    monkeypatch.setattr(transformers, "AutoTokenizer", _FakeAutoTokenizer, raising=True)
+    monkeypatch.setattr(transformers, "AutoModelForCausalLM", _FakeAutoModelForCausalLM, raising=True)
+
+    # Force peft ImportError branch (full fine-tune path) — exercises the
+    # documented fallback. Setting sys.modules['peft']=None makes
+    # `from peft import ...` raise ImportError even if peft is installed.
+    monkeypatch.setitem(sys.modules, "peft", None)
+
+    # ---- run ---------------------------------------------------------------
+    cfg = FastStudentConfig(
+        enabled=True,
+        redistill_every=1,
+        min_pairs_for_distill=1,
+        student_num_epochs=1,
+        student_learning_rate=1e-3,
+        checkpoint_root=tmp_path / "fs",
+        model_name="fake-student",
+    )
+    pairs = [
+        DistillPair(prompt="PROMPT: add", completion="def solve(a,b): return a+b", cycle=1),
+    ]
+    out_dir = tmp_path / "ckpt"
+    ckpt = _default_distill_fn(pairs, out_dir, cfg)
+
+    assert (out_dir / "model.safetensors").exists()
+    assert (out_dir / "tokenizer.json").exists()
+    assert ckpt.num_pairs == 1
+    assert ckpt.model_name == "fake-student"
+    assert ckpt.path == out_dir
+
+
+def test_harvest_still_runs_when_distill_inline_disabled(tmp_path: Path):
+    """Validates cross-review issue A fix: with distill-inline OFF, harvest
+    still accumulates pairs but on_trained_cycle is never called by the loop,
+    so the buffer grows across cycles without triggering a GPU-heavy distill.
+    This mirrors the gated path in loop.py when
+    orchestrator.fast_student_distill_inline=False.
+    """
+    cfg = FastStudentConfig(
+        enabled=True,
+        redistill_every=1,
+        min_pairs_for_distill=1,
+        checkpoint_root=tmp_path / "fs",
+    )
+    mgr = FastStudentManager(cfg, distill_fn=_fake_distill_fn, student_loader=_fake_loader)
+    # Loop would harvest on every solve_batch but suppress on_trained_cycle.
+    for c in range(1, 4):
+        mgr.record_teacher_generation([f"p{c}"], [f"c{c}"], cycle=c)
+    assert mgr.buffer_size() == 3
+    assert mgr.current_checkpoint() is None, (
+        "no distill should have fired when on_trained_cycle is suppressed"
+    )
 
 
 def test_loop_style_cycle_writes_history_then_reloads(tmp_path: Path):

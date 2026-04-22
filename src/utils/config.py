@@ -637,6 +637,17 @@ class OrchestratorConfig:
     # runs on real ground truth. See FastStudentConfig for knobs.
     use_fast_student: bool = True
     fast_student_model_name: str = "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+    # When False, the RSI loop harvests (prompt, completion) pairs into the
+    # FastStudentManager buffer but does NOT call on_trained_cycle — the
+    # inline distill is suppressed. Default False to avoid co-resident
+    # teacher+student OOM risk on the live run (cross-review issue A):
+    # the teacher HF weights are still resident at the on_trained_cycle
+    # hook point (pre-vLLM-swap-back), and _default_distill_fn loads the
+    # 1.5B student in bf16 + AdamW + per-example forward/backward which
+    # has no GPU-headroom guarantee alongside a ~16GB QLoRA teacher.
+    # Harvest remains active so buffer accumulates and a future operator
+    # can flip this True once an offline distill path lands.
+    fast_student_distill_inline: bool = False
 
     # Component-proposer / meta-meta-meta (src/orchestrator/component_proposer.py).
     # Every N cycles the orchestrator proposes entirely new RSI components

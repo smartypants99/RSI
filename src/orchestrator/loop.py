@@ -267,9 +267,10 @@ class ImprovementLoop:
                         "fast_student_model_name",
                         "Qwen/Qwen2.5-Coder-1.5B-Instruct",
                     ),
-                    checkpoint_root=Path(
+                    checkpoint_root=(
                         getattr(config.orchestrator, "output_dir", Path("outputs"))
-                    ) / "fast_student",
+                        / "fast_student"
+                    ),
                 )
                 self._fast_student_mgr = FastStudentManager(fs_cfg)
                 logger.info(
@@ -2078,10 +2079,23 @@ class ImprovementLoop:
                         self._rsi_pending_pool.clear()
                         self._rsi_pool_accumulated_cycles = 0
 
-                        # Fast-student: count this cycle as "trained". When
-                        # the manager hits redistill_every AND has enough
-                        # buffered pairs, it fires a distill in-line.
-                        if self._fast_student_mgr is not None:
+                        # Fast-student: count this cycle as "trained". The
+                        # inline distill path is gated behind
+                        # fast_student_distill_inline (default False) because
+                        # at this hook point the HF teacher is still resident
+                        # (vLLM swap-back happens later) and co-resident
+                        # teacher + 1.5B student + AdamW has no GPU-headroom
+                        # guarantee on A6000 48GB. When disabled we still
+                        # HARVEST pairs above (buffer accumulates) so a
+                        # future offline distill pass can consume them; only
+                        # the in-line on_trained_cycle call is suppressed.
+                        # Flip True after a live-GPU headroom check with the
+                        # teacher unloaded — cross-review issue A.
+                        if self._fast_student_mgr is not None and bool(getattr(
+                            self.config.orchestrator,
+                            "fast_student_distill_inline",
+                            False,
+                        )):
                             try:
                                 self._fast_student_mgr.on_trained_cycle(cycle)
                             except Exception as _fs_exc:

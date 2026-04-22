@@ -65,7 +65,7 @@ def _make_diag(subdomain_scores: dict | None = None) -> MagicMock:
 def test_synthesis_config_defaults():
     cfg = SynthesisConfig()
     assert cfg.enable_task_synthesis is False
-    assert cfg.tasks_per_cycle == 20
+    assert cfg.tasks_per_cycle == 12  # Task #10 speed-pass default
     assert cfg.property_consensus_threshold == 0.7
 
 

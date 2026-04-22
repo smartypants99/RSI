@@ -41,7 +41,8 @@ class VLLMModelLoader:
                  allow_remote_code: bool = False,
                  quantization_config: dict | None = None,
                  enable_lora: bool = False,
-                 max_lora_rank: int = 64):
+                 max_lora_rank: int = 64,
+                 max_num_seqs: int = 0):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
@@ -50,6 +51,10 @@ class VLLMModelLoader:
         self.quantization_config = quantization_config
         self.enable_lora = bool(enable_lora)
         self.max_lora_rank = int(max_lora_rank)
+        # 0 = use vLLM's built-in default. Positive = pin engine to that
+        # concurrent-sequence cap. Task #10: 32 amortizes decode overhead
+        # once propose/solve fan-out shrinks (k=3, tasks=12).
+        self.max_num_seqs = int(max_num_seqs)
         self._llm = None
         self._tokenizer = None
         self._sampling_params_cls = None
@@ -117,6 +122,8 @@ class VLLMModelLoader:
             # set it explicitly so the optimization survives version drift.
             enable_prefix_caching=True,
         )
+        if self.max_num_seqs > 0:
+            llm_kwargs["max_num_seqs"] = self.max_num_seqs
         # vLLM-side bitsandbytes 4-bit. Without this a 32B model can't
         # fit inference on a 48 GB GPU. The `load_format='bitsandbytes'`
         # tells vLLM to read pre-quantized .safetensors shards (as
@@ -140,7 +147,7 @@ class VLLMModelLoader:
         except TypeError as _e:
             msg = str(_e)
             recovered = False
-            for kw in ("enable_prefix_caching", "enable_lora", "max_lora_rank"):
+            for kw in ("enable_prefix_caching", "enable_lora", "max_lora_rank", "max_num_seqs"):
                 if kw in msg and kw in llm_kwargs:
                     logger.warning(f"vLLM LLM() rejected {kw} — retrying without it")
                     llm_kwargs.pop(kw, None)

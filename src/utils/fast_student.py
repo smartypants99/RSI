@@ -60,9 +60,12 @@ class FastStudentConfig:
     model_name: str = DEFAULT_FAST_STUDENT_MODEL
     # Re-distill every F *trained* cycles. Cycle 0 always uses the teacher;
     # after the first F trained cycles we harvest teacher generations and
-    # distill. F=5 balances staleness (student drifts from current teacher)
-    # against distill cost.
-    redistill_every: int = 5
+    # distill. Task #10 speed pass: 5 → 2 so the student tracks the teacher
+    # more tightly once the offline-distill path lands. Inline distill
+    # remains gated behind orchestrator.fast_student_distill_inline=False
+    # so this bump does NOT by itself add per-cycle wall-clock — it only
+    # accelerates buffer-consumption cadence.
+    redistill_every: int = 2
     # Minimum (prompt, completion) pairs required before the first distill
     # fires. Below this we keep generating with the teacher — distilling on
     # too little data produces a student that hurts more than it helps.

@@ -1153,9 +1153,12 @@ class TaskSynthesizer:
                 "TaskSynthesizer has no generate_fn and no model_loader — "
                 "cannot produce co-gen outputs"
             )
+        # Task #10: configurable solver cap — R1 still needs <think> headroom
+        # but 1200 is enough for a single-function solve with the ``` stop.
+        solver_cap = int(getattr(self.config, "solver_max_new_tokens", 2048))
         try:
             return list(self.model_loader.generate_batch(
-                prompts, max_new_tokens=2048, temperature=0.6, top_p=0.95,
+                prompts, max_new_tokens=solver_cap, temperature=0.6, top_p=0.95,
             ))
         except Exception as exc:
             logger.warning("model_loader.generate_batch (code) failed: %s", exc)
@@ -1179,9 +1182,12 @@ class TaskSynthesizer:
                 "TaskSynthesizer has no generate_fn and no model_loader — "
                 "cannot produce co-gen outputs"
             )
+        # Task #10: configurable proposer cap — 600 by default, since the
+        # PROBLEM/ENTRY/REFERENCE/TESTS structure fits comfortably under that.
+        proposer_cap = int(getattr(self.config, "proposer_max_new_tokens", 2048))
         try:
             return list(self.model_loader.generate_batch(
-                prompts, max_new_tokens=2048, temperature=0.6, top_p=0.95,
+                prompts, max_new_tokens=proposer_cap, temperature=0.6, top_p=0.95,
             ))
         except Exception as exc:
             logger.warning("model_loader.generate_batch failed: %s", exc)
@@ -1770,8 +1776,9 @@ class TaskSynthesizer:
             if self._generate_fn_override is not None:
                 raws = [self._generate_fn_override(p) for p in prompts]
             elif self.model_loader is not None:
+                solver_cap = int(getattr(self.config, "solver_max_new_tokens", 2048))
                 raws = list(self.model_loader.generate_batch(
-                    prompts, max_new_tokens=2048, temperature=0.6, top_p=0.95,
+                    prompts, max_new_tokens=solver_cap, temperature=0.6, top_p=0.95,
                 ))
             else:
                 raws = [""] * len(prompts)

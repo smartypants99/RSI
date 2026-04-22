@@ -76,6 +76,54 @@ def test_vllm_chunked_prefill_default_true():
     assert cfg.enable_chunked_prefill is True
 
 
+def test_vllm_log_throughput_stats_default_false():
+    """Task #18 step 3: default OFF — log volume non-trivial on long runs.
+    Flip on for a single diagnostic cycle to verify prefix-cache hit-rate."""
+    cfg = VLLMConfig()
+    assert cfg.log_throughput_stats is False
+
+
+def test_vllm_log_throughput_stats_flips_disable_log_stats():
+    """When log_throughput_stats=True, vLLM's disable_log_stats kwarg must
+    land as False so the engine emits prompt_throughput + num_cached_tokens."""
+    import sys, types
+    fake_vllm = types.ModuleType("vllm")
+    captured: dict = {}
+
+    class _FakeLLM:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def get_tokenizer(self):
+            class _T:
+                pad_token = "[PAD]"
+                eos_token = "[EOS]"
+                pad_token_id = 0
+            return _T()
+
+    fake_vllm.LLM = _FakeLLM
+    fake_vllm.SamplingParams = object
+    sys.modules["vllm"] = fake_vllm
+    try:
+        import src.utils.vllm_backend as vb
+        vb._VLLM_AVAILABLE = True
+
+        loader_off = vb.VLLMModelLoader(
+            model_path="stub/base", log_throughput_stats=False,
+        )
+        loader_off._load_vllm()
+        assert captured.get("disable_log_stats") is True
+
+        captured.clear()
+        loader_on = vb.VLLMModelLoader(
+            model_path="stub/base", log_throughput_stats=True,
+        )
+        loader_on._load_vllm()
+        assert captured.get("disable_log_stats") is False
+    finally:
+        sys.modules.pop("vllm", None)
+
+
 def test_vllm_chunked_prefill_threaded_to_loader_kwargs():
     """The VLLMModelLoader stores the chunked-prefill flag and would pass
     it to vllm.LLM(). Stubs `vllm` import so no GPU is touched."""

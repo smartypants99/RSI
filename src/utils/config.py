@@ -923,6 +923,16 @@ class VLLMConfig:
     # (the loader's TypeError-retry drops it gracefully).
     enable_chunked_prefill: bool = True
 
+    # Task #18 speed pass step 3: prefix-cache throughput logging. When
+    # True, flip vLLM's disable_log_stats=False so the engine emits
+    # per-interval prompt_throughput + num_cached_tokens lines. Off by
+    # default because the log volume is non-trivial on long runs; flip
+    # on for a single diagnostic cycle to VERIFY the long shared prefix
+    # is actually caching (gemini consult: a single trailing-space drift
+    # in the system prompt invalidates the cache for everything after it,
+    # silently, with no other failure mode).
+    log_throughput_stats: bool = False
+
     def __post_init__(self):
         if not (0.0 < self.gpu_memory_utilization <= 1.0):
             raise ValueError(f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}")

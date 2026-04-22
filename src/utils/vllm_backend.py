@@ -46,7 +46,8 @@ class VLLMModelLoader:
                  enforce_eager: bool = False,
                  coresident_training_enabled: bool = False,
                  coresident_vllm_mem_frac: float = 0.42,
-                 enable_chunked_prefill: bool = True):
+                 enable_chunked_prefill: bool = True,
+                 log_throughput_stats: bool = False):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
@@ -74,6 +75,12 @@ class VLLMModelLoader:
         # prompts with decode across the 120-prompt solve batch so prefill
         # spikes don't stall the decode pipeline.
         self.enable_chunked_prefill = bool(enable_chunked_prefill)
+        # Task #18 step 3: prefix-cache throughput logging. When True,
+        # vLLM emits per-interval prompt_throughput + num_cached_tokens
+        # lines so we can verify the shared-prefix cache is actually
+        # hitting. Default False (log volume); flip on for a diagnostic
+        # cycle.
+        self.log_throughput_stats = bool(log_throughput_stats)
         if self.coresident_training_enabled:
             # Override the effective VRAM fraction and force eager mode.
             self.gpu_memory_utilization = self.coresident_vllm_mem_frac
@@ -140,7 +147,9 @@ class VLLMModelLoader:
             max_model_len=self.max_model_len,
             gpu_memory_utilization=self.gpu_memory_utilization,
             trust_remote_code=self.allow_remote_code,
-            disable_log_stats=True,
+            # Task #18 step 3: flip to False to see prompt_throughput +
+            # num_cached_tokens stats for prefix-cache verification.
+            disable_log_stats=not self.log_throughput_stats,
             # Explicit: propose/solve prompts share a long system-prompt prefix
             # ("<think>\n\n</think>\n\n" + chat template + task intro). With
             # prefix caching the attn KV for that shared prefix is computed once

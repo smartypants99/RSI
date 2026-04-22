@@ -297,6 +297,12 @@ class ImprovementLoop:
                 enable_chunked_prefill=bool(
                     getattr(vllm_cfg, "enable_chunked_prefill", True)
                 ),
+                # Task #18 step 3: prefix-cache throughput logging. Off
+                # by default; flip on for a diagnostic cycle to verify
+                # the shared-prefix cache is hitting.
+                log_throughput_stats=bool(
+                    getattr(vllm_cfg, "log_throughput_stats", False)
+                ),
             )
         else:
             from ..utils.model_loader import ModelLoader

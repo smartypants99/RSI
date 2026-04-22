@@ -233,3 +233,42 @@ def test_clean_floor_filter_drops_any_fail_when_clean_enough():
     assert dropped == 4
     assert len(out) == 20
     assert all("any_fail" not in s.verdict_warnings for s in out)
+
+
+# ---------------------------------------------------------------------------
+# Task #14: warmup-cycle epoch cap
+# ---------------------------------------------------------------------------
+
+def test_warmup_epoch_cap_defaults_and_validation():
+    cfg = TrainerConfig()
+    assert cfg.num_epochs_warmup == 1
+    assert cfg.num_epochs_warmup_cycles == 5
+
+    # warmup=0 rejected (must be >= 1 to mean anything).
+    with pytest.raises(ValueError, match="num_epochs_warmup must be >= 1"):
+        TrainerConfig(num_epochs_warmup=0)
+    # cycles < 0 rejected. 0 is allowed (= disabled).
+    with pytest.raises(ValueError, match="num_epochs_warmup_cycles must be >= 0"):
+        TrainerConfig(num_epochs_warmup_cycles=-1)
+    TrainerConfig(num_epochs_warmup_cycles=0)  # disabled — allowed
+
+
+def test_warmup_epoch_cap_override_logic():
+    """Emulate the train() override without spinning up torch — tests the
+    min(num_epochs, warmup) rule for cycle <= warmup_cycles and no override
+    past that window.
+    """
+    cfg = TrainerConfig(num_epochs=3, num_epochs_warmup=1, num_epochs_warmup_cycles=5)
+    for cycle in range(1, 6):
+        eff = min(cfg.num_epochs, cfg.num_epochs_warmup) if cycle <= cfg.num_epochs_warmup_cycles else cfg.num_epochs
+        assert eff == 1, f"cycle {cycle} should be capped to warmup=1"
+    # Cycle 6+ uses full num_epochs.
+    cycle = 6
+    eff = min(cfg.num_epochs, cfg.num_epochs_warmup) if cycle <= cfg.num_epochs_warmup_cycles else cfg.num_epochs
+    assert eff == 3
+
+    # Disabled (warmup_cycles=0): never override.
+    cfg2 = TrainerConfig(num_epochs=3, num_epochs_warmup_cycles=0)
+    for cycle in range(1, 10):
+        eff = min(cfg2.num_epochs, cfg2.num_epochs_warmup) if cycle <= cfg2.num_epochs_warmup_cycles else cfg2.num_epochs
+        assert eff == 3

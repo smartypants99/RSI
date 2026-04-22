@@ -240,6 +240,14 @@ class TrainerConfig:
     num_epochs: int = 2
     batch_size: int = 2
     gradient_accumulation_steps: int = 4
+    # Warmup-cycle epoch cap (task #14). Early cycles have the least-
+    # calibrated reference (cycle-1 held-out is always thinly sampled), so
+    # small per-cycle weight updates reduce the chance that a noisy reference
+    # gets locked in as "best". For cycle <= num_epochs_warmup_cycles the
+    # effective num_epochs is min(num_epochs, num_epochs_warmup). Set
+    # num_epochs_warmup_cycles=0 to disable the warmup cap.
+    num_epochs_warmup: int = 1
+    num_epochs_warmup_cycles: int = 5
 
     # Regularization knobs (see _train_inner in custom_lora.py).
     # early_stop_loss: if unweighted loss drops below this mid-training, stop
@@ -439,6 +447,15 @@ class TrainerConfig:
             raise ValueError(f"learning_rate must be > 0, got {self.learning_rate}")
         if self.num_epochs < 1:
             raise ValueError(f"num_epochs must be >= 1, got {self.num_epochs}")
+        if self.num_epochs_warmup < 1:
+            raise ValueError(
+                f"num_epochs_warmup must be >= 1, got {self.num_epochs_warmup}"
+            )
+        if self.num_epochs_warmup_cycles < 0:
+            raise ValueError(
+                f"num_epochs_warmup_cycles must be >= 0, "
+                f"got {self.num_epochs_warmup_cycles}"
+            )
         if self.batch_size < 1:
             raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
         if self.gradient_accumulation_steps < 1:

@@ -808,6 +808,44 @@ class CustomLoRATrainer:
         # so metrics reflect just this cycle.
         self._loss_trajectory = []
 
+        # Warmup-cycle epoch cap (task #14). For early cycles, temporarily
+        # override num_epochs to num_epochs_warmup. The reference is still
+        # being calibrated — smaller per-cycle updates reduce the chance
+        # of locking in a lucky cycle-1 eval as the permanent best.
+        warmup_cycles = int(getattr(self.config, "num_epochs_warmup_cycles", 0))
+        warmup_epochs = int(getattr(self.config, "num_epochs_warmup", 1))
+        _orig_num_epochs = self.config.num_epochs
+        _epochs_overridden = False
+        if warmup_cycles > 0 and cycle <= warmup_cycles:
+            effective = min(self.config.num_epochs, warmup_epochs)
+            if effective != self.config.num_epochs:
+                self.config.num_epochs = effective
+                _epochs_overridden = True
+                logger.info(
+                    f"  Warmup-cycle epoch cap: cycle {cycle} <= "
+                    f"{warmup_cycles}, num_epochs {_orig_num_epochs} → {effective}"
+                )
+        try:
+            return self._train_dispatch(
+                verified_samples, cycle, pairs, mode, preference_pairs,
+            )
+        finally:
+            if _epochs_overridden:
+                self.config.num_epochs = _orig_num_epochs
+
+    def _train_dispatch(
+        self,
+        verified_samples: list[TrainingSample],
+        cycle: int,
+        pairs: list,
+        mode: str,
+        preference_pairs: Optional[list[PreferencePair]],
+    ) -> TrainingMetrics:
+        """Routes to the SFT/DPO/GRPO/mixed path. Extracted from train() so
+        the warmup-cycle epoch override + sample-quality filter in train()
+        don't balloon. Behavior unchanged from the pre-refactor inline body.
+        """
+
         # Sample-quality clean-floor filter (task #14). Reads the floor from
         # the generator config (where the other sample-quality knobs live)
         # with a safe default of 0 (disabled) if the attribute is missing.

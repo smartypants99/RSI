@@ -1561,3 +1561,88 @@ already writes the adapter file each cycle; need to add
 `--enable-lora --lora-modules name=/path/to/adapter` to vLLM boot so
 inference actually uses trained weights. That's a ~50 LoC patch on
 vllm_backend.py, deferred to next team-rsi-integrate iteration.
+
+2026-04-21 15:46 UTC — Post-restart after two fixes landed:
+  - 95841d0 feat(qlora): persist LoRA adapter across cycles on bnb-4bit (PEFT export + vLLM --enable-lora).
+  - 60f929a fix(qlora): enable_input_require_grads to unblock gradient flow to LoRA.
+  Root-caused the "8 steps, score +0.000 / 448/448 zero B matrix" symptom: 4-bit frozen base + gradient checkpointing severs autograd at the embedding; B never leaves zero init. Standard QLoRA recipe fix (HF's prepare_model_for_kbit_training does the same thing via input_require_grads hook).
+  Archived outputs.pre-grad-fix.1776786072. Fresh run launched via /venv/main activation (run_deepseek.sh needs source /venv/main/bin/activate — nohup non-login shells don't pick it up from .bashrc).
+  Cycle 1 in PROPOSE at 15:44 UTC. Next cron fire should show whether B is non-zero post-training and whether held-out is measurable against the new 0.444 baseline.
+
+2026-04-21 18:11 UTC — KEY DIAGNOSTIC: LoRA B was training, just imperceptibly.
+Inspected saved adapters from prior run via safetensors:
+  cycle 1 (1 sample, 8 steps):  B_max=3.6e-4, A_max=0.014
+  cycle 3 (9 samples, 4 steps): B_max=1.8e-4, A_max=0.014
+Held-out = 0.462 / 0.457 respectively (both -0.04 below reference 0.500 → reverted).
+Effective weight delta ≈ scaling(2) × B(3.6e-4) × A(0.014) = 1e-5 per element.
+That's below the bf16 noise floor of frozen base (~0.05). Adapter is functionally identity.
+
+Root cause: learning_rate=5e-6 was tuned for a different regime. With LoRA+ (B at 16× A lr),
+lr_B = 8e-5 — still 25× below standard QLoRA (2e-4). Gradient flow IS working (fix 60f929a
+wasn't wrong, just insufficient diagnostic signal because of the false-positive warning).
+
+Fix: bumped learning_rate default 5e-6 → 5e-5 (41b960d). Effective lr_B now 8e-4 — canonical
+QLoRA territory. Regression-revert guard stays as safety net.
+Restarted 18:11 UTC with new LR. Archived prior outputs as outputs.lowlr.*.
+
+2026-04-21 19:04 UTC — First trained cycle after LR fix (commit 41b960d):
+  cycle 1: held-out=0.624, anchor=0.354 (he=0.0, mbpp=0.0, gsm8k=1.0, math=0.42), 2 steps on 1 sample.
+Prior lowlr baseline was 0.462. Delta +0.16 absolute vs old LR baseline — first cycle where LoRA delta is visibly above noise floor.
+Reference floor must now be sub-0.594 (since no revert triggered). Cycle 2 will give paired-sample delta.
+Caveats-as-tasks:
+  - humaneval/mbpp at 0.0 looks like harness issue. If persists through cycle 3, investigate.
+  - 2 steps is very few; early-stop may be firing on the single-sample overfit signal. Will want more accepts or higher min_patience.
+
+2026-04-22 00:24 UTC — VERIFIER-CAPTURE-ALARM fired at cycle 7. RUN HALTED per protocol.
+
+Details:
+  cycle 1 anchor: 0.354 (he=0.0, mbpp=0.0, gsm8k=1.000, math=0.417)
+  cycle 7 anchor: 0.250 (he=0.0, mbpp=0.0, gsm8k=0.917, math=0.083)
+  anchor_delta: −0.0417
+  internal held-out cycle 7: 0.586
+  paired delta vs cycle 1 ref (0.624): +0.0612 ± 0.0171 (z=3.57, n=801, VR=2.1x)
+  → internal UP, anchor DOWN. Canary threshold tripped.
+
+Note: pipeline continued to cycle 8 after the alarm logged — the alarm is diagnostic, not auto-stopping.
+I manually killed the process at 00:24 UTC per the "STOP cycle, DO NOT restart without investigating" rule.
+
+Investigation (honest read, not overclaim):
+- Cycle 7 trained on propositional-logic frontier (23:43 UTC log).
+- MATH anchor dropped from 0.417 → 0.083 (−0.33). HE/MBPP stayed at 0.0 both times.
+- GSM8K barely moved (1.0 → 0.917).
+- The +0.0612 on internal is significant; the anchor loss concentrated in MATH (not GSM8K).
+- This pattern is consistent with TWO possible explanations:
+    (a) True verifier capture: adapter learned code_builtins verifier-surface rather than code skill.
+    (b) Capability trade-off: logic training shifted representation toward logical-form code patterns
+        at the cost of math reasoning. Anchor canary can't distinguish (a) from (b).
+- Mitigation options for user to consider:
+    1. Keep run halted; user review cycle 7 adapter outputs vs cycle 1 to see if internal gains look like verifier-gaming (pattern matching, not new skill).
+    2. Resume with `consistency_threshold` raised to reject more propose-batch (tightens verifier).
+    3. Resume with training mixing — force N code samples per batch to prevent domain monopoly.
+
+Status:
+  - GPU process killed. No run active.
+  - Best adapter: outputs/lora_weights/lora_cycle_1 (held-out 0.624, anchor 0.354).
+  - Run log preserved at /workspace/RSI/outputs/run.log.
+  - Awaiting user direction. DID NOT restart.
+
+SIGNOFF trainer-auditor 2026-04-22 (task #1)
+  commit: be7bc53 fix(trainer): remove silent sqrt(cycle) LR decay from DPO/GRPO/mixed; adaptive step budget for DPO
+  Audit scope: src/trainer/custom_lora.py, src/trainer/stability.py
+  Fixed:
+    - DPO/GRPO/mixed-SFT silently applied cycle_lr = lr / sqrt(cycle), overriding meta-LR-bandit proposals. Removed. (SFT main path was already fixed; DPO/GRPO/_train_sft_entry were missed.)
+    - DPO inner loop lacked _plan_step_budget: could exceed max_steps_per_cycle on small pref batches (memorization risk) or silently run below min_steps_per_cycle. Now uses the same adaptive grad_accum planner as SFT.
+    - _train_sft_entry (mixed mode) tokenized to model_loader.config.max_seq_length (4096) instead of train_max_seq_length, wasting ~16x attention compute per step. Capped to match main SFT path.
+  Verified still sound (static):
+    - enable_input_require_grads applied in all three paths (SFT, DPO, GRPO) after gradient_checkpointing_enable — required for QLoRA gradient flow.
+    - GradientNormTracker uses register_step_pre_hook (48db8c9), avoiding monkey-patch break of optimizer.step.__func__.
+    - merge_lora skips bnb-4bit/8bit base via attribute check (quant_state / CB / SCB) AND class-name backstop; zero_B tally is separated from quant_skipped (4059b21).
+    - save_lora_weights emits PEFT adapter safely: warns that DoRA/PiSSA residuals make the PEFT export unsafe off-bnb-4bit base; native lora_weights.pt still saved.
+    - LoRA+ optimizer splits A (slow) / B (fast) / magnitude (slow) param groups correctly.
+    - Early-stop patience (min_patience_batches = 2 * effective_accum) prevents cycle-4/5/7/8 noisy-single-batch false-trip while preserving memorization guard.
+  Remaining risks needing live-GPU confirmation:
+    - Cannot statically verify enable_input_require_grads actually propagates grads through the bnb-4bit embedding on DeepSeek-R1-Distill-Qwen-32B; needs a one-step training probe where merge_lora reports zero_B/total_layers afterwards. Claim 60f929a fixes this still requires a GPU replay to confirm zero_B drops below the undertrained threshold.
+    - DPO and GRPO reference-forward path (LoRA A-zero swap under no_grad) is correct in isolation, but has not been stress-tested with gradient_checkpointing enabled on a real quantized base. If GC's recompute interferes, symptom would be NaN/non-finite DPO logits — watch for that in first DPO cycle.
+    - _train_mixed: SFT side uses adaptive planner; DPO side now also does. No live run has exercised mixed mode.
+    - GRPO rollout cache retains per-prompt tensors across epochs; not a correctness bug, but a long multi-epoch GRPO run could accumulate VRAM — worth monitoring.
+  pytest: 682 passed, 2 skipped, 1 warning (unchanged from baseline).

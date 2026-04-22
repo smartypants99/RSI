@@ -41,11 +41,13 @@ def _make_loop(tmp_path: Path, *, confirm_n: int = 2, min_samples: int = 8):
 
 
 def _make_result(cycle: int, *, eval_score: float, samples_verified: int = 32,
-                 capture_alarm: bool = False) -> CycleResult:
+                 capture_alarm: bool = False,
+                 mode_collapse: bool = False) -> CycleResult:
     r = CycleResult(cycle)
     r.eval_score = eval_score
     r.samples_verified = samples_verified
     r.verifier_capture_alarm = capture_alarm
+    r.mode_collapse_detected = mode_collapse
     return r
 
 
@@ -91,31 +93,40 @@ def test_promotion_requires_two_consecutive_confirmations(tmp_path):
 
 
 def test_confirmation_requires_consecutive_at_or_above(tmp_path):
-    """Confirmation counts only consecutive cycles at-or-above pending mark."""
+    """Confirmation counts only consecutive cycles at-or-above pending mark.
+
+    Task #11 concern #3: a cycle that REGRESSES vs. a prior cycle's eval
+    score must NOT advance or re-open the pending-best streak, even if
+    its score strictly exceeds the (possibly 0.0) confirmed _best_score.
+    Before this fix, overnight cycle 2 logged "streak=1/2 — awaiting
+    confirmation" despite being reverted vs. reference.
+    """
     loop = _make_loop(tmp_path, confirm_n=3, min_samples=8)
     r1 = _make_result(1, eval_score=0.7, samples_verified=32)
     loop.history.append(r1)
     loop._check_early_stopping(1, r1)
     assert loop._pending_best_streak == 1
-    # Cycle 2 below pending → the pending mark is dropped (new candidate).
+    # Cycle 2 regresses (0.55 < 0.7 - tol). Despite 0.55 > _best_score (0.0),
+    # the regression guard must refuse to open a new pending streak.
     r2 = _make_result(2, eval_score=0.55, samples_verified=32)
     loop.history.append(r2)
     loop._check_early_stopping(2, r2)
-    # 0.55 > 0 (_best_score still 0) so it opens a fresh pending streak.
-    assert loop._pending_best_score == 0.55
-    assert loop._pending_best_streak == 1
-    # Cycle 3 confirms 0.55 → streak advances to 2 of 3.
+    assert loop._pending_best_streak == 0
+    assert loop._pending_best_cycle is None
+    assert loop._pending_best_score == 0.0
+    # Cycle 3 ALSO regresses vs. cycle 1 (0.56 < 0.7 - tol). Still no streak.
     r3 = _make_result(3, eval_score=0.56, samples_verified=32)
     loop.history.append(r3)
     loop._check_early_stopping(3, r3)
-    assert loop._pending_best_streak == 2
-    # Cycle 4 regresses BELOW _best_score=0 is impossible, but 0.55 pending
-    # → a score below pending but above best should NOT continue the streak.
-    r4 = _make_result(4, eval_score=0.54, samples_verified=32)
+    assert loop._pending_best_streak == 0
+    # Cycle 4 recovers AT-OR-ABOVE the prior max (0.71 >= 0.7 - tol). A fresh
+    # pending streak opens — this is a legitimate new high-water candidate.
+    r4 = _make_result(4, eval_score=0.71, samples_verified=32)
     loop.history.append(r4)
     loop._check_early_stopping(4, r4)
     assert loop._pending_best_streak == 1
-    assert loop._pending_best_score == 0.54
+    assert loop._pending_best_score == 0.71
+    assert loop._pending_best_cycle == 4
 
 
 def test_interrupting_ineligible_cycle_resets_pending(tmp_path):
@@ -156,3 +167,81 @@ def test_config_rejects_bad_values():
         OrchestratorConfig(best_min_samples_verified=-1)
     with pytest.raises(ValueError):
         OrchestratorConfig(verifier_capture_halt_consecutive=0)
+
+
+# --- Task #11 concern #3: regression guard for streak-advance ---
+
+
+def test_streak_does_not_advance_on_regression_vs_prior_eligible(tmp_path):
+    """Cycle 2 with score < cycle 1's score (both eligible) must NOT log
+    'streak=1/2' — that was the overnight-run false-positive where cycle 2
+    ticked streak=1 despite being reverted vs. reference."""
+    loop = _make_loop(tmp_path, confirm_n=2, min_samples=8)
+    r1 = _make_result(1, eval_score=0.70, samples_verified=32)
+    loop.history.append(r1)
+    loop._check_early_stopping(1, r1)
+    assert loop._pending_best_streak == 1
+    # Cycle 2: regressed vs. cycle 1 (0.60 < 0.70 - 0.005). Must NOT advance.
+    r2 = _make_result(2, eval_score=0.60, samples_verified=32)
+    loop.history.append(r2)
+    loop._check_early_stopping(2, r2)
+    assert loop._pending_best_streak == 0
+    assert loop._pending_best_cycle is None
+    assert loop._pending_best_score == 0.0
+    # _best_score stays unpromoted — regression can't accidentally confirm.
+    assert loop._best_score == 0.0
+    assert loop._best_checkpoint_cycle is None
+
+
+def test_streak_advances_on_recovery_to_prior_high(tmp_path):
+    """After a regression, a recovery cycle at-or-above the prior high must
+    open a fresh pending streak (not be blocked by the regressed cycle)."""
+    loop = _make_loop(tmp_path, confirm_n=2, min_samples=8)
+    r1 = _make_result(1, eval_score=0.70, samples_verified=32)
+    loop.history.append(r1)
+    loop._check_early_stopping(1, r1)
+    r2 = _make_result(2, eval_score=0.60, samples_verified=32)
+    loop.history.append(r2)
+    loop._check_early_stopping(2, r2)
+    assert loop._pending_best_streak == 0
+    # Cycle 3 recovers to 0.72 > prior_max 0.70 → fresh pending streak.
+    r3 = _make_result(3, eval_score=0.72, samples_verified=32)
+    loop.history.append(r3)
+    loop._check_early_stopping(3, r3)
+    assert loop._pending_best_streak == 1
+    assert loop._pending_best_score == 0.72
+
+
+def test_regression_guard_ignores_ineligible_prior_spikes(tmp_path):
+    """An ineligible prior cycle (tiny sample / capture alarm / mode-collapse)
+    whose score would be a "high" must NOT block a later legitimate at-bar
+    cycle from opening a streak. Only eligible priors count as regression refs."""
+    loop = _make_loop(tmp_path, confirm_n=2, min_samples=8)
+    # Cycle 1: high score but ineligible (tiny sample count).
+    r1 = _make_result(1, eval_score=0.90, samples_verified=1)
+    loop.history.append(r1)
+    loop._check_early_stopping(1, r1)
+    assert loop._pending_best_streak == 0  # ineligible, not streaked
+    # Cycle 2: legitimate 0.70, eligible. Must open pending streak despite
+    # cycle 1's ineligible 0.90 "spike".
+    r2 = _make_result(2, eval_score=0.70, samples_verified=32)
+    loop.history.append(r2)
+    loop._check_early_stopping(2, r2)
+    assert loop._pending_best_streak == 1
+    assert loop._pending_best_score == 0.70
+
+
+# --- Task #11 concern #2: mode-collapse ineligibility ---
+
+
+def test_mode_collapse_cycle_cannot_become_best(tmp_path):
+    """A cycle with mode_collapse_detected=True is ineligible for best-
+    promotion even if its samples count and score are otherwise strong."""
+    loop = _make_loop(tmp_path, confirm_n=2, min_samples=8)
+    r1 = _make_result(1, eval_score=0.80, samples_verified=64,
+                      mode_collapse=True)
+    loop.history.append(r1)
+    loop._check_early_stopping(1, r1)
+    assert loop._pending_best_streak == 0
+    assert loop._best_checkpoint_cycle is None
+    assert loop._best_score == 0.0

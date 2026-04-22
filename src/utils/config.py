@@ -72,7 +72,8 @@ class GeneratorConfig:
     min_reasoning_steps: int = 3
     # 30 samples × ~5 weaknesses = ~150 generation calls per cycle, roughly
     # 3-5 min on vLLM. Bump to 100 for richer training sets on beefier setups.
-    samples_per_weakness: int = 30
+    # Task #10 speed pass: 30 → 24 (≈20% cut in solve tokens / cycle).
+    samples_per_weakness: int = 24
     temperature: float = 0.7
     top_p: float = 0.9
     # Self-consistency: generate N independent solutions per problem, train
@@ -166,6 +167,15 @@ class VerifierConfig:
     z3_verifier_enabled: bool = True
     sim_verifier_enabled: bool = True
 
+    # Task #11 concern #1: verifier accept policy. "any_fail_veto" is the
+    # strict §2.1 behavior (any single FAIL rejects). Live run showed
+    # cycle 1 rejected multiple 2-of-3 PASS candidates, starving training.
+    # "majority" accepts when ceil(N/2) PASS; "quorum_2of3" accepts
+    # 2-of-3 PASS with at most 1 FAIL. Both relaxed policies still
+    # enforce distinct-classes + duplicate-author rules and record
+    # verdict_warn=any_fail on the accepted record.
+    verifier_accept_policy: str = "majority"
+
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):
             raise ValueError(f"min_confidence_for_accept must be in [0, 1], got {self.min_confidence_for_accept}")
@@ -179,6 +189,12 @@ class VerifierConfig:
             raise ValueError(
                 f"escalate_to_model_above ({self.escalate_to_model_above}) must be < "
                 f"escalate_to_model_below ({self.escalate_to_model_below})"
+            )
+        if self.verifier_accept_policy not in ("any_fail_veto", "majority", "quorum_2of3"):
+            raise ValueError(
+                "verifier_accept_policy must be one of "
+                "'any_fail_veto'|'majority'|'quorum_2of3', "
+                f"got {self.verifier_accept_policy!r}"
             )
 
 
@@ -523,6 +539,18 @@ class OrchestratorConfig:
     # domains, 540 per-domain lands ~1200 total held-out questions, giving
     # SE ≈ 0.014 at p=0.5 — enough to resolve |delta| > 0.02 confidently.
     heldout_questions_per_domain: int = 540
+    # Task #10 speed pass: quick-eval subsample. On non-"full" cycles we
+    # downscale questions_per_domain so the eval lands ~heldout_quick_subsample_n
+    # prompts total after the HELD_OUT_ONLY partition filter (~37% retain).
+    # Every heldout_full_every cycles we run the full sweep to refresh the
+    # base-model reference. Statistical sanity: at N=128, p≈0.5, SE ≈ 0.044;
+    # paired vs a cached base-model subsample score the variance reduces by
+    # the per-question correlation (typically ~5-10× on frozen-eval). Paired
+    # SE ≈ 0.044/√5 ≈ 0.020 gives z ≈ 2.5 on a true +1pp delta (well above
+    # the z≥2 power floor). Full 1200 every 5 cycles to re-anchor.
+    # Set heldout_quick_subsample_n=0 to disable (always run full).
+    heldout_quick_subsample_n: int = 128
+    heldout_full_every: int = 5
     # Substrate update: promote the merged checkpoint to a new base every N
     # training cycles. LoRA on a frozen 4-bit base has a fixed ceiling (the
     # only trainable params are the low-rank adapters); periodically snapshot
@@ -680,6 +708,13 @@ class OrchestratorConfig:
     # Setting best_confirm_cycles=1 restores the old (broken) behavior.
     best_min_samples_verified: int = 8
     best_confirm_cycles: int = 2
+    # Task #11 concern #2: when the post-train anchor eval reports
+    # distinct/n < this threshold on ANY benchmark (especially offline
+    # fixtures), the cycle is marked mode_collapse_detected=True and
+    # becomes ineligible for best-promotion. Threshold 0.6 matches
+    # overnight-cycle-2 humaneval distinct=7/12=0.58 (would have tripped).
+    # Set to 0.0 to disable the gate.
+    mode_collapse_distinct_threshold: float = 0.6
     # Verifier-capture response (task #2). When detect_verifier_capture fires
     # (internal-up / anchor-down divergence), revert vLLM to last confirmed-best
     # checkpoint, mark the cycle ineligible for best promotion, bump degradation
@@ -695,6 +730,14 @@ class OrchestratorConfig:
             raise ValueError(f"plateau_patience must be >= 1, got {self.plateau_patience}")
         if self.heldout_repetitions < 1:
             raise ValueError(f"heldout_repetitions must be >= 1, got {self.heldout_repetitions}")
+        if self.heldout_quick_subsample_n < 0:
+            raise ValueError(
+                f"heldout_quick_subsample_n must be >= 0, got {self.heldout_quick_subsample_n}"
+            )
+        if self.heldout_full_every < 1:
+            raise ValueError(
+                f"heldout_full_every must be >= 1, got {self.heldout_full_every}"
+            )
         if self.mode not in ("classic", "rsi"):
             raise ValueError(f"orchestrator.mode must be 'classic' or 'rsi', got {self.mode!r}")
         if self.merge_into_base_every < 0:
@@ -749,6 +792,11 @@ class OrchestratorConfig:
                 f"verifier_capture_halt_consecutive must be >= 1, "
                 f"got {self.verifier_capture_halt_consecutive}"
             )
+        if not (0.0 <= self.mode_collapse_distinct_threshold <= 1.0):
+            raise ValueError(
+                "mode_collapse_distinct_threshold must be in [0.0, 1.0], "
+                f"got {self.mode_collapse_distinct_threshold}"
+            )
 
 
 @dataclass
@@ -763,10 +811,17 @@ class VLLMConfig:
     # the ~3-5 min vLLM reload + CUDA graph recapture. Net win when the probe
     # count is small (e.g. single-domain RSI with ~40 questions).
     skip_reload_after_training: bool = False
+    # Task #10 speed pass: vLLM max_num_seqs. Default 32 leverages A6000
+    # KV-cache headroom once propose/solve are shrunk — larger concurrent
+    # batch amortizes the per-step scheduler/decode overhead. Set 0 to use
+    # vLLM's own default (typically 256, overcommits KV on small GPUs).
+    max_num_seqs: int = 32
 
     def __post_init__(self):
         if not (0.0 < self.gpu_memory_utilization <= 1.0):
             raise ValueError(f"gpu_memory_utilization must be in (0, 1], got {self.gpu_memory_utilization}")
+        if self.max_num_seqs < 0:
+            raise ValueError(f"max_num_seqs must be >= 0, got {self.max_num_seqs}")
         if self.max_model_len < 1:
             raise ValueError(f"max_model_len must be >= 1, got {self.max_model_len}")
 
@@ -775,7 +830,10 @@ class VLLMConfig:
 class SynthesisConfig:
     """Configuration for the task-synthesis pipeline (opt-in, default-off)."""
     enable_task_synthesis: bool = False
-    tasks_per_cycle: int = 20
+    # Task #10 speed pass: 20 → 12. At k=3 candidates_per_problem that's still
+    # 36 candidates per propose+solve batch — enough diversity for the quorum
+    # verifier while cutting proposer wall-clock ~40%.
+    tasks_per_cycle: int = 12
     property_consensus_threshold: float = 0.7
     # Candidates per proposed problem in rsi_tick Step 3 (SOLVE). Candidate
     # 0 is always the reference the model emitted when proposing (guaranteed
@@ -784,7 +842,11 @@ class SynthesisConfig:
     # chance-of-finding-a-passing-diverse-solution. Run-4 cycle 5 produced
     # 1 passing candidate across ~60 attempts with k=3; at k=6 with reference
     # as candidate 0, every well-formed proposal should yield ≥1 sample.
-    candidates_per_problem: int = 6
+    # Task #10 speed pass: 6 → 3. Reference (candidate 0, guaranteed-pass when
+    # the model wrote self-consistent tests) plus 2 fresh samples. Halves
+    # solve-phase wall-clock. Quorum threshold unchanged: any well-formed
+    # proposal still needs to pass the property check via reference.
+    candidates_per_problem: int = 3
     # If True, rsi_tick uses the builtin-based code-proposal path
     # (PROBLEM + ENTRY + REFERENCE + TESTS → trusted builtin checks).
     # This is the only path that actually produces training samples with
@@ -830,6 +892,16 @@ class SynthesisConfig:
     # Fast-start (Task #11). Cycle 1 uses this smaller propose budget so
     # the first cycle lands fast; cycle>=2 falls back to tasks_per_cycle.
     synthesis_tasks_per_cycle_bootstrap: int = 15
+
+    # Task #10 speed pass: cap proposer + solver generation length. The
+    # proposer's output is structured (PROBLEM/ENTRY/REFERENCE/TESTS) and
+    # fits well inside 600 tokens for the 12-task batch default. R1-style
+    # <think> blocks are stripped post-generation, so capping hard here
+    # saves wall-clock on the 32B-R1 path without harming the parser.
+    # Solver cap is separately configurable because solver needs more
+    # headroom for reasoning-before-code.
+    proposer_max_new_tokens: int = 600
+    solver_max_new_tokens: int = 1200
 
     # Reasoning-strategy library (Task #1B). Model-authored reasoning templates
     # stored as system-prompt prefixes, A/B-tested on a held-out slice, winners

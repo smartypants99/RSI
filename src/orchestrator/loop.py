@@ -77,6 +77,10 @@ class CycleResult:
         self.had_diagnostics: bool = False
         self.eval_score: float | None = None
         self.eval_domain_scores: dict[str, float] = {}
+        # Task #10: which held-out eval kind this cycle ran. "full" draws
+        # the complete HELD_OUT_ONLY sweep; "quick" uses the subsample
+        # path to shorten wall-clock on non-anchor cycles.
+        self.heldout_eval_kind: str = "full"
         # meta_analyst ASK 1: per-subdomain breakdown of the held-out eval,
         # keyed "domain/subdomain". The overall eval_score is one number;
         # this is the per-bucket view needed to tell whether a subdomain-
@@ -126,6 +130,11 @@ class CycleResult:
         # Task #14: set True when solution-diversity tracker raised a
         # mode-collapse alarm this cycle.
         self.diversity_alarm: bool = False
+        # Task #11 concern #2: set True when per-benchmark distinct/n falls
+        # below mode_collapse_distinct_threshold on the post-train anchor
+        # eval. When True the cycle is ineligible for best-promotion —
+        # a "clean score with degenerate outputs" cannot become a reference.
+        self.mode_collapse_detected: bool = False
 
     @property
     def improved(self) -> bool:
@@ -223,6 +232,7 @@ class ImprovementLoop:
                 gpu_memory_utilization=vllm_cfg.gpu_memory_utilization,
                 allow_remote_code=getattr(config.model, "allow_remote_code", False),
                 quantization_config=vllm_cfg.quantization_config,
+                max_num_seqs=int(getattr(vllm_cfg, "max_num_seqs", 0) or 0),
             )
         else:
             from ..utils.model_loader import ModelLoader
@@ -1049,6 +1059,11 @@ class ImprovementLoop:
                                 calibration=self._registries,
                                 quorum_distinct_classes_required=2,
                                 min_properties=2,
+                                accept_policy=getattr(
+                                    self.config.verifier,
+                                    "verifier_accept_policy",
+                                    "any_fail_veto",
+                                ),
                             )
                         except Exception as exc:
                             logger.debug("  verify() raised for task %s: %s", task_id, exc)
@@ -1723,6 +1738,10 @@ class ImprovementLoop:
                     continue
                 _verify_work.append((problem, pid, idx, cand_id, candidate_str, props))
 
+        _accept_policy = getattr(
+            self.config.verifier, "verifier_accept_policy", "any_fail_veto",
+        )
+
         def _verify_one(item):
             _problem, _pid, _idx, _cand_id, _cand_str, _props = item
             try:
@@ -1734,6 +1753,7 @@ class ImprovementLoop:
                     calibration=reg.calibration_ledger,
                     quorum_distinct_classes_required=2,
                     min_properties=2,
+                    accept_policy=_accept_policy,
                 )
                 return (item, rec, None)
             except Exception as exc:
@@ -2516,6 +2536,40 @@ class ImprovementLoop:
         heldout_target_per_domain = int(
             getattr(self.config.orchestrator, "heldout_questions_per_domain", 540)
         )
+        # Task #10: quick-eval gating. Every heldout_full_every cycles we
+        # run the full sweep; on other cycles we shrink the per-domain
+        # target so the total lands near heldout_quick_subsample_n after
+        # the HELD_OUT_ONLY partition filter (~37% retain). Cycle 1 always
+        # runs full so the base-model reference is cached from a full draw.
+        _quick_n = int(getattr(
+            self.config.orchestrator, "heldout_quick_subsample_n", 0
+        ))
+        _full_every = int(getattr(
+            self.config.orchestrator, "heldout_full_every", 5
+        ))
+        is_full_cycle = (
+            cycle == 1
+            or _full_every <= 1
+            or (cycle % max(1, _full_every) == 0)
+        )
+        try:
+            result.heldout_eval_kind = "full" if is_full_cycle else "quick"
+        except AttributeError:
+            pass
+        if _quick_n > 0 and not is_full_cycle:
+            _n_domains = max(1, len(cfg.domains))
+            _desired_per_domain = max(
+                int(cfg.min_questions_per_domain),
+                int(-(-_quick_n // _n_domains) / 0.37 + 0.999),
+            )
+            heldout_target_per_domain = min(
+                heldout_target_per_domain, _desired_per_domain
+            )
+            logger.info(
+                "[Cycle %d] Phase 5b: QUICK eval — target ~%d prompts "
+                "(per-domain=%d, full every %d cycles)",
+                cycle, _quick_n, heldout_target_per_domain, _full_every,
+            )
         prev_mode = getattr(self.diagnostics, "_frozen_eval_mode", False)
         self.diagnostics._frozen_eval_mode = True
         try:
@@ -2656,6 +2710,37 @@ class ImprovementLoop:
                         "  anchor eval SUSPECT per-benchmark alarms: %s",
                         _suspect,
                     )
+                # Task #11 concern #2: mode-collapse automatic response.
+                # If distinct/n < threshold on any benchmark that ran this
+                # cycle, mark cycle ineligible for best-promotion. This
+                # catches "score looks clean but outputs collapsed" before
+                # the cycle gets confirmed as the new best reference.
+                _mc_threshold = float(getattr(
+                    ocfg, "mode_collapse_distinct_threshold", 0.0,
+                ))
+                if _mc_threshold > 0:
+                    _pb_n = summary.get("per_benchmark_n", {}) or {}
+                    _pb_distinct = summary.get("per_benchmark_distinct", {}) or {}
+                    _collapsed: list[dict] = []
+                    for _b, _n in _pb_n.items():
+                        if _n <= 0:
+                            continue
+                        _d = _pb_distinct.get(_b, 0)
+                        _ratio = _d / _n
+                        if _ratio < _mc_threshold:
+                            _collapsed.append({
+                                "benchmark": _b,
+                                "distinct": _d,
+                                "n": _n,
+                                "ratio": round(_ratio, 3),
+                            })
+                    if _collapsed:
+                        result.mode_collapse_detected = True
+                        logger.warning(
+                            "  mode_collapse_detected=True benchmarks=%s "
+                            "(distinct/n < %.2f) — cycle ineligible for best-promotion",
+                            _collapsed, _mc_threshold,
+                        )
                 # Baseline-drift canary (task #4). The cycle_0 anchor score
                 # is frozen here; every 10 cycles we compare the current
                 # anchor to that baseline. If drift > ±0.01 we HALT self-edit
@@ -3267,9 +3352,46 @@ class ImprovementLoop:
         eligible = (
             result.samples_verified >= min_samples
             and not getattr(result, "verifier_capture_alarm", False)
+            # Task #11 concern #2: mode-collapse cycles cannot be promoted.
+            # A clean score with degenerate outputs is the exact failure
+            # mode that would lock in a reference the verifier "approves"
+            # of but that doesn't generalize.
+            and not getattr(result, "mode_collapse_detected", False)
         )
 
-        if current_score > self._best_score and eligible:
+        # Task #11 concern #3: regression guard. Before advancing the
+        # streak, check whether the current cycle REGRESSED relative to any
+        # prior cycle's eval/post score. The overnight run showed
+        # "streak=1/2 — awaiting confirmation" tick for cycle 2 even though
+        # cycle 2 was reverted vs. reference. Root cause: _best_score=0 on
+        # first-ever confirmed-best means current_score > _best_score is
+        # trivially true, and the old "else" branch restarted the streak
+        # at 1 on a LOWER score. Fix: if there's a prior history cycle
+        # with score > current_score + tolerance, treat as regression and
+        # reset pending without incrementing. Tolerance 0.005 matches the
+        # _degradation_count threshold used below.
+        REGRESSION_TOL = 0.005
+
+        def _eligible_for_max(r: CycleResult) -> bool:
+            if r.samples_verified < min_samples:
+                return False
+            if getattr(r, "verifier_capture_alarm", False):
+                return False
+            if getattr(r, "mode_collapse_detected", False):
+                return False
+            return True
+
+        prior_scores = [
+            (r.eval_score if r.eval_score is not None else r.post_score)
+            for r in self.history[:-1]  # exclude the current cycle's own record
+            if _eligible_for_max(r)
+        ]
+        prior_scores = [s for s in prior_scores if s is not None]
+        regressed_vs_prior = bool(prior_scores) and (
+            max(prior_scores) > current_score + REGRESSION_TOL
+        )
+
+        if current_score > self._best_score and eligible and not regressed_vs_prior:
             # Candidate new best — lagged N-cycle confirmation gate (task #2).
             if (
                 self._pending_best_cycle is not None
@@ -3302,6 +3424,21 @@ class ImprovementLoop:
                 self._pending_best_streak, confirm_n,
             )
             return False, ""
+        elif current_score > self._best_score and regressed_vs_prior:
+            # Task #11 concern #3: current_score beat the confirmed best
+            # (which is 0.0 or stale), but is strictly below a prior cycle's
+            # score. Do NOT advance the streak, do NOT log "streak=1/2 —
+            # awaiting confirmation" — that was the overnight-run bug where
+            # cycle 2 ticked streak=1 despite regressing vs. cycle 1.
+            prior_max = max(prior_scores)
+            logger.warning(
+                "  best-candidate REGRESSION: held-out=%.4f cycle=%d < "
+                "prior_max=%.4f (tol=%.3f) — streak NOT advanced.",
+                current_score, cycle, prior_max, REGRESSION_TOL,
+            )
+            self._pending_best_streak = 0
+            self._pending_best_cycle = None
+            self._pending_best_score = 0.0
         elif current_score > self._best_score and not eligible:
             # Outlier guard: score beat the bar but cycle is ineligible (tiny
             # sample count or capture-alarm). Reset pending streak outright —
@@ -3309,10 +3446,11 @@ class ImprovementLoop:
             # reference-bank lock-in.
             logger.warning(
                 "  best-candidate IGNORED: held-out=%.4f cycle=%d but "
-                "samples_verified=%d (<%d) or capture_alarm=%s — ineligible "
-                "for best-promotion.",
+                "samples_verified=%d (<%d) or capture_alarm=%s or "
+                "mode_collapse=%s — ineligible for best-promotion.",
                 current_score, cycle, result.samples_verified, min_samples,
                 getattr(result, "verifier_capture_alarm", False),
+                getattr(result, "mode_collapse_detected", False),
             )
             self._pending_best_streak = 0
             self._pending_best_cycle = None

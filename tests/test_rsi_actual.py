@@ -1154,3 +1154,178 @@ def check(problem, candidate):
         result = admit(prop, executor=executor)
         assert result.admitted is True
         assert result.determinism_observed is True
+
+
+# --- Task #11 concern #1: verifier_accept_policy ---
+
+
+class TestVerifierAcceptPolicy:
+    """Task #11 concern #1: relax any-FAIL veto via accept_policy parameter."""
+
+    def _mk_two_pass_one_fail(self):
+        """Build 3 admitted properties that produce PASS, PASS, FAIL on
+        candidate='x'. Each has a distinct independence_class so the
+        quorum-distinct-classes rule does not interfere."""
+        p_pass_a = _make_prop(
+            name="passer_a",
+            independence_class="algebra.symbolic",
+            source="def check(problem, candidate): return True",
+            author="author_a",
+            confirmer_example="x", falsifier_example="y",
+        )
+        p_pass_b = _make_prop(
+            name="passer_b",
+            independence_class="exec.behavioral",
+            source="def check(problem, candidate): return True",
+            author="author_b",
+            confirmer_example="x", falsifier_example="y",
+        )
+        p_fail = _make_prop(
+            name="failer",
+            independence_class="simulation.numerical",
+            source="def check(problem, candidate): return False",
+            author="author_c",
+            confirmer_example="y", falsifier_example="x",
+        )
+        return [p_pass_a, p_pass_b, p_fail]
+
+    def test_any_fail_veto_rejects_two_of_three(self):
+        """Backward-compat: default 'any_fail_veto' still rejects 2-of-3."""
+        from src.verifier.property_engine import verify
+        props = self._mk_two_pass_one_fail()
+        executor = MockExecutor()
+        for p in props:
+            admit(p, executor=executor)
+        rec = verify(
+            problem_id="tp", candidate="x",
+            admitted_properties=props,
+            executor=executor,
+            min_properties=3,
+            quorum_distinct_classes_required=2,
+            accept_policy="any_fail_veto",
+        )
+        assert rec.accepted is False
+        assert rec.fail_count == 1
+        assert "policy=any_fail_veto" in rec.reject_reason
+        assert rec.accept_policy == "any_fail_veto"
+        assert rec.verdict_warnings == ()
+
+    def test_majority_policy_accepts_two_of_three_with_warning(self):
+        """'majority' accepts 2-of-3 PASS but flags verdict_warn=any_fail."""
+        from src.verifier.property_engine import verify
+        props = self._mk_two_pass_one_fail()
+        executor = MockExecutor()
+        for p in props:
+            admit(p, executor=executor)
+        rec = verify(
+            problem_id="tp", candidate="x",
+            admitted_properties=props,
+            executor=executor,
+            min_properties=3,
+            quorum_distinct_classes_required=2,
+            accept_policy="majority",
+        )
+        assert rec.accepted is True
+        assert rec.pass_count == 2
+        assert rec.fail_count == 1
+        assert rec.accept_policy == "majority"
+        assert "any_fail" in rec.verdict_warnings
+
+    def test_quorum_2of3_accepts_two_of_three(self):
+        from src.verifier.property_engine import verify
+        props = self._mk_two_pass_one_fail()
+        executor = MockExecutor()
+        for p in props:
+            admit(p, executor=executor)
+        rec = verify(
+            problem_id="tp", candidate="x",
+            admitted_properties=props,
+            executor=executor,
+            min_properties=3,
+            quorum_distinct_classes_required=2,
+            accept_policy="quorum_2of3",
+        )
+        assert rec.accepted is True
+        assert "any_fail" in rec.verdict_warnings
+
+    def test_quorum_2of3_rejects_one_pass_two_fail(self):
+        """quorum_2of3 must still reject 1-PASS/2-FAIL (real disagreement)."""
+        from src.verifier.property_engine import verify
+        p_pass = _make_prop(
+            name="solo_pass", independence_class="algebra.symbolic",
+            source="def check(problem, candidate): return True",
+            author="a", confirmer_example="x", falsifier_example="y",
+        )
+        p_fail_a = _make_prop(
+            name="fail_a", independence_class="exec.behavioral",
+            source="def check(problem, candidate): return False",
+            author="b", confirmer_example="y", falsifier_example="x",
+        )
+        p_fail_b = _make_prop(
+            name="fail_b", independence_class="simulation.numerical",
+            source="def check(problem, candidate): return False",
+            author="c", confirmer_example="y", falsifier_example="x",
+        )
+        executor = MockExecutor()
+        for p in (p_pass, p_fail_a, p_fail_b):
+            admit(p, executor=executor)
+        rec = verify(
+            problem_id="tp", candidate="x",
+            admitted_properties=[p_pass, p_fail_a, p_fail_b],
+            executor=executor,
+            min_properties=3,
+            quorum_distinct_classes_required=2,
+            accept_policy="quorum_2of3",
+        )
+        assert rec.accepted is False
+        assert rec.fail_count == 2
+
+    def test_relaxed_policy_still_enforces_distinct_classes(self):
+        """'majority' must NOT bypass the quorum-distinct-classes rule —
+        2 PASS in the SAME class still fails the structural check."""
+        from src.verifier.property_engine import verify
+        p_a = _make_prop(
+            name="same_class_a", independence_class="algebra.symbolic",
+            source="def check(problem, candidate): return True",
+            author="a", confirmer_example="x", falsifier_example="y",
+        )
+        p_b = _make_prop(
+            name="same_class_b", independence_class="algebra.symbolic",
+            source="def check(problem, candidate): return True",
+            author="b", confirmer_example="x", falsifier_example="y",
+        )
+        p_c = _make_prop(
+            name="failer", independence_class="exec.behavioral",
+            source="def check(problem, candidate): return False",
+            author="c", confirmer_example="y", falsifier_example="x",
+        )
+        executor = MockExecutor()
+        for p in (p_a, p_b, p_c):
+            admit(p, executor=executor)
+        rec = verify(
+            problem_id="tp", candidate="x",
+            admitted_properties=[p_a, p_b, p_c],
+            executor=executor,
+            min_properties=3,
+            quorum_distinct_classes_required=2,
+            accept_policy="majority",
+        )
+        # 2 PASS in one class + 1 FAIL in another → majority FAIL-gate is
+        # satisfied (2 PASS, 1 FAIL), but distinct_classes over PASSes is
+        # only 1 < required 2 → rejected for structural reasons.
+        assert rec.accepted is False
+        assert "distinct_classes" in rec.reject_reason
+
+    def test_verify_rejects_invalid_accept_policy(self):
+        from src.verifier.property_engine import verify
+        executor = MockExecutor()
+        import pytest as _pytest
+        with _pytest.raises(ValueError):
+            verify(
+                problem_id="tp", candidate="x",
+                admitted_properties=[],
+                executor=executor,
+                min_properties=0,
+                quorum_distinct_classes_required=0,
+                accept_policy="not_a_policy",
+            )

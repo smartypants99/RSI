@@ -643,11 +643,24 @@ class VerificationRecord:
     created_at: float
     quorum_distinct_classes_required: int = 3
     adversarial: bool = False
+    # Task #11 concern #1: the accept policy that was in effect for this
+    # record ("any_fail_veto" | "majority" | "quorum_2of3"). Auditors and
+    # cross-reviewer inspecting the jsonl need this to reconstruct why a
+    # given candidate passed or failed under relaxed policies.
+    accept_policy: str = "any_fail_veto"
+    # Non-fatal warnings that fired during this verify call. E.g. under
+    # accept_policy="majority", a candidate that had 2 PASS + 1 FAIL is
+    # accepted but gets verdict_warnings=("any_fail",) so the trainer /
+    # calibration layer can down-weight it.
+    verdict_warnings: tuple[str, ...] = ()
 
 
 class CalibrationView(Protocol):
     """Read-only view that integrator's CalibrationLedger offers to verify()."""
     def suspended_classes(self) -> set[str]: ...
+
+
+_ACCEPT_POLICIES = frozenset({"any_fail_veto", "majority", "quorum_2of3"})
 
 
 def verify(
@@ -659,12 +672,34 @@ def verify(
     calibration: Optional[CalibrationView] = None,
     quorum_distinct_classes_required: int = 3,
     min_properties: int = 3,
+    accept_policy: str = "any_fail_veto",
 ) -> VerificationRecord:
     """Run admitted properties on a candidate; compute §2.1 quorum.
 
     Classes in calibration.suspended_classes() are dropped from the quorum.
     When calibration is None (unit tests / early ticks), all classes count.
+
+    ``accept_policy`` (task #11 concern #1) controls how property FAIL
+    verdicts gate acceptance. Original §2.1 behavior is "any_fail_veto":
+    any single FAIL rejects the candidate. On the live run this starved
+    training — cycle 1 rejected multiple 2-of-3 PASS candidates. Relaxed
+    policies:
+
+      - "majority":     accept when pass_count >= ceil(N/2). A FAIL does
+                        not auto-veto but is recorded as verdict_warn.
+      - "quorum_2of3":  accept when pass_count >= min(2, ceil(N/2)) AND
+                        fail_count <= 1. Matches the live-run "2 of 3
+                        passed" intuition without letting any N-FAIL slip
+                        through.
+
+    All policies still require the distinct-independence-classes rule
+    (``quorum_distinct_classes_required``) and the duplicate-author rule
+    (§2.1 rule 4). Those are quorum-structural, not FAIL-severity.
     """
+    if accept_policy not in _ACCEPT_POLICIES:
+        raise ValueError(
+            f"accept_policy must be one of {sorted(_ACCEPT_POLICIES)}, got {accept_policy!r}"
+        )
     cand_hash = _sha256_hex(repr(candidate))
     record_id = f"ver_{uuid.uuid4().hex[:16]}"
     t0 = time.time()
@@ -751,12 +786,34 @@ def verify(
     dup_author = len(pass_authors) != len(set(pass_authors))
 
     reject_reason = ""
-    if len(verdicts) < min_properties:
+    verdict_warnings: list[str] = []
+    # Policy-dependent FAIL gate. Structural gates (min_properties, distinct
+    # classes, duplicate authors) are unchanged across policies.
+    import math as _math
+    n_verdicts = len(verdicts)
+    majority_threshold = _math.ceil(n_verdicts / 2) if n_verdicts else 1
+    # "fail_rejects": true iff this policy would reject given fail_count.
+    if accept_policy == "any_fail_veto":
+        fail_rejects = fail_count > 0
+    elif accept_policy == "majority":
+        fail_rejects = pass_count < majority_threshold
+    else:  # quorum_2of3
+        # Need at least min(2, majority) PASS and no more than 1 FAIL.
+        # Rationale: tolerates "2 of 3 passed, 1 failed" (cycle-1 starvation
+        # pattern) but still rejects "1 PASS, 2 FAIL" which is a real
+        # property disagreement, not a noisy single fail.
+        required_pass = min(2, majority_threshold) if n_verdicts else 1
+        fail_rejects = pass_count < required_pass or fail_count > 1
+
+    if n_verdicts < min_properties:
         accepted = False
-        reject_reason = f"n={len(verdicts)} < min_properties={min_properties}"
-    elif fail_count > 0:
+        reject_reason = f"n={n_verdicts} < min_properties={min_properties}"
+    elif fail_rejects:
         accepted = False
-        reject_reason = f"{fail_count} property FAIL (any-FAIL veto §2.1)"
+        reject_reason = (
+            f"{fail_count} property FAIL (policy={accept_policy}, "
+            f"pass={pass_count}/{n_verdicts})"
+        )
     elif len(distinct_classes) < quorum_distinct_classes_required:
         accepted = False
         reject_reason = (
@@ -767,6 +824,15 @@ def verify(
         reject_reason = "two PASSing properties share author run_id (§2.1 rule 4)"
     else:
         accepted = True
+        # If we accepted despite any FAIL (relaxed policy), flag the record
+        # so downstream trainers / calibration can down-weight or skip it.
+        if fail_count > 0 and accept_policy != "any_fail_veto":
+            verdict_warnings.append("any_fail")
+            logger.warning(
+                "verify accept-with-fail: problem=%s policy=%s pass=%d fail=%d err=%d "
+                "— accepted under relaxed policy; verdict_warn=any_fail",
+                problem_id, accept_policy, pass_count, fail_count, error_count,
+            )
 
     # Backend visibility (task #8): emit a structured INFO line per verify()
     # call listing which backends actually ran. Before this, operators could
@@ -810,6 +876,8 @@ def verify(
         created_at=t0,
         quorum_distinct_classes_required=quorum_distinct_classes_required,
         adversarial=False,
+        accept_policy=accept_policy,
+        verdict_warnings=tuple(verdict_warnings),
     )
 
 

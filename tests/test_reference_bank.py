@@ -53,12 +53,13 @@ def _bare_loop(tmp_path: Path, *, min_samples: int = 8, confirm_n: int = 2) -> I
 
 
 def _result(cycle: int, *, eval_score: float, samples_verified: int = 20,
-            capture_alarm: bool = False) -> CycleResult:
+            capture_alarm: bool = False, regression_reverted: bool = False) -> CycleResult:
     r = CycleResult(cycle)
     r.eval_score = eval_score
     r.post_score = eval_score
     r.samples_verified = samples_verified
     r.verifier_capture_alarm = capture_alarm
+    r.regression_reverted = regression_reverted
     return r
 
 
@@ -227,3 +228,70 @@ def test_no_confirmed_best_means_reference_is_not_outlier(tmp_path):
         loop.history.append(r)
         loop._check_early_stopping(c, r)
     assert loop._best_score == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Task #15: regression-revert bars streak advancement.
+# ---------------------------------------------------------------------------
+
+def test_regression_reverted_cycle_does_not_advance_streak(tmp_path):
+    """Live bug: cycle 2 held-out=0.478 vs reference=0.633 was reverted,
+    yet the next log line was 'streak=1/2 — awaiting confirmation'."""
+    loop = _bare_loop(tmp_path, min_samples=8, confirm_n=2)
+    # Cycle 1: clean, builds pending streak=1 at 0.633.
+    r1 = _result(1, eval_score=0.633, samples_verified=20)
+    loop.history.append(r1)
+    loop._check_early_stopping(1, r1)
+    assert loop._pending_best_streak == 1
+    assert loop._pending_best_cycle == 1
+
+    # Cycle 2: regression-revert fires (eval 0.478 vs ref 0.633).
+    r2 = _result(2, eval_score=0.478, samples_verified=20, regression_reverted=True)
+    loop.history.append(r2)
+    loop._check_early_stopping(2, r2)
+
+    # Streak must NOT be at 1/2; pending state must be cleared.
+    assert loop._pending_best_streak == 0
+    assert loop._pending_best_cycle is None
+    assert loop._pending_best_score == 0.0
+    assert loop._best_score == 0.0
+    assert loop._best_checkpoint_cycle is None
+
+
+def test_regression_reverted_blocks_even_highest_score(tmp_path):
+    """Even if the reverted cycle's score exceeds all prior, revert wins."""
+    loop = _bare_loop(tmp_path, min_samples=0, confirm_n=1)
+    r = _result(1, eval_score=0.99, samples_verified=20, regression_reverted=True)
+    loop.history.append(r)
+    loop._check_early_stopping(1, r)
+    assert loop._best_score == 0.0
+    assert loop._pending_best_streak == 0
+
+
+def test_regression_vs_best_blocks_streak_advance(tmp_path):
+    """Post-promotion: current_score < _best_score - 0.005 must not advance."""
+    loop = _bare_loop(tmp_path, min_samples=8, confirm_n=2)
+    loop._best_score = 0.60
+    loop._best_checkpoint_cycle = 1
+    # Cycle scoring 0.55 (0.05 below best) — must not advance streak.
+    r = _result(2, eval_score=0.55, samples_verified=20)
+    loop.history.append(r)
+    loop._check_early_stopping(2, r)
+    assert loop._pending_best_streak == 0
+    assert loop._best_score == 0.60  # unchanged
+
+
+def test_within_tolerance_of_best_does_advance(tmp_path):
+    """current_score = best_score - 0.003 is within 0.005 tolerance — should
+    be treated as not-regressed-vs-best, though it still needs > best to
+    enter the candidate branch. This pins the tolerance boundary."""
+    loop = _bare_loop(tmp_path, min_samples=8, confirm_n=2)
+    loop._best_score = 0.60
+    loop._best_checkpoint_cycle = 1
+    # current_score > best_score: enter candidate branch.
+    r = _result(2, eval_score=0.605, samples_verified=20)
+    loop.history.append(r)
+    loop._check_early_stopping(2, r)
+    # Pending started (streak=1). Not promoted yet.
+    assert loop._pending_best_streak == 1
+    assert loop._pending_best_cycle == 2

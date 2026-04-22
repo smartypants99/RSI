@@ -135,6 +135,13 @@ class CycleResult:
         # eval. When True the cycle is ineligible for best-promotion —
         # a "clean score with degenerate outputs" cannot become a reference.
         self.mode_collapse_detected: bool = False
+        # Task #15: set True when the post-Phase-5b regression-revert guard
+        # fires on this cycle (eval_score dropped > revert_threshold below the
+        # reference). A reverted cycle MUST NOT advance the pending-best
+        # streak even if _best_score is 0 (pre-promotion) or if no single
+        # prior history cycle strictly exceeds current_score — the revert
+        # itself is authoritative evidence the training step regressed.
+        self.regression_reverted: bool = False
 
     @property
     def improved(self) -> bool:
@@ -172,6 +179,48 @@ class CycleResult:
                 "learning_rate": self.training_metrics.learning_rate if self.training_metrics else 0,
             },
         }
+
+
+# Task #16: expected HELD_OUT_ONLY partition retention. Matches the
+# _WEIGHTS table in src/diagnostics/eval_partition.py (HELD_OUT_ONLY=0.37).
+# Kept here as a module-level constant so the quick-eval stratification
+# math is a pure function of (target_n, n_domains).
+_HELDOUT_PARTITION_RETENTION = 0.37
+
+
+def _quick_eval_stratified_targets(
+    *,
+    target_n: int,
+    n_domains: int,
+    min_per_domain: int = 0,
+    retention: float = _HELDOUT_PARTITION_RETENTION,
+) -> tuple[int, int]:
+    """Compute the pre-filter per-domain target for Phase-5b QUICK eval.
+
+    Task #16: the prior implementation used ceil(target_n / N_domains)
+    as the per-domain post-filter target, then divided by retention —
+    which compounded with ceil rounding and HELD_OUT_ONLY variance to
+    produce live-run cycle 2's observed n=207 when target=128.
+
+    New: stratify WITHIN target_n by equal domain weight (1/N), then
+    back out the pre-filter per-domain target. The expected post-filter
+    total is ``round(target_n / N) * N``, bounded at ±(N_domains/2) from
+    target_n due to rounding. For target=128, N=4 the expected total
+    sits in [126, 130]; with min_per_domain guard the total can only
+    grow, so the test tolerance of [124, 132] is comfortable.
+
+    Returns ``(pre_filter_per_domain, expected_post_filter_total)``.
+    """
+    if target_n <= 0:
+        return (max(0, min_per_domain), 0)
+    n = max(1, int(n_domains))
+    post_filter_per_domain = max(1, round(target_n / n))
+    pre_filter_per_domain = max(
+        int(min_per_domain),
+        int(round(post_filter_per_domain / max(1e-9, retention))),
+    )
+    expected_total = post_filter_per_domain * n
+    return (pre_filter_per_domain, expected_total)
 
 
 class ImprovementLoop:
@@ -564,6 +613,12 @@ class ImprovementLoop:
                     reference = self._revert_reference(result)
                     full_eval_drop = reference - result.eval_score
                     if full_eval_drop > revert_threshold:
+                        # Task #15: mark result BEFORE _check_early_stopping
+                        # runs so its streak-advance gate sees it. Without
+                        # this the live run showed "streak=1/2 — awaiting
+                        # confirmation" on the very cycle that just got
+                        # reverted (cycle 2: 0.478 vs ref 0.633).
+                        result.regression_reverted = True
                         logger.warning(
                             "[RSI tick %d] FULL EVAL REGRESSION: "
                             "eval=%.3f vs reference=%.3f (drop %.3f > %.2f). "
@@ -606,6 +661,22 @@ class ImprovementLoop:
                             cycle, result,
                             reason=f"full_eval_regression drop={full_eval_drop:.3f}",
                         )
+                        # Task #15: regression-revert clears any pending-best
+                        # tracking from prior cycles. A candidate held-over
+                        # from cycle N-1 cannot ride through a cycle N that
+                        # just got reverted — subsequent confirmation must
+                        # restart from scratch on a clean cycle.
+                        if self._pending_best_cycle is not None:
+                            logger.info(
+                                "  regression-revert: clearing pending-best "
+                                "state (was cycle=%s score=%.4f streak=%d)",
+                                self._pending_best_cycle,
+                                self._pending_best_score,
+                                self._pending_best_streak,
+                            )
+                        self._pending_best_streak = 0
+                        self._pending_best_cycle = None
+                        self._pending_best_score = 0.0
 
                 self.history.append(result)
 
@@ -1831,6 +1902,9 @@ class ImprovementLoop:
                         domain=getattr(problem, "domain", "unknown"),
                         verified=True,
                         source="rsi_property",
+                        verdict_warnings=tuple(
+                            getattr(pe_record, "verdict_warnings", ()) or ()
+                        ),
                     )
                     training_samples.append(ts_obj)
                     reg.training_pool.append_sample(TrainingPoolRecord(
@@ -2557,18 +2631,24 @@ class ImprovementLoop:
         except AttributeError:
             pass
         if _quick_n > 0 and not is_full_cycle:
-            _n_domains = max(1, len(cfg.domains))
-            _desired_per_domain = max(
-                int(cfg.min_questions_per_domain),
-                int(-(-_quick_n // _n_domains) / 0.37 + 0.999),
+            # Task #16: stratify WITHIN target_n by domain proportion, not
+            # by ceil-per-domain × N_domains. See
+            # _quick_eval_stratified_targets for math + rationale; unit-
+            # tested in test_quick_eval_stratification.
+            _pre_per_domain, _expected_total = _quick_eval_stratified_targets(
+                target_n=_quick_n,
+                n_domains=max(1, len(cfg.domains)),
+                min_per_domain=int(cfg.min_questions_per_domain),
             )
             heldout_target_per_domain = min(
-                heldout_target_per_domain, _desired_per_domain
+                heldout_target_per_domain, _pre_per_domain
             )
             logger.info(
-                "[Cycle %d] Phase 5b: QUICK eval — target ~%d prompts "
-                "(per-domain=%d, full every %d cycles)",
-                cycle, _quick_n, heldout_target_per_domain, _full_every,
+                "[Cycle %d] Phase 5b: QUICK eval — target_n=%d "
+                "per-domain=%d (expected_post_filter_total≈%d, "
+                "full every %d cycles)",
+                cycle, _quick_n, heldout_target_per_domain,
+                _expected_total, _full_every,
             )
         prev_mode = getattr(self.diagnostics, "_frozen_eval_mode", False)
         self.diagnostics._frozen_eval_mode = True
@@ -3357,6 +3437,16 @@ class ImprovementLoop:
             # mode that would lock in a reference the verifier "approves"
             # of but that doesn't generalize.
             and not getattr(result, "mode_collapse_detected", False)
+            # Task #15: a cycle that just tripped the post-Phase-5b
+            # regression-revert guard is hard-ineligible for promotion
+            # AND for streak advancement. The revert itself is
+            # authoritative: training regressed the model, so no streak
+            # from prior cycles may ride through this cycle. Live bug:
+            # cycle 2 held-out=0.478 vs reference=0.633 was reverted,
+            # but the very next log line was "streak=1/2 — awaiting
+            # confirmation". Setting this flag into `eligible` routes
+            # the cycle through the reset branch below.
+            and not getattr(result, "regression_reverted", False)
         )
 
         # Task #11 concern #3: regression guard. Before advancing the
@@ -3391,7 +3481,26 @@ class ImprovementLoop:
             max(prior_scores) > current_score + REGRESSION_TOL
         )
 
-        if current_score > self._best_score and eligible and not regressed_vs_prior:
+        # Task #15: explicit no-regression-vs-best gate. When a confirmed best
+        # exists, require current_score >= best_score - 0.005 before the streak
+        # may advance. Before task #15, `current_score > self._best_score` was
+        # the only gate, and with _best_score=0 (pre-promotion) any positive
+        # score sailed through — that is how cycle 2's 0.478 advanced the
+        # streak despite triggering a regression-revert against reference
+        # 0.633. The `regression_reverted` flag is already folded into
+        # `eligible` above; this check adds the symmetric protection for the
+        # post-promotion regime.
+        not_regressed_vs_best = (
+            self._best_score <= 0.0
+            or current_score >= self._best_score - 0.005
+        )
+
+        if (
+            current_score > self._best_score
+            and eligible
+            and not regressed_vs_prior
+            and not_regressed_vs_best
+        ):
             # Candidate new best — lagged N-cycle confirmation gate (task #2).
             if (
                 self._pending_best_cycle is not None

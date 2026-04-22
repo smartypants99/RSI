@@ -1972,3 +1972,33 @@ Live-GPU risks (NOT blocking, all with defined fallbacks):
 pytest: 801 passed, 2 skipped, 1 dep-warning (pre-existing). No unauthorized GPU runs this session. Follow-ups tracked: #13 (trainer verdict_warnings down-weight), trainer-auditor's metrics.undertrained wiring + save_lora None semantics.
 
 Green light for GPU resumption on team-lead authority.
+
+SIGNOFF verifier-and-synth 2026-04-22 (task #22, speed push round 2 — my lane)
+  commit: 070fcff perf(speed-2): candidates_per_problem 3→2, heldout_quick_subsample_n 128→96
+  Scope claimed (per team-lead round-2 message):
+    - Quick knob drops with tests ✓
+    - Async-verifier-with-propose — DEFERRED to orchestrator-auditor's AsyncLLMEngine
+      integration in #22. Making verify_batch concurrent with solve_batch without
+      knowing the final AsyncLLMEngine wrapper's lifecycle + LoRARequest hot-swap
+      semantics would double-fix the same surface. Will revisit once orchestrator-
+      auditor's wrapper lands and cross-reviewer signals it's stable.
+  Wall-clock impact (static, ballpark on prior cycle timing):
+    - candidates_per_problem 3→2 shaves ~33% of solve-phase. On 8-11 min quick
+      cycle where solve is ~50% of wall-clock, that's ~1.5-2 min saved.
+    - heldout_quick_subsample_n 128→96 shaves ~25% of quick-eval. Quick eval is
+      ~15% of wall-clock, so ~0.3-0.4 min saved.
+    - Combined rough ~2-2.5 min off quick cycle before orchestrator-auditor's
+      async-overlap changes land. Target 5 min needs their piece + foom-activator's
+      AWQ+speculative to land.
+  Safety gates untouched:
+    - regression_revert_threshold (0.03) still matched to quick-eval SE (now ≈0.023).
+    - Capture canary, eligibility, mode-collapse unchanged.
+    - Reference candidate (index 0) still the quorum-pass anchor — cutting fresh
+      samples from 2→1 does NOT break the "every well-formed proposal yields ≥1
+      passing candidate" invariant.
+  Tests: 802 passed, 2 skipped, 1 warning.
+  Gemini consult: not needed for config-only knob drops (codex skipped per team-wide
+  401-rule).
+  Live-GPU risk: first post-070fcff cycle may surface a synth-pipeline assumption
+  that candidates_per_problem ≥ 3 (e.g. a hardcoded "candidates[2]" access somewhere).
+  Grep showed no such access; any surprise would crash loudly, not silently corrupt.

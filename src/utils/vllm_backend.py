@@ -42,7 +42,10 @@ class VLLMModelLoader:
                  quantization_config: dict | None = None,
                  enable_lora: bool = False,
                  max_lora_rank: int = 64,
-                 max_num_seqs: int = 0):
+                 max_num_seqs: int = 0,
+                 enforce_eager: bool = False,
+                 coresident_training_enabled: bool = False,
+                 coresident_vllm_mem_frac: float = 0.42):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
@@ -55,6 +58,25 @@ class VLLMModelLoader:
         # concurrent-sequence cap. Task #10: 32 amortizes decode overhead
         # once propose/solve fan-out shrinks (k=3, tasks=12).
         self.max_num_seqs = int(max_num_seqs)
+        # Task #19: coresident-training knobs. When coresident is ON we
+        # initialize vLLM with a clipped gpu_memory_utilization (gemini
+        # consult: ~0.42 on 48GB A6000 for 32B-4bit to leave room for HF)
+        # and with enforce_eager=True to avoid the 1-2GB CUDA-graph static
+        # buffer that otherwise OOMs the HF backward pass. When coresident
+        # is OFF these knobs are ignored for the mem fraction (the caller-
+        # provided gpu_memory_utilization is used verbatim) and enforce_eager
+        # applies only if the caller set it explicitly.
+        self.enforce_eager = bool(enforce_eager)
+        self.coresident_training_enabled = bool(coresident_training_enabled)
+        self.coresident_vllm_mem_frac = float(coresident_vllm_mem_frac)
+        if self.coresident_training_enabled:
+            # Override the effective VRAM fraction and force eager mode.
+            self.gpu_memory_utilization = self.coresident_vllm_mem_frac
+            self.enforce_eager = True
+        # Track whether vLLM has been put to sleep (KV cache freed, weights
+        # retained). When True, HF training can load a second base copy on
+        # top; on exit_training we wake_up the engine.
+        self._vllm_sleeping: bool = False
         self._llm = None
         self._tokenizer = None
         self._sampling_params_cls = None
@@ -124,6 +146,19 @@ class VLLMModelLoader:
         )
         if self.max_num_seqs > 0:
             llm_kwargs["max_num_seqs"] = self.max_num_seqs
+        if self.enforce_eager:
+            # Task #19: disable CUDA-graph capture. Required when the engine
+            # must coexist with HF training on a 48GB GPU (gemini consult:
+            # the static graph buffer is the hidden 1-2GB that OOMs the
+            # backward pass). Costs ~10-15% inference throughput.
+            llm_kwargs["enforce_eager"] = True
+        if self.coresident_training_enabled:
+            # Task #19: ask vLLM to support sleep_mode so we can drop KV cache
+            # during the HF training span without destroying weights. Newer
+            # vLLM exposes this as `enable_sleep_mode=True` on LLM(); older
+            # versions auto-support sleep() on any engine. We set the kwarg
+            # defensively; the TypeError retry below drops it if rejected.
+            llm_kwargs["enable_sleep_mode"] = True
         # vLLM-side bitsandbytes 4-bit. Without this a 32B model can't
         # fit inference on a 48 GB GPU. The `load_format='bitsandbytes'`
         # tells vLLM to read pre-quantized .safetensors shards (as
@@ -147,7 +182,10 @@ class VLLMModelLoader:
         except TypeError as _e:
             msg = str(_e)
             recovered = False
-            for kw in ("enable_prefix_caching", "enable_lora", "max_lora_rank", "max_num_seqs"):
+            for kw in (
+                "enable_prefix_caching", "enable_lora", "max_lora_rank",
+                "max_num_seqs", "enforce_eager", "enable_sleep_mode",
+            ):
                 if kw in msg and kw in llm_kwargs:
                     logger.warning(f"vLLM LLM() rejected {kw} — retrying without it")
                     llm_kwargs.pop(kw, None)
@@ -403,8 +441,80 @@ class VLLMModelLoader:
 
     # ---- Training swap interface ----
 
+    def _vllm_sleep(self) -> bool:
+        """Put vLLM to sleep (KV cache freed, weights retained). vLLM >= 0.6.
+
+        Returns True on success. On any exception (older vLLM, driver quirk,
+        AMD ROCm variant), returns False and leaves the engine running —
+        caller should fall back to the destroy-and-reload path.
+
+        NOTE: sleep level 1 drops KV blocks AND activations but keeps the
+        loaded weights. Level 2 also offloads weights to CPU. We use level 1
+        because the coresident path on 48GB A6000 assumes weights stay on
+        GPU (HF training wants its OWN copy; offloading vLLM's weights only
+        helps when memory is even tighter, e.g. FP8 KV + 70B model).
+        """
+        if self._llm is None:
+            return False
+        try:
+            self._llm.sleep(level=1)
+            self._vllm_sleeping = True
+            logger.info("vLLM slept (KV cache released, weights retained)")
+            return True
+        except TypeError:
+            # Older vLLM: sleep() may not accept `level` kwarg.
+            try:
+                self._llm.sleep()
+                self._vllm_sleeping = True
+                logger.info("vLLM slept (level kwarg not supported; using default)")
+                return True
+            except Exception as e:
+                logger.warning(f"vllm.sleep() failed ({type(e).__name__}: {e}); falling back to reload path")
+                return False
+        except Exception as e:
+            logger.warning(f"vllm.sleep() failed ({type(e).__name__}: {e}); falling back to reload path")
+            return False
+
+    def _vllm_wake(self) -> bool:
+        """Wake vLLM after sleep. Returns True on success."""
+        if self._llm is None or not self._vllm_sleeping:
+            return False
+        try:
+            self._llm.wake_up()
+            self._vllm_sleeping = False
+            logger.info("vLLM woke up (KV cache reinitialized)")
+            return True
+        except Exception as e:
+            logger.warning(f"vllm.wake_up() failed ({type(e).__name__}: {e}); engine state uncertain")
+            # Attempt recovery: destroy and reload cleanly.
+            self._vllm_sleeping = False
+            try:
+                self._unload_vllm()
+                self._load_vllm()
+                return True
+            except Exception as e2:
+                logger.error(f"vLLM wake recovery via reload also failed: {type(e2).__name__}: {e2}")
+                return False
+
     def swap_to_hf_for_training(self) -> None:
-        """Unload vLLM, load HF model for LoRA training."""
+        """Unload vLLM, load HF model for LoRA training.
+
+        Task #19: when coresident_training_enabled is set AND vLLM supports
+        sleep_mode, we SUSPEND vLLM instead of destroying it. The engine
+        retains its weight allocation; only the KV cache is released. On
+        exit_training we wake it back up — saving the 4-6 min/cycle
+        unload+reload cost. Falls back to the legacy destroy-and-reload
+        path on any failure.
+        """
+        if self.coresident_training_enabled and self._llm is not None:
+            if self._vllm_sleep():
+                # Sleep succeeded — vLLM weights still on GPU. Load HF on
+                # top (duplicate 4-bit copy, ~18GB for 32B; budget set via
+                # coresident_vllm_mem_frac).
+                self._load_hf()
+                return
+            # Sleep failed — fall through to legacy path.
+            logger.info("coresident sleep failed; using legacy unload/reload swap")
         self._unload_vllm()
         self._load_hf()
 

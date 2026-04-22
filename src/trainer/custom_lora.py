@@ -364,21 +364,19 @@ class TrainingDataset(Dataset):
             if prompt_len + min_completion > len(combined):
                 continue
 
-            # Pad to max_length
-            pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+            # Task #20 throughput: DO NOT pre-pad to max_length here. The
+            # dataset emits un-padded per-sample tensors and the collate_fn
+            # (`_dynamic_pad_collate`) pads each batch to the longest sample
+            # in that batch. On mixed 200-1000 token pools this cuts attention
+            # FLOPs ~2-4× vs the old all-pad-to-1024 behavior. Truncation
+            # above already preserved EOS at max_length, so dynamic padding
+            # is a pure compute win.
             actual_len = len(combined)
-            if actual_len < self.max_length:
-                padding = torch.full((self.max_length - actual_len,), pad_id, dtype=combined.dtype)
-                combined = torch.cat([combined, padding])
 
             labels = combined.clone()
             labels[:prompt_len] = -100
-            # Also mask padding tokens in labels
-            if actual_len < self.max_length:
-                labels[actual_len:] = -100
 
-            attention_mask = torch.zeros(self.max_length, dtype=torch.long)
-            attention_mask[:actual_len] = 1
+            attention_mask = torch.ones(actual_len, dtype=torch.long)
 
             entry = {
                 "input_ids": combined,
@@ -468,21 +466,11 @@ class PreferenceDataset(Dataset):
         if prompt_len + min_completion > len(combined):
             return None
 
-        pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
-        actual_len = len(combined)
-        if actual_len < self.max_length:
-            padding = torch.full(
-                (self.max_length - actual_len,), pad_id, dtype=combined.dtype
-            )
-            combined = torch.cat([combined, padding])
-
+        # Task #20 throughput: emit un-padded tensors; dynamic collate pads
+        # per-batch to the longest sequence.
         labels = combined.clone()
         labels[:prompt_len] = -100
-        if actual_len < self.max_length:
-            labels[actual_len:] = -100
-
-        attention_mask = torch.zeros(self.max_length, dtype=torch.long)
-        attention_mask[:actual_len] = 1
+        attention_mask = torch.ones(len(combined), dtype=torch.long)
         return {
             "input_ids": combined,
             "attention_mask": attention_mask,
@@ -515,6 +503,70 @@ class PreferenceDataset(Dataset):
 
     def __getitem__(self, idx):
         return self._encoded[idx]
+
+
+def _pad_right(tensors: list[torch.Tensor], pad_value: int) -> torch.Tensor:
+    """Right-pad a list of 1-D tensors to the max length in the list."""
+    max_len = max(t.shape[0] for t in tensors)
+    out = torch.full((len(tensors), max_len), pad_value, dtype=tensors[0].dtype)
+    for i, t in enumerate(tensors):
+        out[i, : t.shape[0]] = t
+    return out
+
+
+def make_dynamic_pad_collate(pad_token_id: int):
+    """Collate fn for SFT: dynamic per-batch right-padding.
+
+    Keeps the old batch-dict shape (input_ids/attention_mask/labels +
+    sample_weight + calibration_brier) so the trainer inner loop is
+    unchanged — only the sequence dimension is now batch-local.
+    """
+    def _collate(items: list[dict]) -> dict:
+        input_ids = _pad_right([it["input_ids"] for it in items], pad_token_id)
+        attention_mask = _pad_right([it["attention_mask"] for it in items], 0)
+        labels = _pad_right([it["labels"] for it in items], -100)
+        out = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+        }
+        # Optional per-sample auxiliary tensors. Stack if present on every item.
+        if all("sample_weight" in it for it in items):
+            out["sample_weight"] = torch.stack([it["sample_weight"] for it in items])
+        if all("calibration_brier" in it for it in items):
+            out["calibration_brier"] = torch.stack([it["calibration_brier"] for it in items])
+        return out
+    return _collate
+
+
+def make_dynamic_pad_collate_dpo(pad_token_id: int):
+    """Collate fn for DPO: pad chosen and rejected sides independently,
+    each to the longest sequence of its own side within the batch.
+    """
+    def _collate(items: list[dict]) -> dict:
+        out = {
+            "chosen_input_ids": _pad_right(
+                [it["chosen_input_ids"] for it in items], pad_token_id
+            ),
+            "chosen_attention_mask": _pad_right(
+                [it["chosen_attention_mask"] for it in items], 0
+            ),
+            "chosen_labels": _pad_right(
+                [it["chosen_labels"] for it in items], -100
+            ),
+            "rejected_input_ids": _pad_right(
+                [it["rejected_input_ids"] for it in items], pad_token_id
+            ),
+            "rejected_attention_mask": _pad_right(
+                [it["rejected_attention_mask"] for it in items], 0
+            ),
+            "rejected_labels": _pad_right(
+                [it["rejected_labels"] for it in items], -100
+            ),
+            "sample_weight": torch.stack([it["sample_weight"] for it in items]),
+        }
+        return out
+    return _collate
 
 
 @dataclass
@@ -951,11 +1003,14 @@ class CustomLoRATrainer:
         retry_on_oom: bool = True,
     ) -> TrainingMetrics:
         """Inner training loop, separated to allow OOM retry with smaller batch."""
+        pad_id = (tokenizer.pad_token_id
+                  if tokenizer.pad_token_id is not None else 0)
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
             shuffle=self.config.num_epochs > 1,  # Curriculum order for single epoch; shuffle for multi-epoch to avoid order overfitting
             drop_last=False,
+            collate_fn=make_dynamic_pad_collate(pad_id),
         )
 
         # Only optimize LoRA parameters
@@ -1390,9 +1445,13 @@ class CustomLoRATrainer:
         self, dataset, model, cycle, batch_size, rejected_count, cycle_lr,
         retry_on_oom: bool = True,
     ) -> TrainingMetrics:
+        tokenizer = self.model_loader.tokenizer
+        pad_id = (tokenizer.pad_token_id
+                  if tokenizer.pad_token_id is not None else 0)
         dataloader = DataLoader(
             dataset, batch_size=batch_size,
             shuffle=self.config.num_epochs > 1, drop_last=False,
+            collate_fn=make_dynamic_pad_collate_dpo(pad_id),
         )
         optimizer = self._build_optimizer(model, cycle_lr)
         if optimizer is None:

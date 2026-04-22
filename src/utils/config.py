@@ -857,7 +857,53 @@ class VLLMConfig:
     # KV-cache headroom once propose/solve are shrunk — larger concurrent
     # batch amortizes the per-step scheduler/decode overhead. Set 0 to use
     # vLLM's own default (typically 256, overcommits KV on small GPUs).
-    max_num_seqs: int = 32
+    # Task #18 speed pass step 1: bumped 32 → 48. Second-opinion (gemini,
+    # two-pass drill) corrected KV budget for Qwen2-32B GQA: per-seq at
+    # max_model_len=4096 ≈ 128MB (bf16 KV, 8 KV heads × 128 dim × 64
+    # layers × 2 × 4096) or ~256MB counting scheduler overhead. On 48GB
+    # A6000 minus 18GB weights minus ~1.5GB CUDA graphs, usable KV budget
+    # is ~25-28GB, supporting ~40-48 concurrent sequences safely. 256 was
+    # first-pass advice but self-corrected to ~40 on the GQA KV math. 48
+    # gives ~50% concurrency gain on the 120-prompt solve batch without
+    # touching higher-risk levers (fp8_kv storage is memory-only on
+    # Ampere with possible -5-10% throughput from cast overhead;
+    # speculative decoding is broken with load_format=bitsandbytes per
+    # the same consult).
+    max_num_seqs: int = 48
+    # ──────────────────────────────────────────────────────────────────────
+    # Task #19: vLLM resident-during-training (the 4-6 min/cycle sink).
+    # ──────────────────────────────────────────────────────────────────────
+    # When True, disable vLLM's CUDA-graph capture so vLLM's static VRAM
+    # footprint is ~1.5-2GB lower. Required for coresident_training_enabled
+    # on 48GB GPUs (gemini consult: CUDA graph static buffers are the
+    # hidden 1-2GB that triggers OOM during the HF backward pass). Safe to
+    # leave False when training-coresidency is disabled; eager mode costs
+    # ~10-15% throughput on inference.
+    enforce_eager: bool = False
+    # Master flag for the Tier-B co-resident training path. When True:
+    #   - _load_vllm uses gpu_memory_utilization=coresident_vllm_mem_frac
+    #     (default 0.42 on A6000, gemini consult) instead of the default,
+    #   - swap_to_hf_for_training calls vllm.sleep() (vLLM>=0.6) instead
+    #     of destroying the engine, freeing KV cache while keeping weights,
+    #   - HF training copy is loaded on top; after training, vllm.wake_up()
+    #     and set_lora_adapter(new_adapter) replace the full reload.
+    # Default False — requires live GPU validation before enabling. Flag
+    # is read at VLLMModelLoader construction and in the orchestrator
+    # training swap site.
+    coresident_training_enabled: bool = False
+    # VRAM fraction vLLM is allowed when coresident_training_enabled=True.
+    # gemini consult (48GB A6000, 32B-4bit): 0.42 leaves ~28GB for HF +
+    # LoRA + AdamW + activations + KV headroom. FP8 KV (task #18, foom-
+    # activator) would relax this to ~0.55.
+    coresident_vllm_mem_frac: float = 0.42
+    # Task #19 secondary win: overlap the verify phase (CPU-bound code
+    # execution, property checks) with the NEXT cycle's propose (GPU-bound
+    # generate). Thread pool dispatches verify_batch while the orchestrator
+    # starts the next propose's prompt build. Default False (same wall-
+    # clock as today until flipped); user flips after A/B confirming
+    # verify wall-clock > 20s/cycle (the break-even point against thread-
+    # dispatch overhead).
+    parallel_verify_enabled: bool = False
 
     def __post_init__(self):
         if not (0.0 < self.gpu_memory_utilization <= 1.0):
@@ -866,6 +912,10 @@ class VLLMConfig:
             raise ValueError(f"max_num_seqs must be >= 0, got {self.max_num_seqs}")
         if self.max_model_len < 1:
             raise ValueError(f"max_model_len must be >= 1, got {self.max_model_len}")
+        if not (0.0 < self.coresident_vllm_mem_frac <= 1.0):
+            raise ValueError(
+                f"coresident_vllm_mem_frac must be in (0, 1], got {self.coresident_vllm_mem_frac}"
+            )
 
 
 @dataclass

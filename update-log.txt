@@ -1902,3 +1902,36 @@ pytest: 777 passed, 2 skipped, 1 dep-warning (pre-existing). No unauthorized GPU
 Green light for GPU resumption on team-lead authority.
 
 SIGNOFF orchestrator-auditor — 2026-04-22 — task #19 closed: vLLM coresident-training swap path landed behind VLLMConfig.coresident_training_enabled flag (default False, legacy path preserved). When enabled: swap_to_hf_for_training calls vllm.sleep() (KV freed, weights retained) instead of _unload_vllm; swap_to_vllm_after_training calls vllm.wake_up() and set_lora_adapter() instead of _load_vllm — eliminates the 4-6 min/cycle reload. Knobs: coresident_vllm_mem_frac=0.42 (48GB A6000 32B-4bit; gemini consult), enforce_eager forced True (avoids CUDA-graph static-buffer OOM during HF backward), enable_sleep_mode kwarg threaded with TypeError-retry guard. Fall-back to legacy destroy-and-reload on any sleep/wake failure so the flag is safe to flip on the live GPU. 13 new tests on the control-flow dispatcher (all green without GPU). External consult: codex auth expired (401 token_invalidated); gemini-cli produced the concrete VRAM recipe used in the implementation (dual handle + 0.42 mem frac + enforce_eager + LoRARequest hot-swap). Tier B (full dual-resident on FP8 KV) coordination sent to foom-activator in-line. Commits: 14aa31d (this task's code + 13 tests swept into trainer-auditor's Liger-kernel commit by concurrent workspace flush).
+
+SIGNOFF foom-activator (task #18 vLLM throughput) — 2026-04-22 — 3 bisect-friendly commits landed for vLLM throughput on A6000 48GB + DeepSeek-R1-Distill-Qwen-32B-bnb-4bit.
+
+Commits (each with its own config knob + regression test):
+  1. 277c9a0  VLLMConfig.max_num_seqs default 32 → 48  (+50% solve-batch concurrency)
+  2. c1427b8  VLLMConfig.enable_chunked_prefill=True wired end-to-end  (prefill/decode interleave, kills 2-3s stalls on 120-prompt solve)
+  3. 7c1306f  VLLMConfig.log_throughput_stats knob (default False)  (diagnostic: flip to verify prefix-cache is hitting)
+
+Second-opinion CLIs:
+  - codex: AUTH BROKEN across two attempts (token_invalidated, refresh_token_reused). No second opinion obtained from codex this session.
+  - gemini: three-pass drill-down.
+      Pass 1 (broad): recommended kv_cache_dtype=fp8 + max_num_seqs=256.
+      Pass 2 (sharp): self-corrected — on Ampere, fp8 KV is memory-only, possibly -5-10% throughput from cast overhead; max_num_seqs=256 is infeasible given Qwen2-32B GQA KV budget (real ceiling ~40-48 at max_model_len=4096); bnb+fp8_kv is fragile across vLLM versions; speculative decoding is broken with load_format=bitsandbytes.
+      Pass 3 (ranked): biggest safe levers are (A+C) max_model_len+max_num_seqs tuning, (B) enable_chunked_prefill, (F) prefix-cache hit-rate verification — exactly what landed.
+
+Intentionally NOT pursued on honest risk assessment:
+  - kv_cache_dtype='fp8' — Ampere software cast, possible throughput LOSS. May be worth revisiting only if task #19 coresident training needs the KV memory headroom (trade throughput for coresidency).
+  - Speculative decoding — load_format=bitsandbytes incompatibility across all vLLM versions surveyed. Would require abandoning BnB, which requires the 32B model. Hard block.
+  - max_model_len reduction 4096 → 3072 — deferred; would conflict with task #19's vLLM residency plan and requires verifying no sample generation exceeds 3072 tokens (2048 max_new + prompt headroom leaves little slack).
+
+Expected throughput gain (empirical validation pending live GPU): ~50% on solve phase from concurrency (commit 1), additional 10-20% from chunked prefill (commit 2). Prefix-cache verification (commit 3) is diagnostic-only — no perf change until someone flips the flag and verifies. Realistic total: 1.6-1.8x, short of the 3-5x target. The remaining 2-3x would require either (a) the fp8 memory-for-throughput trade on coresident training, (b) a shift off bitsandbytes to enable speculative decoding (requires a compatible quant format like AWQ, out of scope for this task), or (c) batching across phases (diagnose + solve in one vLLM call, also out of scope).
+
+Coordination with orchestrator-auditor task #19 (567ca0a):
+  - No conflict. Their coresident_vllm_mem_frac and enforce_eager knobs are orthogonal to my max_num_seqs/chunked_prefill/log_stats knobs. Verified via read of config.py VLLMConfig block.
+  - Their enforce_eager=True costs ~10-15% inference throughput per their own note. My changes will offset some of that when coresident mode flips on.
+  - If task #19 coresident mode runs into KV pressure under max_num_seqs=48 + chunked prefill, the user can lower max_num_seqs to 32 or 24 per-run via the config override — no code changes needed.
+
+Tests: 801 passed, 2 skipped, 1 warning (pre-existing). No safety gates weakened. No interaction with regression-revert, capture-alarm, or lagged-confirmation paths.
+
+Remaining caveats as follow-up tickets (caveats = tasks):
+  - Live-GPU validation of the 48-seq concurrency (current measurement: CPU stub only). If OOM on first live cycle, lower to 40.
+  - Live-GPU verification of prefix-cache hit-rate with log_throughput_stats=True and a single cycle's log parsed. If num_cached_tokens is near-zero after batch 2, the system prefix is drifting somewhere and chunked_prefill gains are capped.
+  - Consider a dedicated task "port off bitsandbytes to AWQ" — would unlock speculative decoding (the largest unexplored throughput lever). Materially larger surface change; separate ticket owner.

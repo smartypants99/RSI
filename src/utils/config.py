@@ -13,6 +13,14 @@ class ModelConfig:
     max_seq_length: int = 4096
     dtype: str = "bfloat16"
     allow_remote_code: bool = True
+    # Task #20 throughput: optional Liger kernels (linkedin/Liger-Kernel).
+    # When True AND the `liger_kernel` package is importable AND the model
+    # is Qwen2-family, apply fused RMSNorm/RoPE/SwiGLU/CE kernels. Safe
+    # with bnb-4bit per upstream README and gemini consult. Graceful
+    # no-op when liger_kernel isn't installed OR the model isn't Qwen2.
+    # Default True because the no-op branch is free; set False to force-
+    # skip on models where upstream has regressions.
+    use_liger_kernels: bool = True
 
     def __post_init__(self):
         if self.max_seq_length < 1:

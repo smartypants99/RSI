@@ -52,8 +52,11 @@ def test_orchestrator_quick_eval_disabled_zero():
 
 
 def test_vllm_max_num_seqs_default():
+    # Task #18 step 1: 32 → 48 on the corrected Qwen2-32B GQA KV budget.
+    # Pinned so any accidental revert (e.g., to vLLM default 256, which
+    # overcommits KV on 48GB A6000) surfaces here.
     cfg = VLLMConfig()
-    assert cfg.max_num_seqs == 32
+    assert cfg.max_num_seqs == 48
 
 
 def test_vllm_max_num_seqs_zero_is_vllm_default():

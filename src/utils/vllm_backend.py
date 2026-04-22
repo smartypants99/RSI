@@ -47,7 +47,10 @@ class VLLMModelLoader:
                  coresident_training_enabled: bool = False,
                  coresident_vllm_mem_frac: float = 0.42,
                  enable_chunked_prefill: bool = True,
-                 log_throughput_stats: bool = False):
+                 log_throughput_stats: bool = False,
+                 quantization_scheme: str = "auto",
+                 speculative_draft_model: str | None = None,
+                 num_speculative_tokens: int = 0):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
@@ -81,6 +84,15 @@ class VLLMModelLoader:
         # hitting. Default False (log volume); flip on for a diagnostic
         # cycle.
         self.log_throughput_stats = bool(log_throughput_stats)
+        # Task #22 speed-round-2: AWQ + speculative decoding plumbing.
+        # quantization_scheme="auto" preserves pre-task-#22 behavior —
+        # routing from quantization_config (load_in_4bit → bitsandbytes).
+        # Explicit "awq"/"gptq" route to vLLM's native quant kernels and
+        # unlock speculative decoding. Validation of the bnb+speculative
+        # incompatibility lives in VLLMConfig.__post_init__.
+        self.quantization_scheme = str(quantization_scheme or "auto")
+        self.speculative_draft_model = speculative_draft_model or None
+        self.num_speculative_tokens = int(num_speculative_tokens or 0)
         if self.coresident_training_enabled:
             # Override the effective VRAM fraction and force eager mode.
             self.gpu_memory_utilization = self.coresident_vllm_mem_frac
@@ -184,12 +196,27 @@ class VLLMModelLoader:
         # published by unsloth's `-bnb-4bit` repos); for a raw fp16 model
         # vLLM would quantize on-the-fly but take much longer to start.
         qc = self.quantization_config
-        if qc and qc.get("load_in_4bit"):
+        scheme = self.quantization_scheme
+        if scheme == "auto":
+            # Back-compat: legacy callers only pass quantization_config.
+            if qc and (qc.get("load_in_4bit") or qc.get("load_in_8bit")):
+                llm_kwargs["quantization"] = "bitsandbytes"
+                llm_kwargs["load_format"] = "bitsandbytes"
+        elif scheme == "bnb":
             llm_kwargs["quantization"] = "bitsandbytes"
             llm_kwargs["load_format"] = "bitsandbytes"
-        elif qc and qc.get("load_in_8bit"):
-            llm_kwargs["quantization"] = "bitsandbytes"
-            llm_kwargs["load_format"] = "bitsandbytes"
+        elif scheme in ("awq", "gptq"):
+            # Native vLLM quant kernels — NO load_format override. The model
+            # path must already point at a pre-quantized checkpoint.
+            llm_kwargs["quantization"] = scheme
+        elif scheme == "none":
+            pass  # let vLLM use model's native dtype
+        # Speculative decoding. Only attaches when an explicit draft model
+        # and token count are configured. VLLMConfig.__post_init__ rejects
+        # speculative + bnb at construction time.
+        if self.speculative_draft_model and self.num_speculative_tokens > 0:
+            llm_kwargs["speculative_model"] = self.speculative_draft_model
+            llm_kwargs["num_speculative_tokens"] = self.num_speculative_tokens
         if self.enable_lora:
             llm_kwargs["enable_lora"] = True
             llm_kwargs["max_lora_rank"] = self.max_lora_rank
@@ -205,6 +232,7 @@ class VLLMModelLoader:
                 "enable_prefix_caching", "enable_lora", "max_lora_rank",
                 "max_num_seqs", "enforce_eager", "enable_sleep_mode",
                 "enable_chunked_prefill",
+                "speculative_model", "num_speculative_tokens",
             ):
                 if kw in msg and kw in llm_kwargs:
                     logger.warning(f"vLLM LLM() rejected {kw} — retrying without it")

@@ -909,6 +909,37 @@ class VLLMConfig:
     # LoRA + AdamW + activations + KV headroom. FP8 KV (task #18, foom-
     # activator) would relax this to ~0.55.
     coresident_vllm_mem_frac: float = 0.42
+    # ──────────────────────────────────────────────────────────────────────
+    # Task #22 speed-round-2: AWQ + speculative decoding.
+    # ──────────────────────────────────────────────────────────────────────
+    # `quantization_scheme` is the vLLM-side quantization strategy. Accepted
+    # values:
+    #   "auto"  — infer from quantization_config (default; back-compat with
+    #             the pre-AWQ code path: load_in_4bit → bitsandbytes).
+    #   "bnb"   — force bitsandbytes 4-bit (load_format=bitsandbytes).
+    #             Blocks vLLM speculative decoding.
+    #   "awq"   — pass quantization="awq" to vLLM. Enables speculative
+    #             decoding on Ampere. Model path must point at a pre-AWQ
+    #             checkpoint (e.g. casperhansen/deepseek-r1-distill-qwen-32b-awq).
+    #             WARNING: QLoRA training cannot train on an AWQ checkpoint;
+    #             the HF training path requires a separate BF16 base. Gated
+    #             opt-in; only flip together with a trainer-auditor sign-off
+    #             on the split-checkpoint training plan.
+    #   "gptq"  — pass quantization="gptq". Similar constraints to AWQ.
+    #   "none"  — no quantization (full-precision); vLLM quantizes on the fly
+    #             or uses the model's native dtype.
+    # Default "auto" preserves current behavior — this commit is pure
+    # plumbing, not a default flip.
+    quantization_scheme: str = "auto"
+    # Speculative decoding (vLLM). Small draft model predicts N tokens; the
+    # target model verifies them in one forward pass. Typical speedup 1.5-2x
+    # on solve-phase throughput when draft model ≪ target. Requires
+    # quantization_scheme in ("awq", "gptq", "none") — bnb blocks it.
+    # Both fields must be set for speculative to activate; either being
+    # None/0 leaves speculative off.
+    speculative_draft_model: Optional[str] = None
+    num_speculative_tokens: int = 0
+
     # Task #19 secondary win: overlap the verify phase (CPU-bound code
     # execution, property checks) with the NEXT cycle's propose (GPU-bound
     # generate). Thread pool dispatches verify_batch while the orchestrator
@@ -948,6 +979,27 @@ class VLLMConfig:
         if not (0.0 < self.coresident_vllm_mem_frac <= 1.0):
             raise ValueError(
                 f"coresident_vllm_mem_frac must be in (0, 1], got {self.coresident_vllm_mem_frac}"
+            )
+        if self.quantization_scheme not in ("auto", "bnb", "awq", "gptq", "none"):
+            raise ValueError(
+                f"quantization_scheme must be one of "
+                f"'auto'|'bnb'|'awq'|'gptq'|'none', got {self.quantization_scheme!r}"
+            )
+        if self.num_speculative_tokens < 0:
+            raise ValueError(
+                f"num_speculative_tokens must be >= 0, got {self.num_speculative_tokens}"
+            )
+        if self.num_speculative_tokens > 0 and not self.speculative_draft_model:
+            raise ValueError(
+                "num_speculative_tokens>0 requires speculative_draft_model to be set"
+            )
+        if (
+            self.num_speculative_tokens > 0
+            and self.quantization_scheme == "bnb"
+        ):
+            raise ValueError(
+                "speculative decoding is incompatible with quantization_scheme='bnb' "
+                "(vLLM bitsandbytes load_format blocks it). Use 'awq' or 'gptq'."
             )
 
 

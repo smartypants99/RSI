@@ -85,14 +85,31 @@ _OFFLINE_FIXTURES: dict[str, list[dict]] = {
         {"item_id": f"HE/{i}",
          "prompt": f"def add_{i}(a, b):\n    '''Return a + b.'''\n",
          "answer": f"def add_{i}(a, b):\n    return a + b\n",
-         "domain": "code"}
+         "domain": "code",
+         "meta": {
+             "entry_point": f"add_{i}",
+             "test": (
+                 "def check(candidate):\n"
+                 "    assert candidate(1, 2) == 3\n"
+                 "    assert candidate(-1, 1) == 0\n"
+                 "    assert candidate(0, 0) == 0\n"
+             ),
+         }}
         for i in range(12)
     ],
     "mbpp": [
         {"item_id": f"MBPP/{i}",
          "prompt": f"Write a function mul_{i}(a, b) that returns a * b.",
          "answer": f"def mul_{i}(a, b):\n    return a * b\n",
-         "domain": "code"}
+         "domain": "code",
+         "meta": {
+             "entry_point": f"mul_{i}",
+             "test_list": [
+                 f"assert mul_{i}(2, 3) == 6",
+                 f"assert mul_{i}(0, 5) == 0",
+                 f"assert mul_{i}(-2, 3) == -6",
+             ],
+         }}
         for i in range(12)
     ],
     "gsm8k": [
@@ -217,6 +234,7 @@ def _load_offline_fixture(benchmark: str) -> list[BenchmarkItem]:
             prompt=r["prompt"],
             answer=r["answer"],
             domain=r["domain"],
+            meta=dict(r.get("meta") or {}),
         )
         for r in rows
     ]
@@ -310,14 +328,75 @@ def sample_anchor_set(
 # ---------------------------------------------------------------------------
 
 def _default_grade(item: BenchmarkItem, prediction: str) -> bool:
-    pred = (prediction or "").strip()
-    ans = (item.answer or "").strip()
-    if not pred:
+    pred = prediction or ""
+    if not pred.strip():
         return False
     if item.domain == "math":
-        # Compare on last numeric-like token of prediction vs canonical.
+        ans = (item.answer or "").strip()
         return _normalize_number(pred) == _normalize_number(ans)
-    return ans in pred or pred in ans
+    if item.benchmark == "humaneval":
+        return _grade_humaneval(item, pred)
+    if item.benchmark == "mbpp":
+        return _grade_mbpp(item, pred)
+    ans = (item.answer or "").strip()
+    pred_s = pred.strip()
+    return ans in pred_s or pred_s in ans
+
+
+def _extract_code(text: str) -> str:
+    """Extract python code from a possibly-markdown-wrapped completion.
+
+    Handles ```python fences, ``` fences, and stripping <think>...</think>.
+    """
+    import re as _re
+    s = _re.sub(r"<think>.*?</think>", "", text, flags=_re.DOTALL | _re.IGNORECASE)
+    m = _re.search(r"```(?:python|py)?\s*\n(.*?)```", s, _re.DOTALL)
+    if m:
+        return m.group(1)
+    return s
+
+
+def _grade_humaneval(item: BenchmarkItem, prediction: str) -> bool:
+    """HumanEval grader: build full program = prompt + completion, then run
+    the benchmark's check() function against the entry_point."""
+    test = item.meta.get("test") or ""
+    entry = item.meta.get("entry_point") or ""
+    if not test or not entry:
+        return False
+    pred_code = _extract_code(prediction)
+    # If prediction already contains a full `def entry(` we use it as-is,
+    # else we treat it as a body completion of the prompt signature.
+    if f"def {entry}" in pred_code:
+        program = pred_code
+    else:
+        program = item.prompt + pred_code
+    source = program + "\n\n" + test + f"\n\ncheck({entry})\n"
+    try:
+        from .sandbox import run_python_sandboxed
+        ok, _tail = run_python_sandboxed(source, timeout_s=5, memory_mb=256)
+        return bool(ok)
+    except Exception as e:
+        logger.debug("humaneval sandbox failure on %s: %s", item.item_id, e)
+        return False
+
+
+def _grade_mbpp(item: BenchmarkItem, prediction: str) -> bool:
+    """MBPP grader: execute prediction's code, then run each assert in test_list."""
+    tests = item.meta.get("test_list") or []
+    if not tests:
+        return False
+    pred_code = _extract_code(prediction)
+    if "def " not in pred_code:
+        return False
+    asserts = "\n".join(tests)
+    source = pred_code + "\n\n" + asserts + "\n"
+    try:
+        from .sandbox import run_python_sandboxed
+        ok, _tail = run_python_sandboxed(source, timeout_s=5, memory_mb=256)
+        return bool(ok)
+    except Exception as e:
+        logger.debug("mbpp sandbox failure on %s: %s", item.item_id, e)
+        return False
 
 
 def _normalize_number(s: str) -> str:
@@ -328,6 +407,7 @@ def _normalize_number(s: str) -> str:
 
 
 ModelFn = Callable[[str], str]  # prompt -> prediction
+BatchModelFn = Callable[[list], list]  # prompts -> predictions
 
 
 def run_anchor_eval(
@@ -338,6 +418,7 @@ def run_anchor_eval(
     cache_dir: Path | str = Path("outputs/external_benchmarks"),
     seed: int = ANCHOR_SEED,
     grade_fn: Optional[Callable[[BenchmarkItem, str], bool]] = None,
+    batch_model_fn: Optional[BatchModelFn] = None,
 ) -> dict:
     """Run the anchor eval and return a summary dict.
 
@@ -362,12 +443,34 @@ def run_anchor_eval(
     correct = 0
     per_bench_correct: dict[str, int] = {b: 0 for b in items_by_bench}
     per_bench_total: dict[str, int] = {b: 0 for b in items_by_bench}
-    for it in sample:
+
+    # Fast path: single batched call through vLLM. Per-prompt serial calls on a
+    # 100-item anchor set were ~15 min/cycle — one batch collapses to ~1 min.
+    preds: list[str]
+    if batch_model_fn is not None and sample:
         try:
-            pred = model_fn(it.prompt)
+            preds = list(batch_model_fn([it.prompt for it in sample]))
+            if len(preds) < len(sample):
+                preds = preds + [""] * (len(sample) - len(preds))
         except Exception as e:
-            logger.debug("model_fn raised on item %s: %s", it.item_id, e)
-            pred = ""
+            logger.warning("anchor_eval batch_model_fn failed, falling back to serial: %s", e)
+            preds = []
+            for it in sample:
+                try:
+                    preds.append(model_fn(it.prompt))
+                except Exception as ee:
+                    logger.debug("model_fn raised on item %s: %s", it.item_id, ee)
+                    preds.append("")
+    else:
+        preds = []
+        for it in sample:
+            try:
+                preds.append(model_fn(it.prompt))
+            except Exception as e:
+                logger.debug("model_fn raised on item %s: %s", it.item_id, e)
+                preds.append("")
+
+    for it, pred in zip(sample, preds):
         ok = bool(grade(it, pred))
         per_bench_total[it.benchmark] = per_bench_total.get(it.benchmark, 0) + 1
         if ok:

@@ -1868,3 +1868,35 @@ Green light for GPU resumption on team-lead authority. — 2026-04-22, cross-rev
 SIGNOFF orchestrator-auditor — 2026-04-22 — task #15 closed: regression-revert cycles can no longer advance pending-best streak. Live bug (cycle 2: 0.478 vs ref 0.633 reverted → streak=1/2 advanced) fixed via CycleResult.regression_reverted flag set at revert site, folded into _check_early_stopping eligibility, plus explicit no-regression-vs-best check (>= _best_score - 0.005) and pending-best clear at revert site. 4 new regression tests; 671 passed 2 skipped. Commit: 1bc1f40.
 
 SIGNOFF verifier-and-synth (task #16 quick-eval stratification) — 2026-04-22 — heldout_quick_subsample_n=128 overshoot to n=207 closed by replacing ceil(target_n/N)/0.37 per-domain arithmetic with round-then-back-out-retention stratification in new _quick_eval_stratified_targets helper. Expected post-filter total is round(target_n/N)*N, bounded at ±ceil(N/2) from target. For 128/4 expected lands in [126,130]; spec tolerance [124,132] satisfied. 8 new tests (headline case, tolerance band, retention accounting, min-floor, target=0, N=1 trivial, invariant across (target_n, n_domains) grid, regression guard vs 207). Full suite 771 passed, 2 skipped. Commit: c5c6ee8.
+
+---
+cross-reviewer APPROVES resumption (LR tamed + streak fixed + eval-size fixed) — 2026-04-22 — final gate on #14/#15/#16.
+
+Combined state verified: 777 pytest passing (accda68 → 650a846 → 54ad0e8 → 1bc1f40 → c5c6ee8 → 2aa05d9 → 0ff42ff → 36c1e52 → bd31d43 on main).
+
+Final-gate checks:
+
+(a) Trainer interaction (LR 2e-5 + any_fail filter + num_epochs_warmup=1): no pathological zero-training path. Verified the three pool scenarios team-lead specified:
+    - pool=8 clean + 0 warn, floor=16: total<floor → filter disabled → train on 8. ✓
+    - pool=15 mixed (8 clean + 7 warn), floor=16: total<floor → filter disabled → train on 15. ✓
+    - pool=20 clean + 4 warn, floor=16: total=24 ≥ floor AND clean=20 ≥ floor → drop warn → train on 20. ✓
+    Filter logic (_filter_any_fail_when_clean_enough, custom_lora.py:604) returns input unchanged when either total<floor or clean<floor, so pool post-filter never drops below floor. Training never silently zeros; existing `if not verified_samples: skip` guards handle the degenerate-pool case cleanly.
+    Warmup epoch cap uses try/finally to restore num_epochs (custom_lora.py:811-831) — no config-mutation leak across cycles.
+    LR 2e-5 is the single trainer knob change in 54ad0e8 — no combined effect with filter or warmup (all three operate on disjoint axes: optimization step size, sample inclusion, epoch count).
+
+(b) Streak guard: regression-revert site (loop.py:613) sets `result.regression_reverted=True` BEFORE `_check_early_stopping` runs and clears `_pending_best_*` outright (loop.py:665-676). `_check_early_stopping` folds `regression_reverted` into the `eligible` gate (loop.py:3440) AND adds `not_regressed_vs_best` as a symmetric post-promotion guard (loop.py:3493-3503). The 4 regression tests in test_reference_bank.py pin this:
+    - cycle 2 reverted (0.478 vs ref 0.633) → streak=0, pending cleared ✓
+    - reverted cycle with highest-of-run score (0.99) still blocked ✓
+    - post-promotion regression (best=0.60, current=0.55) does NOT advance ✓
+    - within-tolerance boundary (best=0.60, current=0.605) DOES advance ✓
+    Live-run bug mechanism (cycle 2's 0.478 ticking streak=1/2 despite revert) is exhaustively covered.
+
+(c) Quick-eval n invariant: _quick_eval_stratified_targets returns `round(target_n / n_domains) * n_domains`; the 7 tests in test_quick_eval_stratification.py pin realistic domain counts (1, 2, 3, 4, 5, 6, 8). Default config ships 8 domains → expected_total = round(128/8)*8 = 128 exactly, within the [124, 132] tolerance. The `test_quick_eval_rounding_bounded_by_half_ndomains` invariant proves |expected - target| ≤ ceil(n_domains/2) across the full (target_n, n_domains) grid — the overnight n=207 drift mechanism (ceil-per-domain × N) is structurally eliminated.
+
+(d) No pathological interaction across the three trainer fixes. Filter → warmup → train ordering is linear (custom_lora.py:811 warmup override → :840 filter → :875 `if not verified_samples` guard → dispatch). Each step has a defined no-op path; the combined flow either (i) trains on a valid pool, (ii) hits the explicit "no samples — skip cycle" warning and returns a zero-step TrainingMetrics, or (iii) raises on hard I/O failure (same as pre-#14). No silent-zero-training path created; no config-state leak across cycles.
+
+Follow-ups (NOT blocking relaunch, per team-lead note): trainer-auditor flagged metrics.undertrained wiring + save_lora None-semantics. Task #13 (verdict_warnings down-weight) remains pending but is now lower-priority because #14's filter strictly dominates down-weighting when the clean pool is large enough — #13 only covers the below-floor mixed-pool regime.
+
+pytest: 777 passed, 2 skipped, 1 dep-warning (pre-existing). No unauthorized GPU run originated from this session.
+
+Green light for GPU resumption on team-lead authority.

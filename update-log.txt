@@ -1864,3 +1864,5 @@ Final-gate checks:
 pytest: 759 passed, 2 skipped, 1 dep-warning (pre-existing). Final commit set: 302fc41 (Part A approves) → d370c18 (task #11 accept-policy + mode-collapse + streak guard) → a500d7a (task #11 signoff) → accda68 (task #10 wire-up) → 88389c6 (task #10 signoff) → THIS commit (task #12 final gate, honest power caveat). No unauthorized GPU runs originated from this session. Task #13 created for trainer verdict_warnings down-weight polish.
 
 Green light for GPU resumption on team-lead authority. — 2026-04-22, cross-reviewer task #12.
+
+SIGNOFF orchestrator-auditor — 2026-04-22 — task #15 closed: regression-revert cycles can no longer advance pending-best streak. Live bug (cycle 2: 0.478 vs ref 0.633 reverted → streak=1/2 advanced) fixed via CycleResult.regression_reverted flag set at revert site, folded into _check_early_stopping eligibility, plus explicit no-regression-vs-best check (>= _best_score - 0.005) and pending-best clear at revert site. 4 new regression tests; 671 passed 2 skipped. Commit: 1bc1f40.

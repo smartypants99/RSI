@@ -304,6 +304,16 @@ class ImprovementLoop:
         self._best_score: float = 0.0
         self._best_checkpoint_cycle: int | None = None
         self._degradation_count: int = 0
+        # Task #2: lagged-confirmation best-promotion. A cycle becomes the
+        # confirmed best only after `best_confirm_cycles` consecutive eligible
+        # cycles at-or-above a pending high-water mark. Kills outlier lock-in
+        # (cycle 1's 1-sample/2-step eval=0.624 pinned the reference bank for
+        # 6 hours of overnight run with zero forward progress).
+        self._pending_best_score: float = 0.0
+        self._pending_best_cycle: int | None = None
+        self._pending_best_streak: int = 0
+        # Consecutive verifier-capture alarm count (task #2, toothed alarm).
+        self._capture_alarm_consecutive: int = 0
         # EMA for plateau detection — smooths noisy per-cycle improvements so
         # plateau decisions aren't thrown off by a single outlier cycle.
         self._improvement_ema: float = 0.0
@@ -498,12 +508,14 @@ class ImprovementLoop:
                     and result.eval_score is not None
                     and revert_threshold > 0
                 ):
-                    # Compare against the best-ever eval score (baseline on
-                    # cycle 1, prior-best on later cycles).
-                    reference = (
-                        self._best_score if self._best_score and self._best_score > 0
-                        else result.pre_score or 0.0
-                    )
+                    # Robust reference (task #2): prefer the CONFIRMED best, but
+                    # clamp it to the trimmed mean of the last K held-out scores
+                    # so a single stale high doesn't trap us into perpetual
+                    # reverts. Pre-promotion (no confirmed best yet) falls back
+                    # to pre_score so the first trained cycle still has a sane
+                    # comparison point without deferring to an unconfirmed
+                    # outlier.
+                    reference = self._revert_reference(result)
                     full_eval_drop = reference - result.eval_score
                     if full_eval_drop > revert_threshold:
                         logger.warning(
@@ -768,6 +780,15 @@ class ImprovementLoop:
                 self._best_checkpoint_cycle = data["best_checkpoint_cycle"]
             if "degradation_count" in data:
                 self._degradation_count = data["degradation_count"]
+            # Task #2: lagged-confirmation pending-best + capture-alarm streak.
+            if "pending_best_score" in data:
+                self._pending_best_score = data["pending_best_score"]
+            if "pending_best_cycle" in data:
+                self._pending_best_cycle = data["pending_best_cycle"]
+            if "pending_best_streak" in data:
+                self._pending_best_streak = data["pending_best_streak"]
+            if "capture_alarm_consecutive" in data:
+                self._capture_alarm_consecutive = data["capture_alarm_consecutive"]
 
             # Restore EMA state
             if "improvement_ema" in data:
@@ -2127,6 +2148,7 @@ class ImprovementLoop:
                                 from .self_edit import (
                                     should_run_meta_cycle,
                                     run_self_edit_meta_cycle,
+                                    subprocess_smoke_eval,
                                     SelfEditConfig,
                                 )
                                 if should_run_meta_cycle(cycle, _sse):
@@ -2144,33 +2166,18 @@ class ImprovementLoop:
                                             prompt, max_new_tokens=2048, temperature=0.2
                                         )
 
-                                    # smoke_eval: score the SMOKE_EVAL partition
-                                    # via the diagnostics engine. The path arg
-                                    # scopes which checkout is being evaluated;
-                                    # our diagnostics run against the live
-                                    # in-process model, so both baseline and
-                                    # patched calls return the current model's
-                                    # score — the self-edit improvement signal
-                                    # here reflects code-path changes only.
-                                    def _smoke_eval(_wt_path) -> float:
-                                        cfg_d = self.config.diagnostics
-                                        orig_n = cfg_d.questions_per_domain
-                                        orig_frozen = getattr(
-                                            self.diagnostics, "_frozen_eval_mode", False
-                                        )
-                                        try:
-                                            cfg_d.questions_per_domain = int(getattr(
-                                                self.config.orchestrator,
-                                                "self_edit_smoke_questions", 8,
-                                            ))
-                                            self.diagnostics._frozen_eval_mode = True
-                                            d = self.diagnostics.run(
-                                                self.HELDOUT_CYCLE_SEED ^ 0x5E1F
-                                            )
-                                            return float(getattr(d, "overall_score", 0.0))
-                                        finally:
-                                            cfg_d.questions_per_domain = orig_n
-                                            self.diagnostics._frozen_eval_mode = orig_frozen
+                                    # smoke_eval: run a real subprocess harness
+                                    # that imports the patched file FROM the
+                                    # worktree (baseline path = repo_root ->
+                                    # unpatched code; patched path = wt_path ->
+                                    # patched code). This gives a genuine
+                                    # before/after signal on import-health +
+                                    # structural properties, replacing the
+                                    # prior in-process evaluator which
+                                    # returned identical scores for both
+                                    # paths (always-reject pathology).
+                                    def _smoke_eval(wt_path) -> float:
+                                        return subprocess_smoke_eval(wt_path)
 
                                     se_cfg = SelfEditConfig(self_edit_every=_sse)
                                     _outcome = run_self_edit_meta_cycle(
@@ -2258,6 +2265,54 @@ class ImprovementLoop:
             "[RSI tick %d] VoV adversarial bank: appended %d candidates (reason=%s; bank size=%d)",
             cycle, added, reason, len(bank),
         )
+
+    def _revert_reference(self, result: "CycleResult") -> float:
+        """Compute the held-out reference for the full-eval regression guard.
+
+        Design (task #2, orchestrator-auditor): the 7-cycle overnight run
+        showed cycle-1's 0.624 becoming a permanent trap — its raw value
+        pinned the reference, so every subsequent cycle that scored below
+        0.52 triggered a revert, preventing any forward progress.
+
+        We return the MINIMUM of:
+          (a) the confirmed best (``self._best_score``); promotion is
+              already gated by best_confirm_cycles + samples_verified +
+              capture-alarm ineligibility in ``_check_early_stopping``.
+          (b) the trimmed mean of the last K held-out eval scores (drop
+              the single highest + single lowest). This absorbs a stale
+              historical high once the local level has genuinely drifted
+              downward — the revert still fires against a local
+              reference, not a fossil.
+
+        When no confirmed best and no history exist, fall back to the
+        cycle's own pre-training pre_score so the first trained cycle
+        still has a sane comparison point.
+        """
+        prior_evals = [
+            r.eval_score for r in self.history
+            if getattr(r, "eval_score", None) is not None
+            and not getattr(r, "verifier_capture_alarm", False)
+        ]
+        K = 5
+        window = prior_evals[-K:]
+        trimmed_mean: float | None = None
+        if len(window) >= 3:
+            # Drop min and max before averaging — robust to one-cycle outliers.
+            ordered = sorted(window)
+            core = ordered[1:-1]
+            trimmed_mean = sum(core) / len(core) if core else None
+        elif window:
+            trimmed_mean = sum(window) / len(window)
+
+        candidates: list[float] = []
+        if self._best_score and self._best_score > 0:
+            candidates.append(float(self._best_score))
+        if trimmed_mean is not None:
+            candidates.append(float(trimmed_mean))
+
+        if candidates:
+            return min(candidates)
+        return float(result.pre_score or 0.0)
 
     def _quick_regression_probe(self, cycle: int) -> float:
         """Fast post-training sanity check — returns an overall score from a
@@ -2457,16 +2512,26 @@ class ImprovementLoop:
                         prompt, max_new_tokens=256, temperature=0.0, top_p=1.0
                     )
 
+                def _anchor_batch_fn(prompts: list[str]) -> list[str]:
+                    # One vLLM batched call across the full anchor set —
+                    # ~15x faster than serial generate() on a 100-item set.
+                    return list(self.model_loader.generate_batch(
+                        prompts, max_new_tokens=256, temperature=0.0, top_p=1.0,
+                    ))
+
                 summary = run_anchor_eval(
                     _anchor_model_fn,
                     benchmarks=benchmarks,
                     per_benchmark=per_bench,
                     cache_dir=ocfg.anchor_eval_cache_dir,
+                    batch_model_fn=_anchor_batch_fn,
                 )
                 result.anchor_score = summary["anchor_score"]
                 logger.info(
-                    "  anchor eval: %.3f (n=%d) per_bench=%s",
+                    "  anchor eval: %.3f (n=%d) per_bench=%s per_bench_n=%s distinct=%s",
                     result.anchor_score, summary["n"], summary["per_benchmark"],
+                    summary.get("per_benchmark_n", {}),
+                    summary.get("per_benchmark_distinct", {}),
                 )
                 # Baseline-drift canary (task #4). The cycle_0 anchor score
                 # is frozen here; every 10 cycles we compare the current
@@ -2547,6 +2612,93 @@ class ImprovementLoop:
                             anchor_delta=anchor_delta,
                         )
                         result.verifier_capture_alarm = True
+                        # Task #2: toothed alarm. Before this block the alarm
+                        # only logged — pipeline continued, a captured-verifier
+                        # cycle could still become best. Now:
+                        #  (a) bump consecutive-alarm counter; halt self-edit
+                        #      globally if it exceeds configured threshold,
+                        #  (b) revert vLLM to last confirmed-best checkpoint
+                        #      so next cycle starts from weights that passed
+                        #      the ground-truth bar, not the captured ones,
+                        #  (c) bank this cycle's admitted candidates as VoV
+                        #      adversarial — they cleared §1.4 yet correlate
+                        #      with an anchor drop, so they're exactly the
+                        #      toothless-verifier pattern VoV exists to catch.
+                        # _check_early_stopping sees verifier_capture_alarm
+                        # and excludes this cycle from best-promotion.
+                        self._capture_alarm_consecutive += 1
+                        halt_n = int(getattr(
+                            ocfg, "verifier_capture_halt_consecutive", 2,
+                        ))
+                        if (
+                            self._capture_alarm_consecutive >= halt_n
+                            and not self._self_edit_halted
+                        ):
+                            logger.error(
+                                "  VERIFIER-CAPTURE HALT: %d consecutive "
+                                "alarm cycles (>=%d). Halting self-edit "
+                                "globally. Human audit required.",
+                                self._capture_alarm_consecutive, halt_n,
+                            )
+                            self._self_edit_halted = True
+                            self._self_edit_halted_at = cycle
+                        try:
+                            best_cycle = self._best_checkpoint_cycle
+                            if best_cycle is not None:
+                                best_ckpt = (
+                                    ocfg.output_dir / "checkpoints"
+                                    / f"cycle_{best_cycle}"
+                                )
+                                if (
+                                    best_ckpt.exists()
+                                    and (best_ckpt / "config.json").exists()
+                                ):
+                                    logger.warning(
+                                        "  capture-alarm revert: reloading "
+                                        "vLLM from cycle %d",
+                                        best_cycle,
+                                    )
+                                    self.model_loader.swap_to_vllm_after_training(
+                                        str(best_ckpt)
+                                    )
+                                else:
+                                    logger.warning(
+                                        "  capture-alarm revert: best "
+                                        "checkpoint cycle %d missing; "
+                                        "falling back to base.",
+                                        best_cycle,
+                                    )
+                                    self.model_loader.swap_to_vllm_after_training(
+                                        str(getattr(
+                                            self.model_loader, "model_path", None,
+                                        ))
+                                    )
+                            else:
+                                logger.warning(
+                                    "  capture-alarm revert: no confirmed-"
+                                    "best checkpoint yet; reverting to base.",
+                                )
+                                self.model_loader.swap_to_vllm_after_training(
+                                    str(getattr(
+                                        self.model_loader, "model_path", None,
+                                    ))
+                                )
+                        except Exception as _rexc:
+                            logger.warning(
+                                "  capture-alarm revert failed (%s): %s",
+                                type(_rexc).__name__, _rexc,
+                            )
+                        self._bank_admitted_as_adversarial(
+                            cycle, result,
+                            reason=(
+                                f"verifier_capture internal=+{delta:.3f} "
+                                f"anchor={anchor_delta:+.3f}"
+                            ),
+                        )
+                    else:
+                        # Clean anchor cycle: reset the consecutive-alarm
+                        # counter so isolated alarms don't accumulate forever.
+                        self._capture_alarm_consecutive = 0
             except Exception as exc:
                 logger.warning("anchor_eval failed (non-fatal): %s", exc)
 
@@ -2976,11 +3128,71 @@ class ImprovementLoop:
         current_score = (
             result.eval_score if result.eval_score is not None else result.post_score
         )
-        if current_score > self._best_score:
-            self._best_score = current_score
-            self._best_checkpoint_cycle = cycle
-            self._degradation_count = 0
+
+        ocfg = self.config.orchestrator
+        min_samples = int(getattr(ocfg, "best_min_samples_verified", 8))
+        confirm_n = max(1, int(getattr(ocfg, "best_confirm_cycles", 2)))
+
+        eligible = (
+            result.samples_verified >= min_samples
+            and not getattr(result, "verifier_capture_alarm", False)
+        )
+
+        if current_score > self._best_score and eligible:
+            # Candidate new best — lagged N-cycle confirmation gate (task #2).
+            if (
+                self._pending_best_cycle is not None
+                and current_score >= self._pending_best_score - 1e-9
+            ):
+                self._pending_best_streak += 1
+            else:
+                self._pending_best_score = current_score
+                self._pending_best_cycle = cycle
+                self._pending_best_streak = 1
+
+            if self._pending_best_streak >= confirm_n:
+                # Adopt the EARLIER cycle that first hit this high-water mark:
+                # its weights produced the reproduced score. Revert path should
+                # point at the weights that actually did it.
+                self._best_score = self._pending_best_score
+                self._best_checkpoint_cycle = self._pending_best_cycle
+                self._pending_best_streak = 0
+                self._degradation_count = 0
+                logger.info(
+                    "  PROMOTE: new confirmed best held-out=%.4f (cycle %d, "
+                    "confirmed after %d consecutive eligible cycles)",
+                    self._best_score, self._best_checkpoint_cycle, confirm_n,
+                )
+                return False, ""
+            logger.info(
+                "  best-candidate: held-out=%.4f (cycle %d) streak=%d/%d — "
+                "awaiting confirmation",
+                self._pending_best_score, self._pending_best_cycle,
+                self._pending_best_streak, confirm_n,
+            )
             return False, ""
+        elif current_score > self._best_score and not eligible:
+            # Outlier guard: score beat the bar but cycle is ineligible (tiny
+            # sample count or capture-alarm). Reset pending streak outright —
+            # these are exactly the cycles that gave us the 1-sample/2-step
+            # reference-bank lock-in.
+            logger.warning(
+                "  best-candidate IGNORED: held-out=%.4f cycle=%d but "
+                "samples_verified=%d (<%d) or capture_alarm=%s — ineligible "
+                "for best-promotion.",
+                current_score, cycle, result.samples_verified, min_samples,
+                getattr(result, "verifier_capture_alarm", False),
+            )
+            self._pending_best_streak = 0
+            self._pending_best_cycle = None
+            self._pending_best_score = 0.0
+            return False, ""
+        else:
+            # Score didn't beat best — reset pending streak. Only CONSECUTIVE
+            # at-or-above cycles count toward confirmation.
+            self._pending_best_streak = 0
+            self._pending_best_cycle = None
+            self._pending_best_score = 0.0
 
         if len(self.history) >= 2:
             prev_result = self.history[-2]
@@ -3343,6 +3555,12 @@ class ImprovementLoop:
         keep_names = set()
         if self._best_checkpoint_cycle is not None:
             keep_names.add(f"cycle_{self._best_checkpoint_cycle}")
+        # Task #2: also protect the pending-best candidate so that if it gets
+        # confirmed next cycle, _check_early_stopping can still revert to its
+        # weights. Without this, a pending cycle 3 high-water could be pruned
+        # between cycles 3 and 4 right before its confirmation lands.
+        if self._pending_best_cycle is not None:
+            keep_names.add(f"cycle_{self._pending_best_cycle}")
         # Always keep the current cycle's dir (needed for history.json below).
         keep_names.add(f"cycle_{cycle}")
         for old_dir in model_dirs:
@@ -3393,6 +3611,10 @@ class ImprovementLoop:
                 "best_score": self._best_score,
                 "best_checkpoint_cycle": self._best_checkpoint_cycle,
                 "degradation_count": self._degradation_count,
+                "pending_best_score": self._pending_best_score,
+                "pending_best_cycle": self._pending_best_cycle,
+                "pending_best_streak": self._pending_best_streak,
+                "capture_alarm_consecutive": self._capture_alarm_consecutive,
                 "improvement_ema": self._improvement_ema,
                 "meta_state": self.meta.to_dict(),
                 "curriculum": (

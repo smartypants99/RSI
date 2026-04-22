@@ -660,6 +660,21 @@ class OrchestratorConfig:
     arch_search_every: int = 30
     arch_search_min_delta: float = 0.005
 
+    # Best-checkpoint promotion gates (task #2). The overnight run saw
+    # cycle 1's 1-sample/2-step eval=0.624 become an unassailable reference
+    # bank; cycles 2-6 all reverted to it and the loop made zero forward
+    # progress for 6 hours. Require (a) minimum sample count per cycle for
+    # promotion eligibility, and (b) N≥best_confirm_cycles consecutive eligible
+    # cycles at or above the new high-water mark before promoting the new best.
+    # Setting best_confirm_cycles=1 restores the old (broken) behavior.
+    best_min_samples_verified: int = 8
+    best_confirm_cycles: int = 2
+    # Verifier-capture response (task #2). When detect_verifier_capture fires
+    # (internal-up / anchor-down divergence), revert vLLM to last confirmed-best
+    # checkpoint, mark the cycle ineligible for best promotion, bump degradation
+    # counter. If the alarm fires N consecutive times, halt self-edit globally.
+    verifier_capture_halt_consecutive: int = 2
+
     def __post_init__(self):
         if self.max_cycles < 1:
             raise ValueError(f"max_cycles must be >= 1, got {self.max_cycles}")
@@ -710,6 +725,19 @@ class OrchestratorConfig:
             )
         if not self.anchor_eval_benchmarks:
             raise ValueError("anchor_eval_benchmarks must be non-empty")
+        if self.best_min_samples_verified < 0:
+            raise ValueError(
+                f"best_min_samples_verified must be >= 0, got {self.best_min_samples_verified}"
+            )
+        if self.best_confirm_cycles < 1:
+            raise ValueError(
+                f"best_confirm_cycles must be >= 1, got {self.best_confirm_cycles}"
+            )
+        if self.verifier_capture_halt_consecutive < 1:
+            raise ValueError(
+                f"verifier_capture_halt_consecutive must be >= 1, "
+                f"got {self.verifier_capture_halt_consecutive}"
+            )
 
 
 @dataclass

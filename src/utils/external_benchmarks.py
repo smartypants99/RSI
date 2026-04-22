@@ -482,9 +482,19 @@ def run_anchor_eval(
         b: (per_bench_correct[b] / per_bench_total[b]) if per_bench_total[b] else 0.0
         for b in per_bench_total
     }
+    # Distinct-prediction count per benchmark — flags "sampling isn't constant"
+    # suspiciously-clean results (e.g. gsm8k=1.0 from a model always emitting "0").
+    per_bench_distinct: dict[str, int] = {b: 0 for b in per_bench_total}
+    seen_by_bench: dict[str, set] = {b: set() for b in per_bench_total}
+    for it, pred in zip(sample, preds):
+        seen_by_bench[it.benchmark].add((pred or "").strip()[:256])
+    for b in per_bench_distinct:
+        per_bench_distinct[b] = len(seen_by_bench[b])
     return {
         "anchor_score": anchor_score,
         "per_benchmark": per_bench,
+        "per_benchmark_n": dict(per_bench_total),
+        "per_benchmark_distinct": per_bench_distinct,
         "n": n,
         "timestamp": time.time(),
     }

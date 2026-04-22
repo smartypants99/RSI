@@ -124,27 +124,46 @@ class DifficultyTracker:
 
     # ---- queries -------------------------------------------------------
 
-    def frontier(self) -> str:
+    def frontier(self, domain: Optional[str] = None) -> str:
         """Return the skill-pair string for the 'easiest zone currently failing'.
 
         Easiest = highest historical accuracy on this skill, among subdomains
         that the model got wrong in its most recent held-out pass. If no
         last-cycle wrongs are recorded, falls back to the lowest-accuracy
         recorded subdomain (below 1.0). Returns "" if nothing is recorded yet.
+
+        When ``domain`` is provided, only subdomains matching that prefix
+        (``domain/...``) are considered. This prevents the cross-domain
+        leakage seen in cycles 3–7 of the overnight run, where frontier()
+        returned "math/percentage" and was spliced into propose_batch_code's
+        CODE-ONLY proposal prompt — biasing the model's code proposals toward
+        a math subdomain it could not satisfy, causing 5 consecutive cycles
+        of frontier drift onto the wrong domain.
         """
+        def _in_domain(key: str) -> bool:
+            if not domain:
+                return True
+            prefix = domain.strip()
+            if not prefix:
+                return True
+            return key.split("/", 1)[0] == prefix
+
         if self._last_cycle_wrong:
             candidates = [
                 (k, self._subdomain_stats.get(k, _SubdomainStats()).accuracy)
-                for k in self._last_cycle_wrong
+                for k in self._last_cycle_wrong if _in_domain(k)
             ]
-            candidates.sort(key=lambda kv: (-kv[1], kv[0]))
-            return candidates[0][0]
-        # Fallback: weakest aggregate subdomain (below perfect).
+            if candidates:
+                candidates.sort(key=lambda kv: (-kv[1], kv[0]))
+                return candidates[0][0]
+            # Fall through to aggregate-stats fallback if the last-cycle
+            # wrongs had nothing in the requested domain.
+        # Fallback: weakest aggregate subdomain (below perfect) in domain.
         ranked = sorted(
             (
                 (k, v.accuracy)
                 for k, v in self._subdomain_stats.items()
-                if v.attempts > 0 and v.accuracy < 1.0
+                if v.attempts > 0 and v.accuracy < 1.0 and _in_domain(k)
             ),
             key=lambda kv: (kv[1], kv[0]),
         )

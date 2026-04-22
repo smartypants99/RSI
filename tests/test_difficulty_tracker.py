@@ -127,6 +127,49 @@ def test_load_or_new_corrupt_file_falls_back(tmp_path: Path):
     assert t.state_path == path
 
 
+def test_frontier_domain_scope_filters_cross_domain_drift():
+    """domain='code' must never return a math/* subdomain even when math
+    has the globally lowest accuracy. Regression guard for the overnight-run
+    bug where frontier() returned math/percentage and was spliced into the
+    code-only propose_batch_code prompt."""
+    t = DifficultyTracker()
+    # Build history: math has many more failures than code.
+    for _ in range(10):
+        t.record_heldout([_pq("math", "percentage", False)])
+        t.record_heldout([_pq("code", "implementation", False)])
+        t.record_heldout([_pq("code", "implementation", True)])
+    # Last cycle: both wrong. Global frontier would pick whichever has
+    # higher historical accuracy (code/implementation is ~33% vs math 0%),
+    # but we explicitly request domain="code" anyway to lock the contract.
+    t.record_heldout([
+        _pq("code", "implementation", False),
+        _pq("math", "percentage", False),
+    ])
+    # Unscoped call: picks higher-accuracy failing subdomain (code).
+    assert t.frontier().startswith("code/")
+    # Scoped call: must stay in code regardless of math stats.
+    assert t.frontier(domain="code").startswith("code/")
+    # Scoped to math: must return math.
+    assert t.frontier(domain="math").startswith("math/")
+    # Scoped to a domain with NO data: empty string (no spurious match).
+    assert t.frontier(domain="physics") == ""
+
+
+def test_frontier_domain_scope_aggregate_fallback():
+    """When last-cycle-wrong has nothing in the requested domain, the
+    aggregate-stats fallback must also respect the domain scope rather
+    than leaking the unscoped weakest subdomain."""
+    t = DifficultyTracker()
+    # code has a weak subdomain in history; last cycle only math fails.
+    for _ in range(5):
+        t.record_heldout([_pq("code", "recursion", False)])
+        t.record_heldout([_pq("math", "algebra", True)])
+    t.record_heldout([_pq("math", "algebra", False)])  # last-cycle wrong is math only
+    # Scoped to code: last-cycle-wrong has no code entry → falls back to
+    # aggregate weakest code subdomain, which must still be code/*.
+    assert t.frontier(domain="code") == "code/recursion"
+
+
 def test_ratchet_history_records_deltas():
     t = DifficultyTracker()
     t.update_ratchet(0.02, cycle=1)

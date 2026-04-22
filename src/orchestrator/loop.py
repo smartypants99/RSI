@@ -1401,7 +1401,13 @@ class ImprovementLoop:
         # biases frontier_fraction of prompts toward the failing zone and
         # rejects proposals below the ratchet floor.
         try:
-            frontier_skill = self.difficulty_tracker.frontier()
+            # Domain-scoped frontier: propose_batch_code synthesizes code-only
+            # problems, so the hint must come from a code subdomain. Without
+            # this scope the tracker's global argmin kept landing on
+            # "math/percentage" (lowest accuracy overall) and getting spliced
+            # into the code-proposal prompt, biasing the model toward a
+            # domain the proposal format cannot express.
+            frontier_skill = self.difficulty_tracker.frontier(domain="code")
             if hasattr(synth, "set_frontier_hint"):
                 synth.set_frontier_hint(frontier_skill)
             if hasattr(synth, "set_difficulty_floor"):

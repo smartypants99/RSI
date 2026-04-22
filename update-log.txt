@@ -1697,3 +1697,67 @@ SIGNOFF verifier-and-synth 2026-04-22 (task #4, partial — anchor harness)
       If sandbox fails to spawn, _grade_* returns False and anchor_score collapses to 0
       again. Watch first live cycle: if anchor_score is still 0.0 post-75ee14a, the
       sandbox itself is the next bug, not the grader.
+
+---
+SIGNOFF [orchestrator-auditor, task #2, 2026-04-22, commit 12cb95a]
+Scope: src/orchestrator/loop.py, src/utils/config.py + two test files.
+
+Reference-bank outlier lock-in — FIXED.
+  _check_early_stopping now uses lagged N-cycle confirmation + eligibility gate.
+  A cycle with samples_verified < best_min_samples_verified (default 8) OR
+  verifier_capture_alarm=True is ineligible: it cannot promote to best AND
+  resets any pending-best streak. A candidate new-best must be held by N
+  (=best_confirm_cycles, default 2) consecutive eligible cycles at-or-above
+  the pending high-water mark before _best_score advances. Pending-best cycle
+  checkpoint is protected from pruning. Overnight run cycle 1's 1-sample
+  /2-step eval=0.624 would now be rejected outright.
+  Locked by tests/test_best_promotion.py (7 tests) + tests/test_reference_bank.py
+  (12 tests) — ineligible high, capture-alarm high, confirmation requirement,
+  interrupting-cycle reset, legacy confirm_n=1 behaviour, config validation.
+
+Capture alarm toothless — FIXED.
+  On detect_verifier_capture True the loop now (a) sets
+  result.verifier_capture_alarm (read by _check_early_stopping — this cycle
+  cannot become best), (b) reverts vLLM to the last confirmed-best checkpoint
+  (or base if no confirmed best yet), (c) banks admitted candidates as VoV
+  adversarial, (d) bumps _capture_alarm_consecutive and halts self-edit
+  globally if >= verifier_capture_halt_consecutive (default 2). Clean anchor
+  cycles reset the counter.
+
+State persisted: pending_best_score, pending_best_cycle, pending_best_streak,
+capture_alarm_consecutive round-trip through save_checkpoint / _resume.
+
+Eval-isolation seeds — audited, no change needed.
+  HELDOUT_CYCLE_SEED = 0xE7A1 is fixed and does NOT depend on cycle index
+  (loop.py:2217). Phase 5b sets diagnostics._frozen_eval_mode = True before
+  the run and restores the prior flag in a try/finally, so curriculum /
+  ratchet state can't leak into held-out question composition during eval.
+  Flagged the "is partition state fully seed-deterministic across cycles"
+  sub-question to verifier-and-synth; still awaiting their confirmation
+  (no GPU to verify empirically from here).
+
+Tests: 713 passed, 2 skipped, 1 warning (same dep-warning as before).
+Commit: 12cb95a; pushed to origin/main.
+
+Remaining risks (each is its own follow-up task):
+  - Lagged-confirmation interacts with substrate-merge: _maybe_substrate_merge
+    uses _best_checkpoint_cycle, which now lags actual high-water by 1 cycle.
+    On low merge_into_base_every settings this could defer a legitimate
+    merge by one epoch. foom-activator query pending; benign on defaults
+    (merge_into_base_every=10) but worth checking on aggressive settings.
+  - First-ever best: until a second eligible cycle confirms, _best_score is
+    0.0 and the regression-revert path at loop.py:503 will not trigger
+    (threshold 0.10 never hit). Acceptable — we'd rather let the second
+    cycle happen than revert to base before we know the first wasn't a fluke.
+  - Capture-alarm response reverts vLLM but does NOT undo the trainer's
+    adapter state — the next cycle's training step starts from the
+    pre-revert HF weights. Needs coordination with trainer-auditor to
+    decide whether adapter should also be reloaded from best checkpoint on
+    alarm (ticket-worthy; not blocking foom readiness because self-edit
+    halts on 2nd consecutive alarm anyway).
+  - best_min_samples_verified=8 is an informed guess; on real GPU runs the
+    floor may need tuning. If legitimate tiny-batch cycles become common,
+    raise this only after observing 3+ tiny-but-genuine cycles in a row.
+  - test_reference_bank.py was present at session start (prior
+    orchestrator-auditor run?); verified green and left in place as
+    additional coverage. No conflict with test_best_promotion.py.

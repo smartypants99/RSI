@@ -1767,3 +1767,34 @@ SIGNOFF orchestrator-auditor — 2026-04-22 — outlier-reference bug closed via
 SIGNOFF verifier-and-synth (task #6 parser) — 2026-04-22 — propose_batch_code 30% parse-failure rate closed by alias-label support (Problem Statement/Function/Reference Solution/Test Cases/etc.), entry_point decoration strip (backticks/quotes/parens), entry-from-reference fallback when ENTRY: omitted, and fenced/numbered/>>>-prefixed test-line tolerance. Full suite 722 passed, 2 skipped. Commit: 064eeb2.
 
 SIGNOFF verifier-and-synth (task #7 curriculum domain-mix) — 2026-04-22 — frontier-skill cross-domain leak closed by adding domain= scope to DifficultyTracker.frontier() and calling it with domain="code" at the propose_batch_code wiring site in orchestrator/loop.py. Aggregate-stats fallback also respects scope. 2 new regression-guard tests. Full suite 722 passed, 2 skipped. Commit: 790d5ca.
+
+SIGNOFF foom-activator (task #3 wire-up) — 2026-04-22 — fast_student actually fires in the RSI propose/solve path and meta_meta records truth.
+
+Changes (code landed in 738a08c alongside verifier-and-synth's backend-visibility patch; my files were staged concurrently and picked up by their commit — code review under `git show 738a08c -- src/orchestrator/loop.py tests/test_foom_component_wiring.py`):
+  1. ImprovementLoop.__init__ constructs FastStudentManager when orchestrator.use_fast_student (default True); outputs/fast_student/ becomes the checkpoint root.
+  2. rsi_tick Step 3 post-solve harvest: (prompt, completion) pairs from solve_batch → manager.record_teacher_generation(). Bounded by max_pairs_for_distill rolling FIFO (2048 default).
+  3. Post-training hook: manager.on_trained_cycle(cycle) at the same point as _rsi_pending_pool.clear(). At redistill_every=5 trained cycles AND min_pairs_for_distill=64 buffered, a distill fires in-line (production distill defers heavy imports so CPU unit tests don't import transformers).
+  4. meta_meta record: components_active["fast_student"] is derived from `self._fast_student_mgr is not None and cfg.enabled` — no longer hardcoded False. Loop.py comment `# not wired into propose/solve yet` deleted.
+
+Tests (new file tests/test_foom_component_wiring.py, 5 tests):
+  - test_meta_meta_records_fast_student_true_when_manager_enabled: drives the exact record_cycle payload shape loop.py produces, asserts components_active["fast_student"]=True lands in outputs/meta_meta_history.jsonl and round-trips via load_history.
+  - test_meta_meta_records_fast_student_false_when_disabled: symmetric negative case.
+  - test_fast_student_wire_up_mutates_state_on_cycle: empirical proof of state mutation — harvest grows buffer 0→2, on_trained_cycle at the redistill boundary fires distill, checkpoint lands on disk (weights.bin + metadata.json), generate_fn_for_cycle returns a live callable.
+  - test_fast_student_disabled_noops_harvest: confirms disabled manager does not buffer.
+  - test_loop_style_cycle_writes_history_then_reloads: full 3-cycle round-trip, component_contributions runs clean on the synthesized history.
+
+Status per foom-component (honest attribution):
+  - fast_student (cycle acceleration):        STATIC-WIRED + CPU TEST PROOF state mutates. Live-GPU confirmation pending (requires teacher producing >= min_pairs_for_distill=64 pairs, i.e. a cycle with ~64+ solve candidates). At synth.tasks_per_cycle=20 × k=6 = 120 candidates/cycle, buffer hits threshold on cycle 1; first distill at cycle 5 (redistill_every).
+  - self_edit (pipeline self-edit):            STATIC-WIRED (loop.py:~2168, SIGNOFF prior — b32b30a subprocess smoke-eval). Triggers every self_edit_every=8 cycles. CPU tests in test_self_edit.py prove state-mutation; live-GPU unknown whether model produces a valid patch.
+  - growth (grow_and_distill, N→1.5N layers): STATIC-WIRED (loop.py:~1985), needs live-GPU confirmation. Hook computes a student but does NOT swap into model_loader — growth currently effect-less on the live run. Flagged as separate follow-up task for coordination with trainer-auditor (student-swap requires LoRA-over-new-layers handshake).
+  - arch_search:                                STATIC-WIRED (loop.py:~2049), runs on CPU in test_arch_search.py. Live-GPU unknown.
+  - moe_conversion:                             STATIC-WIRED, gated off by default (moe_conversion_enabled=False). Not activated in this task.
+  - meta_meta attribution:                      FULLY WIRED + CPU TEST PROOF JSONL row lands with correct components_active each cycle.
+  - curriculum_ratchet / ood / grpo:            reflected in components_active correctly (no new wiring needed).
+
+Remaining risks / follow-up tasks (caveats = tasks):
+  - Growth hook does not swap student into model_loader — needs coordination with trainer-auditor on LoRA retraining over new layers. Ticket: "foom-growth student-swap".
+  - Fast-student student inference path (generate_fn_for_cycle) is constructed but not yet ROUTED through task_synthesizer's propose/solve — harvest + distill fire, but teacher still generates every cycle. Routing requires task_synthesizer to accept an injected generate_fn; larger surface change, separate ticket.
+  - Production _default_distill_fn uses `for pair in pairs: ... optim.step()` without gradient accumulation or batching; will be slow on 64-2048 pair batches. Acceptable for v0 but ticket-worthy: "fast_student distill batching".
+
+Tests: 729 passed, 2 skipped, 1 warning. Commit: 738a08c (my files folded into verifier-and-synth's commit due to concurrent staging — attribution note above).

@@ -23,6 +23,7 @@ from pathlib import Path
 import torch
 
 from ..utils.config import SystemConfig
+from ..utils.structured_logs import emit as _emit_structured_log
 from ..diagnostics.engine import DiagnosticsEngine, DiagnosticResult, WeaknessReport
 from ..diagnostics.difficulty_tracker import DifficultyTracker
 from ..generator.data_generator import DataGenerator
@@ -3044,6 +3045,89 @@ class ImprovementLoop:
             cfg.max_questions_per_domain = orig_max
             self.diagnostics._frozen_eval_mode = orig_frozen
 
+    def _emit_heldout_per_prompt_log(
+        self,
+        *,
+        cycle: int,
+        heldout_kind: str,
+        per_question: list,
+    ) -> None:
+        """Append one row per held-out prompt to outputs/heldout_per_prompt.jsonl.
+
+        Joins trained-side per_question records with the BaseHeldoutCache
+        entry (if any) so analysts can compute (trained - base) deltas
+        without re-running eval.
+
+        Never raises.
+        """
+        try:
+            ocfg = self.config.orchestrator
+            import hashlib
+            base_cache = getattr(self, "_heldout_base_cache", None)
+            t0 = time.time()
+            for rec in per_question:
+                prompt = rec.get("question", "") or rec.get("prompt", "")
+                expected = rec.get("expected", "") or None
+                base_entry = None
+                if base_cache is not None:
+                    try:
+                        base_entry = base_cache.get(prompt, expected)
+                    except Exception:
+                        base_entry = None
+                base_score = None
+                base_correct = None
+                if base_entry is not None:
+                    base_correct = bool(base_entry.get("correct", False))
+                    bs = base_entry.get("score")
+                    if bs is None:
+                        base_score = 1.0 if base_correct else 0.0
+                    else:
+                        try:
+                            base_score = float(bs)
+                        except (TypeError, ValueError):
+                            base_score = None
+                trained_score = rec.get("score")
+                if trained_score is None:
+                    trained_score = 1.0 if rec.get("correct") else 0.0
+                try:
+                    trained_score = float(trained_score)
+                except (TypeError, ValueError):
+                    trained_score = None
+                trained_correct = bool(rec.get("correct", False))
+                pid = rec.get("question_id") or hashlib.md5(
+                    f"{prompt}|{expected or ''}".encode()
+                ).hexdigest()[:16]
+                score_delta = (
+                    (trained_score - base_score)
+                    if (trained_score is not None and base_score is not None)
+                    else None
+                )
+                record = {
+                    "cycle": int(cycle),
+                    "heldout_kind": str(heldout_kind),
+                    "prompt_id": pid,
+                    "domain": rec.get("domain", ""),
+                    "subdomain": rec.get("subdomain", "general"),
+                    "base_score": base_score,
+                    "base_correct": base_correct,
+                    "trained_score": trained_score,
+                    "trained_correct": trained_correct,
+                    "trained_completion_length": rec.get(
+                        "completion_length",
+                        len(rec.get("response", "") or ""),
+                    ),
+                    "score_delta": score_delta,
+                    "eval_time_ms": None,  # per-prompt timing not plumbed yet
+                }
+                _emit_structured_log("heldout_per_prompt", record, ocfg)
+            # Ignore aggregate-level timing; per-record fields carry the signal.
+            _ = t0
+        except Exception as _e:  # pragma: no cover
+            logger.debug(
+                "heldout_per_prompt emit failed (%s): %s",
+                type(_e).__name__, _e,
+            )
+
     def _eval_phase(self, cycle: int, result: CycleResult):
         """Run a held-out evaluation on a stable question set.
 
@@ -3240,6 +3324,13 @@ class ImprovementLoop:
                 scores.append(d.overall_score)
                 per_rep_domain_scores.append(dict(d.domain_scores))
                 per_rep_per_question.append(list(d.per_question))
+                # Structured observability: one row per held-out prompt.
+                # Best-effort — never block the eval loop on a logging error.
+                self._emit_heldout_per_prompt_log(
+                    cycle=cycle,
+                    heldout_kind=getattr(result, "heldout_eval_kind", "full"),
+                    per_question=d.per_question,
+                )
 
                 # Task #27: interim SPRT look at each rep boundary. Computes a
                 # running continuous paired-delta against whichever reference

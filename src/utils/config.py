@@ -640,7 +640,21 @@ class OrchestratorConfig:
     # every 5 cycles provides the <1pp resolution. Shaves ~25% off quick
     # eval wall-clock on the 8-11 min quick cycle.
     heldout_quick_subsample_n: int = 96
-    heldout_full_every: int = 5
+    # Diff-analysis cycle 3 vs cycle 5 (both within MDE_80≈5.6%, opposite
+    # signs): the quick-vs-full cadence swap at cycle%5==0 silently
+    # re-weights the held-out domain mix — QUICK stratifies 1/N per domain
+    # giving ~45 code / 60 math / 60 logic (27% code) because code's
+    # HELD_OUT partition supply caps at ~45, while FULL at N=600 hits
+    # pre-filter target ~540/domain and math/logic retain ~70% (not the
+    # assumed 37%) → 45 code / 378 math / 378 logic (5.6% code). With
+    # training 100% code, the code-slice signal is drowned on FULL cycles
+    # and paired_delta flips sign across kinds purely from re-weighting
+    # (Simpson's-paradox artifact). Setting this to a large sentinel pins
+    # every cycle to the QUICK domain mix so cycle-to-cycle paired_delta
+    # is measuring the same population and sign flips actually mean
+    # training changed. Operator can still force a full sweep by
+    # explicitly setting heldout_full_every=1 for a diagnostic cycle.
+    heldout_full_every: int = 9999
     # Task #23 wedge 1: skip the full held-out eval when the quick
     # regression probe already showed a regression beyond this threshold.
     # Full eval takes ~40 min; if the quick probe already says training

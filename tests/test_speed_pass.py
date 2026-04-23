@@ -37,7 +37,10 @@ def test_orchestrator_quick_eval_defaults():
     cfg = OrchestratorConfig()
     # Task #22 speed-round-2: 128 → 96 (SE still matches revert threshold).
     assert cfg.heldout_quick_subsample_n == 96
-    assert cfg.heldout_full_every == 5
+    # Diff-analysis cycle 3 vs cycle 5: pinned to QUICK every cycle so
+    # paired_delta is measuring the same population (same domain mix)
+    # across cycles. See config comment on heldout_full_every for math.
+    assert cfg.heldout_full_every == 9999
 
 
 def test_orchestrator_quick_eval_validation():

@@ -308,9 +308,11 @@ class LoRALayer(nn.Module):
 class TrainingDataset(Dataset):
     """Dataset wrapping verified training samples with confidence weighting."""
 
-    def __init__(self, samples: list[TrainingSample], tokenizer, max_length: int):
+    def __init__(self, samples: list[TrainingSample], tokenizer, max_length: int,
+                 any_fail_weight: float = 0.4):
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.any_fail_weight = float(any_fail_weight)
         self._encoded = []
         self._encode_all(samples)
 
@@ -405,9 +407,7 @@ class TrainingDataset(Dataset):
             # (8/9 dropped → 1 training step).
             any_fail = "any_fail" in (getattr(sample, "verdict_warnings", ()) or ())
             if any_fail:
-                weight = weight * float(
-                    getattr(self.config, "sample_quality_any_fail_weight", 0.4)
-                )
+                weight = weight * self.any_fail_weight
             entry["sample_weight"] = torch.tensor(weight, dtype=torch.float32)
             # Per-sample Brier score over its own [C:...] markers, compared
             # against the sample's ground-truth correctness. NaN -> -1 marker
@@ -1081,6 +1081,9 @@ class CustomLoRATrainer:
             verified_samples,
             tokenizer,
             max_length=_train_cap,
+            any_fail_weight=float(getattr(
+                self.config, "sample_quality_any_fail_weight", 0.4
+            )),
         )
         samples_rejected = len(verified_samples) - len(dataset)
         if samples_rejected > 0:
@@ -1830,6 +1833,9 @@ class CustomLoRATrainer:
         )
         dataset = TrainingDataset(
             verified_samples, tokenizer, max_length=_train_cap,
+            any_fail_weight=float(getattr(
+                self.config, "sample_quality_any_fail_weight", 0.4
+            )),
         )
         samples_rejected = len(verified_samples) - len(dataset)
         batch_size = self.config.batch_size

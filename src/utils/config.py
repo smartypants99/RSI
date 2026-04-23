@@ -560,6 +560,20 @@ class OrchestratorConfig:
     log_dir: Path = Path("./logs")
     checkpoint_every: int = 1  # save every N cycles
     resume_from: Optional[str] = None  # resume from checkpoint path
+    # --- Structured observability (src/utils/structured_logs.py) ---
+    # Master switch. When True, the five JSONL sinks under output_dir are
+    # populated by their respective call sites. Each sub-flag below can
+    # silence one sink individually (e.g. training_steps is the highest
+    # volume — set its sub-flag False if log write time matters).
+    # Default True: the sinks are small, append-only, and critical for the
+    # "why did training regress?" post-mortem. Operators who want zero
+    # disk churn flip the master flag.
+    structured_observability_enabled: bool = True
+    structured_log_training_steps: bool = True
+    structured_log_heldout_per_prompt: bool = True
+    structured_log_verify_decisions: bool = True
+    structured_log_propose_attempts: bool = True
+    structured_log_cycle_summary: bool = True
     # --- Observability knobs (cycle2-autopsy). All default-off for BC. ---
     # Number of times to run held-out eval per cycle. >1 reveals measurement
     # noise: the spread across repetitions is a lower bound on what a "real"

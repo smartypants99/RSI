@@ -210,7 +210,15 @@ class VerifierConfig:
     # 2-of-3 PASS with at most 1 FAIL. Both relaxed policies still
     # enforce distinct-classes + duplicate-author rules and record
     # verdict_warn=any_fail on the accepted record.
-    verifier_accept_policy: str = "quorum_2of3"  # middle path: ≥2 PASS ∧ ≤1 FAIL. strict=0 accepts (pool starved), majority=91.7% noise. quorum tolerates 2-pass-1-flake exec nondeterminism.
+    # Flipped quorum_2of3 → any_fail_veto (task #5, 2026-04-24). With the
+    # 3rd property (output_type_matches_signature) dropped from code-domain
+    # materialization, only 2 behavioral properties remain. Cycle-3 empirical
+    # evidence showed zero real quorum disagreement (multifail_count=0/15);
+    # the 93% any_fail rate was driven entirely by the bad 3rd property.
+    # With that property gone, quorum_2of3 is just strictness lost for no
+    # noise absorption. Reverting to any_fail_veto (§2.1 original behavior)
+    # means accepts will be clean 2-of-2 with zero `any_fail` warnings.
+    verifier_accept_policy: str = "any_fail_veto"
 
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):

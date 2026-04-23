@@ -3388,8 +3388,15 @@ class ImprovementLoop:
         _full_every = int(getattr(
             self.config.orchestrator, "heldout_full_every", 5
         ))
+        # Iteration-speed fix: cycle 1 forces full ONLY when the base cache
+        # is empty (first ever run on this model). On restart where the
+        # cache already has entries (operator iterating on fixes), skip
+        # the redundant ~25 min cycle-1 full eval and go straight to
+        # quick — saves a full iteration round-trip.
+        _cache = getattr(self, "_heldout_base_cache", None)
+        _cache_has_entries = bool(_cache and getattr(_cache, "entries", None))
         is_full_cycle = (
-            cycle == 1
+            (cycle == 1 and not _cache_has_entries)
             or _full_every <= 1
             or (cycle % max(1, _full_every) == 0)
         )

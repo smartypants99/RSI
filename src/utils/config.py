@@ -61,8 +61,24 @@ class DiagnosticsConfig:
     # gold-token scoring on non-code items. See GeneratorConfig for the
     # ρ-lift rationale.
     use_logprob_continuous_score: bool = True
+    # Task #7 (2026-04-23): held-out scoring method selector.
+    #   'binary'       — legacy 1.0/0.0 correctness.
+    #   'logprob_gold' — exp(mean lp_gold) blend (task #28 default).
+    #   'margin'       — sigmoid(mean(lp_gold − best_nongold)); directly
+    #                    measures rank-shift, so paired-Δ sees training
+    #                    signal even when greedy argmax stays locked on
+    #                    the fixed 144-item curated bank (task #7 unlock).
+    # Requires use_logprob_continuous_score=True — the flag gates the
+    # vLLM prompt_logprobs call path. Validated in __post_init__.
+    heldout_score_method: str = "margin"
 
     def __post_init__(self):
+        _valid_score_methods = ("binary", "logprob_gold", "margin")
+        if self.heldout_score_method not in _valid_score_methods:
+            raise ValueError(
+                f"heldout_score_method must be one of {_valid_score_methods}, "
+                f"got {self.heldout_score_method!r}"
+            )
         if self.batch_size < 1:
             raise ValueError(f"diagnostics.batch_size must be >= 1, got {self.batch_size}")
         if self.questions_per_domain < 1:

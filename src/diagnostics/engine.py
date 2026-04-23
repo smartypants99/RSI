@@ -1503,8 +1503,9 @@ class DiagnosticsEngine:
             # (a follow-up task adds log-prob-of-gold for non-code).
             # The continuous score drives the wedge-1 MDE path (≤1% at
             # N=600) wired by orchestrator-auditor in e70e869.
+            score_aux: dict = {"score_margin_raw": None, "score_logprob_gold_raw": None}
             if q.get("check_method"):
-                correct, score = self._check_ground_truth_scored(q, response)
+                correct, score, score_aux = self._check_ground_truth_scored(q, response)
             else:
                 correct = self._check_answer(response, q["expected"], q["check_type"])
                 # Legacy template/model-generated questions have no per-
@@ -1521,6 +1522,12 @@ class DiagnosticsEngine:
                 "response": response[:500],
                 "correct": correct,
                 "score": float(score),
+                # Task #7: per-item raw score numerators for A/B analysis
+                # across cycles. None on the unused-method path or when
+                # the vLLM fallback kicked in (paired_delta is unaffected;
+                # `score` above carries whatever method config selected).
+                "score_margin_raw": score_aux.get("score_margin_raw"),
+                "score_logprob_gold_raw": score_aux.get("score_logprob_gold_raw"),
                 "domain": domain,
                 "subdomain": q.get("subdomain", "general"),
                 "difficulty": q.get("difficulty", "medium"),
@@ -2209,15 +2216,13 @@ class DiagnosticsEngine:
             response = question
         return self._check_answer(response, exp, ct)
 
-    def _check_ground_truth_scored(self, q: dict, response: str) -> tuple[bool, float]:
-        """Grade a ground-truth-bank question and return (correct, score).
+    def _check_ground_truth_scored(self, q: dict, response: str) -> tuple[bool, float, dict]:
+        """Grade a ground-truth-bank question and return (correct, score, aux).
 
-        Task #28: continuous score ∈ [0,1] alongside the binary correct
-        flag so the continuous-paired-delta MDE path (task #25) sees
-        real variance on code items (fraction of unit tests passing)
-        instead of degenerating to {0,1}. Non-code methods collapse
-        score == 1.0 iff correct else 0.0 until a rubric / log-prob
-        upgrade lands.
+        Task #28: continuous score ∈ [0,1] alongside binary correct.
+        Task #7 (2026-04-23): selects scorer via `heldout_score_method`
+        (binary / logprob_gold / margin). `aux` carries raw numerators
+        (margin_raw, logprob_gold_raw) for per_question observability.
         """
         gtq = GroundTruthQuestion(
             prompt=q.get("prompt", ""),
@@ -2232,19 +2237,26 @@ class DiagnosticsEngine:
             forbidden_symbols=q.get("forbidden_symbols") or None,
         )
         try:
-            from .ground_truth import grade_ground_truth_score
+            from .ground_truth import grade_ground_truth_score_ex
             use_lp = bool(getattr(
                 self.config, 'use_logprob_continuous_score', False,
             ))
-            return grade_ground_truth_score(
+            method = str(getattr(
+                self.config, 'heldout_score_method', 'logprob_gold',
+            ))
+            # When continuous scoring is disabled, force binary regardless
+            # of the requested method so we don't hit vLLM.
+            if not use_lp:
+                method = "binary"
+            return grade_ground_truth_score_ex(
                 gtq, response,
                 code_timeout=self.config.code_execution_timeout,
                 model_loader=self.model if use_lp else None,
-                use_logprob_continuous_score=use_lp,
+                score_method=method,
             )
         except Exception as e:
-            logger.debug("grade_ground_truth_score failed (%s): %s", type(e).__name__, e)
-            return False, 0.0
+            logger.debug("grade_ground_truth_score_ex failed (%s): %s", type(e).__name__, e)
+            return False, 0.0, {"score_margin_raw": None, "score_logprob_gold_raw": None}
 
     def _check_ground_truth(self, q: dict, response: str) -> bool:
         """Grade a ground-truth-bank question using the rigorous dispatcher.

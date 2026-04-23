@@ -3376,6 +3376,12 @@ class ImprovementLoop:
                         len(rec.get("response", "") or ""),
                     ),
                     "score_delta": score_delta,
+                    # Task #7: per-item raw score numerators — populated
+                    # by whichever method the config selected; the unused
+                    # field is None on that cycle. Lets operators A/B
+                    # scoring methods across cycles.
+                    "score_margin_raw": rec.get("score_margin_raw"),
+                    "score_logprob_gold_raw": rec.get("score_logprob_gold_raw"),
                     "eval_time_ms": None,  # per-prompt timing not plumbed yet
                 }
                 _emit_structured_log("heldout_per_prompt", record, ocfg)

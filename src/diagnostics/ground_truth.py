@@ -1526,6 +1526,142 @@ def _score_logprob_of_gold(
         return float('nan')
 
 
+def _score_logprob_margin(
+    model_loader, prompt: str, gold_answer: str,
+) -> tuple[float, float]:
+    """Teacher-forced margin score: mean(gold_tok_lp − best_nongold_tok_lp).
+
+    Task #7 (2026-04-23): the log-prob-of-gold signal collapses under
+    greedy decoding whenever training shifts probability mass *without*
+    flipping the argmax token — empirically 211/287 held-out prompts
+    produce byte-identical trained_score across three cycles on the
+    frozen 144-item bank. Margin is directly what training optimises
+    (cross-entropy gradient pushes gold token up vs. the best competitor),
+    so trained/base margin-deltas expose the per-cycle rank-shift even
+    when the argmax stays put.
+
+    Implementation: `prompt_logprobs=2` returns a dict {token_id: Logprob}
+    with top-2 + (when not in top-2) the actual token. For each gold
+    position we compute:
+
+        margin_t = lp_gold_t − max(lp_v  for v in dict if v != gold)
+
+    Returns (sigmoid(mean_margin), mean_margin_raw). The sigmoid-scaled
+    [0,1] output drops into the existing `score` field without rescaling
+    downstream paired-delta math. The raw mean is returned alongside so
+    observability can log both.
+
+    Numerics:
+      * `mean(margin)` is bounded roughly in [-15, 15] for vocab~30k+ —
+        per-token natural log-prob diffs rarely exceed ±10. sigmoid
+        maps that to [~0, 1] monotonically.
+      * Under H0 (no training change) sigmoid(margin) has Var ≈ 0.01-0.05
+        per item (empirical band from prior continuous eval), and ρ under
+        a marginal weight nudge is typically 0.8+ because the same
+        prompt × same gold token is the dominant factor.
+      * Correct-but-low-margin answers produce margin near 0; incorrect
+        answers produce margin < 0. Under training, both migrate upward
+        → paired Δ(margin) > 0.
+
+    Returns (float('nan'), float('nan')) when vLLM doesn't expose
+    prompt_logprobs>=2 (older version, HF fallback, etc.). Caller falls
+    back to logprob_gold or binary per config.
+    """
+    if model_loader is None:
+        return float('nan'), float('nan')
+    llm = getattr(model_loader, '_llm', None)
+    sp_cls = getattr(model_loader, '_sampling_params_cls', None)
+    tok = getattr(model_loader, '_tokenizer', None) or getattr(
+        model_loader, 'tokenizer', None,
+    )
+    if llm is None or sp_cls is None or tok is None:
+        return float('nan'), float('nan')
+    if not gold_answer:
+        return float('nan'), float('nan')
+    try:
+        full_text = prompt.rstrip() + "\n" + gold_answer
+        try:
+            prompt_ids = tok(prompt.rstrip() + "\n",
+                             add_special_tokens=False)["input_ids"]
+            full_ids = tok(full_text, add_special_tokens=False)["input_ids"]
+        except Exception:
+            prompt_ids = tok.encode(prompt.rstrip() + "\n",
+                                    add_special_tokens=False)
+            full_ids = tok.encode(full_text, add_special_tokens=False)
+        if len(full_ids) <= len(prompt_ids):
+            return float('nan'), float('nan')
+        n_gold = len(full_ids) - len(prompt_ids)
+        gold_token_ids = full_ids[len(prompt_ids):]
+
+        params = sp_cls(
+            max_tokens=1, temperature=0.0, top_p=1.0,
+            prompt_logprobs=2, logprobs=0,
+        )
+        outputs = llm.generate([full_text], params)
+        if not outputs:
+            return float('nan'), float('nan')
+        plp = getattr(outputs[0], 'prompt_logprobs', None)
+        if not plp:
+            return float('nan'), float('nan')
+        gold_slice = plp[-n_gold:]
+        total_margin = 0.0
+        count = 0
+        for tok_lp, gold_id in zip(gold_slice, gold_token_ids):
+            if tok_lp is None or not isinstance(tok_lp, dict) or not tok_lp:
+                continue
+            # Extract (token_id, logprob) pairs. vLLM Logprob entries
+            # expose .logprob; some fallbacks store raw floats.
+            entries: list[tuple[int, float]] = []
+            for k, v in tok_lp.items():
+                lp = getattr(v, 'logprob', None)
+                if lp is None:
+                    lp = float(v) if isinstance(v, (int, float)) else None
+                if lp is None:
+                    continue
+                try:
+                    kk = int(k)
+                except (TypeError, ValueError):
+                    continue
+                entries.append((kk, float(lp)))
+            if not entries:
+                continue
+            # Gold logprob: look up by gold_id; fallback to the token
+            # marked rank=1 (vLLM always includes the actual token).
+            gold_lp = None
+            for kk, lp in entries:
+                if kk == int(gold_id):
+                    gold_lp = lp
+                    break
+            if gold_lp is None:
+                # fallback: use max — teacher-forced always includes actual
+                gold_lp = max(lp for _, lp in entries)
+            # Best non-gold logprob among the returned top-k
+            nongold_lps = [lp for kk, lp in entries if kk != int(gold_id)]
+            if not nongold_lps:
+                # Only gold present → margin is unbounded. Skip: this is
+                # the "all probability mass on gold" case, uninformative
+                # for paired-delta but also rare at k=2.
+                continue
+            best_nongold = max(nongold_lps)
+            total_margin += (gold_lp - best_nongold)
+            count += 1
+        if count == 0:
+            return float('nan'), float('nan')
+        mean_margin = total_margin / count
+        # Sigmoid map to [0, 1]. Slope = 0.25 at margin=0 so a 1-nat shift
+        # translates to ~22pp score shift — within the dynamic range the
+        # continuous paired-delta MDE math assumes.
+        import math
+        score = 1.0 / (1.0 + math.exp(-mean_margin))
+        if score < 0.0:
+            score = 0.0
+        elif score > 1.0:
+            score = 1.0
+        return float(score), float(mean_margin)
+    except Exception:
+        return float('nan'), float('nan')
+
+
 def grade_ground_truth(question: GroundTruthQuestion, response: str,
                        code_timeout: int = 8) -> bool:
     """Dispatch to the appropriate rigorous grader. NEVER uses substring."""
@@ -1545,6 +1681,69 @@ def grade_ground_truth(question: GroundTruthQuestion, response: str,
             forbidden_symbols=question.forbidden_symbols or None,
         )
     return False
+
+
+def grade_ground_truth_score_ex(
+    question: GroundTruthQuestion, response: str,
+    code_timeout: int = 8,
+    model_loader=None,
+    score_method: str = "logprob_gold",
+) -> tuple[bool, float, dict]:
+    """Extended grader that returns (correct, score, aux).
+
+    Task #7 (2026-04-23): adds 'margin' scorer. `score_method` selects:
+      - 'binary'       — 1.0/0.0 from correctness (no model call).
+      - 'logprob_gold' — exp(mean lp_gold), blended with correctness.
+      - 'margin'       — sigmoid(mean(lp_gold − best_nongold)).
+
+    aux is a dict carrying `score_margin_raw` (natural-units mean margin)
+    and `score_logprob_gold_raw` (exp(mean lp_gold) or None) so operators
+    can A/B across cycles by running each method on separate restarts.
+    Running both on every cycle would double vLLM calls — the A/B is
+    done operator-side by flipping heldout_score_method between cycles.
+    """
+    method = question.check_method
+    aux: dict = {
+        "score_margin_raw": None,
+        "score_logprob_gold_raw": None,
+    }
+    if method == "code_unit_tests":
+        ok, frac = _score_code_unit_tests(
+            response, question.unit_tests or [], question.entry_point,
+            timeout_s=code_timeout,
+            forbidden_symbols=question.forbidden_symbols or None,
+        )
+        return ok, float(frac), aux
+    correct = grade_ground_truth(question, response, code_timeout=code_timeout)
+    binary_score = 1.0 if correct else 0.0
+    if score_method == "binary" or model_loader is None:
+        return correct, binary_score, aux
+    import math
+    if score_method == "margin":
+        sig_score, raw_margin = _score_logprob_margin(
+            model_loader, question.prompt, question.canonical_answer,
+        )
+        if sig_score is None or math.isnan(sig_score) or math.isinf(sig_score):
+            # Fall back to binary so downstream paired_delta never sees NaN.
+            return correct, binary_score, aux
+        aux["score_margin_raw"] = float(raw_margin)
+        return correct, float(sig_score), aux
+    # Default: logprob_gold (legacy path, unchanged semantics).
+    lp_score = _score_logprob_of_gold(
+        model_loader, question.prompt, question.canonical_answer,
+    )
+    if lp_score is None or math.isnan(lp_score) or math.isinf(lp_score):
+        return correct, binary_score, aux
+    aux["score_logprob_gold_raw"] = float(lp_score)
+    if correct:
+        score = 0.5 + 0.5 * float(lp_score)
+    else:
+        score = 0.5 * float(lp_score)
+    if score < 0.0:
+        score = 0.0
+    elif score > 1.0:
+        score = 1.0
+    return correct, float(score), aux
 
 
 def grade_ground_truth_score(

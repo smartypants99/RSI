@@ -3903,9 +3903,16 @@ class ImprovementLoop:
         # _degradation_count threshold used below.
         REGRESSION_TOL = 0.005
 
+        # Task #29 fix (live bug, cycle 3 on 2026-04-22): the high-water check
+        # previously filtered by samples_verified >= min_samples, which made
+        # cycle 1's 0.562 (1 sample) invisible to cycle 2's 0.539 comparison —
+        # so cycle 2 "beat the nonexistent high-water" and got promoted even
+        # though cycle 1's frozen-model eval was strictly higher. The eval is
+        # of the FROZEN model state; how many TRAINING samples produced that
+        # state has no bearing on whether the eval number is trustworthy.
+        # Only exclude cycles whose eval itself is suspect: capture alarm
+        # (verifier gaming) or mode collapse (degenerate outputs).
         def _eligible_for_max(r: CycleResult) -> bool:
-            if r.samples_verified < min_samples:
-                return False
             if getattr(r, "verifier_capture_alarm", False):
                 return False
             if getattr(r, "mode_collapse_detected", False):
@@ -3921,6 +3928,15 @@ class ImprovementLoop:
         regressed_vs_prior = bool(prior_scores) and (
             max(prior_scores) > current_score + REGRESSION_TOL
         )
+
+        # Task #29: explicit high-water gate. Even if the confirmed best is
+        # stale/zero, a candidate must beat every prior eval (that wasn't
+        # suspect) before it can enter the promotion pipeline. This is the
+        # symmetric guard to not_regressed_vs_best for the pre-promotion regime
+        # where samples-eligibility would otherwise let a genuinely-worse cycle
+        # become the first "best".
+        held_out_high_water = max(prior_scores) if prior_scores else 0.0
+        not_below_high_water = current_score >= held_out_high_water - REGRESSION_TOL
 
         # Task #15: explicit no-regression-vs-best gate. When a confirmed best
         # exists, require current_score >= best_score - 0.005 before the streak
@@ -3941,6 +3957,7 @@ class ImprovementLoop:
             and eligible
             and not regressed_vs_prior
             and not_regressed_vs_best
+            and not_below_high_water
         ):
             # Candidate new best — lagged N-cycle confirmation gate (task #2).
             if (

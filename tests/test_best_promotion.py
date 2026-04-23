@@ -129,24 +129,39 @@ def test_confirmation_requires_consecutive_at_or_above(tmp_path):
     assert loop._pending_best_cycle == 4
 
 
-def test_interrupting_ineligible_cycle_resets_pending(tmp_path):
-    """An ineligible cycle between two eligible highs must NOT bridge them."""
+def test_ineligible_cycle_sets_high_water_mark(tmp_path):
+    """Task #29: an ineligible cycle's eval IS a valid high-water mark.
+    The eval is of the frozen model state; how many training samples
+    produced that state has no bearing on whether the eval number is
+    trustworthy. Future cycles must beat that high-water to promote.
+    Live bug: cycle 1 (0.562, 1 sample) ineligible; cycle 2 (0.539, 15
+    samples) eligible; cycle 3 confirmed cycle 2 as best — but 0.539 < 0.562.
+    """
     loop = _make_loop(tmp_path, confirm_n=2, min_samples=8)
-    r1 = _make_result(1, eval_score=0.7, samples_verified=32)
+    # Cycle 1: eval high but samples low → ineligible for promotion, but
+    # its eval score sets the high-water bar.
+    r1 = _make_result(1, eval_score=0.75, samples_verified=2)
     loop.history.append(r1)
     loop._check_early_stopping(1, r1)
-    assert loop._pending_best_streak == 1
-    # Cycle 2: would beat the bar but samples too low → ineligible, resets.
-    r2 = _make_result(2, eval_score=0.75, samples_verified=2)
+    assert loop._pending_best_streak == 0  # ineligible, no streak
+    # Cycle 2: eligible samples, but score BELOW cycle-1 high-water.
+    # Must NOT advance streak despite beating _best_score=0.
+    r2 = _make_result(2, eval_score=0.7, samples_verified=32)
     loop.history.append(r2)
     loop._check_early_stopping(2, r2)
     assert loop._pending_best_streak == 0
-    # Cycle 3: back to eligible at the bar — starts a fresh streak, no promote.
-    r3 = _make_result(3, eval_score=0.7, samples_verified=32)
+    assert loop._best_checkpoint_cycle is None
+    # Cycle 3: also below high-water — still no streak.
+    r3 = _make_result(3, eval_score=0.72, samples_verified=32)
     loop.history.append(r3)
     loop._check_early_stopping(3, r3)
-    assert loop._best_checkpoint_cycle is None
+    assert loop._pending_best_streak == 0
+    # Cycle 4: finally beats high-water (within tolerance) → streak opens.
+    r4 = _make_result(4, eval_score=0.75, samples_verified=32)
+    loop.history.append(r4)
+    loop._check_early_stopping(4, r4)
     assert loop._pending_best_streak == 1
+    assert loop._pending_best_score == 0.75
 
 
 def test_confirm_one_restores_legacy_behavior(tmp_path):
@@ -212,18 +227,22 @@ def test_streak_advances_on_recovery_to_prior_high(tmp_path):
     assert loop._pending_best_score == 0.72
 
 
-def test_regression_guard_ignores_ineligible_prior_spikes(tmp_path):
-    """An ineligible prior cycle (tiny sample / capture alarm / mode-collapse)
-    whose score would be a "high" must NOT block a later legitimate at-bar
-    cycle from opening a streak. Only eligible priors count as regression refs."""
+def test_regression_guard_honors_suspect_eval_exclusions(tmp_path):
+    """Task #29 semantics: eval_score of ANY prior cycle is a valid high-water
+    mark UNLESS that eval itself is suspect. Low training-sample count does NOT
+    make the eval suspect (eval is on the frozen held-out set independent of
+    training); but capture_alarm and mode_collapse DO make the eval suspect
+    (the model is gaming or producing degenerate outputs). This test pins
+    that only capture-alarm / mode-collapse priors are excluded, not tiny-
+    sample priors."""
     loop = _make_loop(tmp_path, confirm_n=2, min_samples=8)
-    # Cycle 1: high score but ineligible (tiny sample count).
-    r1 = _make_result(1, eval_score=0.90, samples_verified=1)
+    # Cycle 1: capture alarm tripped — eval is suspect, excluded from high-water.
+    r1 = _make_result(1, eval_score=0.90, samples_verified=32,
+                      capture_alarm=True)
     loop.history.append(r1)
     loop._check_early_stopping(1, r1)
-    assert loop._pending_best_streak == 0  # ineligible, not streaked
-    # Cycle 2: legitimate 0.70, eligible. Must open pending streak despite
-    # cycle 1's ineligible 0.90 "spike".
+    # Cycle 2: legitimate 0.70 with no suspicion → opens pending streak
+    # despite cycle 1's suspect 0.90.
     r2 = _make_result(2, eval_score=0.70, samples_verified=32)
     loop.history.append(r2)
     loop._check_early_stopping(2, r2)

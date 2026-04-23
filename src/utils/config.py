@@ -270,7 +270,11 @@ class TrainerConfig:
     # effective num_epochs is min(num_epochs, num_epochs_warmup). Set
     # num_epochs_warmup_cycles=0 to disable the warmup cap.
     num_epochs_warmup: int = 1
-    num_epochs_warmup_cycles: int = 5
+    # Disabled (=0) after signal-amplifier diagnosis (2026-04-23): warmup cap
+    # held cycles 1-5 at num_epochs=1 → ~2 optimizer steps × lr_B ~6e-5 ≈
+    # 0.3% of base-weight magnitude per cycle, inside held-out MDE. With the
+    # cap off we get the full num_epochs=2 from cycle 1, doubling step count.
+    num_epochs_warmup_cycles: int = 0
 
     # Regularization knobs (see _train_inner in custom_lora.py).
     # early_stop_loss: if unweighted loss drops below this mid-training, stop

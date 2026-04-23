@@ -242,7 +242,7 @@ def test_clean_floor_filter_drops_any_fail_when_clean_enough():
 def test_warmup_epoch_cap_defaults_and_validation():
     cfg = TrainerConfig()
     assert cfg.num_epochs_warmup == 1
-    assert cfg.num_epochs_warmup_cycles == 5
+    assert cfg.num_epochs_warmup_cycles == 0
 
     # warmup=0 rejected (must be >= 1 to mean anything).
     with pytest.raises(ValueError, match="num_epochs_warmup must be >= 1"):

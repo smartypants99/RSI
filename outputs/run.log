@@ -1,0 +1,207 @@
+2026-04-23 14:05:28,879 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
+2026-04-23 14:05:31,223 [INFO] src.orchestrator.loop: fast_student: manager constructed (model=Qwen/Qwen2.5-Coder-1.5B-Instruct, redistill_every=2)
+2026-04-23 14:05:31,233 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
+2026-04-23 14:05:31,237 [INFO] src.orchestrator.loop: RSI registries opened (sid=rsi)
+2026-04-23 14:05:31,241 [INFO] src.utils.fast_start: fast_start: pre-stashed 30 prior-run training samples from outputs (cap=30, excluding sid=rsi)
+2026-04-23 14:05:31,241 [INFO] src.orchestrator.loop: fast_start: pre-stashed 30 prior training samples
+2026-04-23 14:05:31,247 [INFO] src.orchestrator.loop: heldout_base_cache: loaded 801 cached base predictions for model_id=unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 14:05:31,248 [INFO] src.orchestrator.loop: ============================================================
+2026-04-23 14:05:31,248 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
+2026-04-23 14:05:31,248 [INFO] src.orchestrator.loop: ============================================================
+2026-04-23 14:05:34,288 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 14:05:35,655 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-23 14:06:31,757 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-23 14:06:31,757 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-23 14:06:31,757 [INFO] src.orchestrator.loop: CYCLE 1
+2026-04-23 14:06:31,757 [INFO] src.orchestrator.loop: ============================================================
+2026-04-23 14:06:31,757 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/7)
+2026-04-23 14:06:31,758 [INFO] src.orchestrator.loop: [RSI tick 1] skip_first_diagnostics=True — using uniform default diag
+2026-04-23 14:06:31,758 [INFO] src.orchestrator.loop: [RSI tick 1] curriculum: frontier='(none)' floor=0.00
+2026-04-23 14:06:31,758 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 15 problems (path=code_builtins)
+2026-04-23 14:08:46,366 [INFO] src.generator.task_synthesizer: propose_batch_code: 12/15 proposals failed — top issues: missing_problem=9, too_few_tests=3, missing_entry=2, missing_reference=2
+2026-04-23 14:08:46,366 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): Alright, I need to come up with a novel Python coding problem that's challenging but solvable. Let's think about something that's a bit more complex than the example given. Maybe something involving graphs or dynamic programming again but with a twist.\n\nHmm, perhaps a problem where I have to find th
+2026-04-23 14:11:17,936 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
+2026-04-23 14:11:17,936 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (3 problems × 2 candidates, batched)
+2026-04-23 14:13:29,676 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 131.7s
+2026-04-23 14:13:29,680 [INFO] src.diagnostics.solution_diversity: [cycle 1] diversity: mean=0.521 var=0.0013 collapsed=0/3 backend=hash-fallback
+2026-04-23 14:13:29,681 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
+2026-04-23 14:13:29,704 [INFO] src.verifier.property_engine: verify[ver_ecedf83c01e44a7c] problem=afc551f4-ce3c-4cd2-ab01-97485861d5c6 accepted=False n=3 pass=0 fail=3 err=0 classes=0 backends=[trusted:FAIL=3] reject=3 property FAIL (policy=quorum_2of3, pass=0/3)
+2026-04-23 14:13:29,887 [INFO] src.verifier.property_engine: verify[ver_b193fff9b353483b] problem=e4df98a3-fbdf-4fa1-9d3d-b428b9031a0b accepted=False n=3 pass=0 fail=3 err=0 classes=0 backends=[trusted:FAIL=3] reject=3 property FAIL (policy=quorum_2of3, pass=0/3)
+2026-04-23 14:13:29,998 [INFO] src.verifier.property_engine: verify[ver_408b774d590f48fd] problem=afc551f4-ce3c-4cd2-ab01-97485861d5c6 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:13:30,000 [INFO] src.verifier.property_engine: verify[ver_1fde0271c8204187] problem=e4df98a3-fbdf-4fa1-9d3d-b428b9031a0b accepted=True n=3 pass=3 fail=0 err=0 classes=3 backends=[trusted:PASS=3]
+2026-04-23 14:13:30,000 [INFO] src.verifier.property_engine: verify[ver_74114496ffdf4a50] problem=bdd25563-73b1-48a9-be3b-594778b15631 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:13:30,034 [INFO] src.verifier.property_engine: verify[ver_d211618b71154f0b] problem=bdd25563-73b1-48a9-be3b-594778b15631 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:13:30,037 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=1
+2026-04-23 14:13:30,037 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
+2026-04-23 14:13:30,037 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (this cycle: 1 samples, rolling pool: 31 across 1 cycles)
+2026-04-23 14:13:30,037 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-23 14:13:32,009 [INFO] src.utils.vllm_backend: Loading HF model for training: unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 14:13:42,444 [INFO] src.trainer.custom_lora: Injected 448 LoRA layers, avg rank: 16
+2026-04-23 14:13:42,581 [INFO] src.trainer.custom_lora:   Adaptive grad_accum: 4 → 6 (total_batches=48, cap=8)
+2026-04-23 14:16:39,446 [INFO] src.trainer.custom_lora: Wrote PEFT adapter at outputs/lora_weights/lora_cycle_1 (r=16, 448 layers, targets=['down_proj', 'gate_proj', 'k_proj', 'o_proj', 'q_proj', 'up_proj', 'v_proj'])
+2026-04-23 14:16:39,532 [INFO] src.trainer.custom_lora:   Skipped 448/448 LoRA merges (bnb-quantized base — adapter stays separate for vLLM --enable-lora)
+2026-04-23 14:16:39,536 [INFO] src.trainer.custom_lora: Stripped 448 LoRA layers
+2026-04-23 14:16:40,044 [INFO] src.utils.vllm_backend: save_checkpoint: skipping for bnb-quantized base (save_pretrained would raise NotImplementedError; merge_lora already skipped so checkpoint == base). vLLM will reload base.
+2026-04-23 14:16:40,045 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-23 14:16:41,037 [INFO] src.utils.vllm_backend: Registered LoRA adapter id=1 at outputs/lora_weights/lora_cycle_1
+2026-04-23 14:16:41,048 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 14:18:09,212 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-23 14:18:09,212 [INFO] src.orchestrator.loop: [RSI tick 1] training done: 8 steps, score +0.000
+2026-04-23 14:18:09,212 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL (x1)
+2026-04-23 14:18:09,212 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: QUICK eval — target_n=192 per-domain=173 (expected_post_filter_total≈192, full every 9999 cycles)
+2026-04-23 14:31:20,495 [INFO] src.orchestrator.loop:   Held-out eval: 0.498
+2026-04-23 14:32:23,303 [INFO] src.orchestrator.loop:   anchor eval: 0.125 (n=48) per_bench={'humaneval': 0.0, 'mbpp': 0.0, 'gsm8k': 0.4166666666666667, 'math': 0.08333333333333333} per_bench_n={'humaneval': 12, 'mbpp': 12, 'gsm8k': 12, 'math': 12} distinct={'humaneval': 12, 'mbpp': 12, 'gsm8k': 12, 'math': 12} offline={'humaneval': True, 'mbpp': True, 'gsm8k': True, 'math': True}
+2026-04-23 14:32:23,305 [INFO] src.orchestrator.loop:   curriculum: frontier='math/number_theory' floor=0.00 (delta=n/a)
+2026-04-23 14:32:23,370 [INFO] src.orchestrator.loop: [auto-diagnose cycle=1] ## Bottom line — 3-bullet TL;DR
+  1. Training-health signals missing — cannot attribute.
+  2. Damage-probe signals missing.
+  3. ρ/verifier within acceptable ranges (or data missing).
+2026-04-23 14:32:23,370 [INFO] src.orchestrator.loop: [auto-diagnose cycle=1] FIX THIS: Training-health signals missing — cannot attribute.
+2026-04-23 14:32:23,371 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-23 14:32:23,374 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=5.60e-06 (from 8e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-23 14:32:23,380 [WARNING] src.orchestrator.loop:   best-candidate IGNORED: held-out=0.4983 cycle=1 but samples_verified=1 (<5) or capture_alarm=False or mode_collapse=False — ineligible for best-promotion.
+2026-04-23 14:32:23,380 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-23 14:32:23,380 [INFO] src.orchestrator.loop: CYCLE 2
+2026-04-23 14:32:23,380 [INFO] src.orchestrator.loop: ============================================================
+2026-04-23 14:32:23,380 [INFO] src.orchestrator.loop: [RSI tick 2] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/7)
+2026-04-23 14:42:41,289 [INFO] src.orchestrator.loop: [RSI tick 2] curriculum: frontier='code/implementation' floor=0.00
+2026-04-23 14:42:41,290 [INFO] src.orchestrator.loop: [RSI tick 2] Step 1: PROPOSE 20 problems (path=code_builtins)
+2026-04-23 14:45:07,540 [INFO] src.generator.task_synthesizer: propose_batch_code: 11/20 proposals failed — top issues: missing_problem=7, too_few_tests=4, missing_reference=3, missing_entry=2
+2026-04-23 14:45:07,541 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): Alright, let's tackle this problem. The task is to design a novel Python coding problem that's challenging but manageable. I need to ensure it's at the frontier of my capability, meaning I estimate a 30% chance of failing on the first attempt. The problem should involve algorithmic depth, such as dy
+2026-04-23 14:49:46,832 [INFO] src.orchestrator.loop: [RSI tick 2] Step 2: PROPOSE + ADMIT properties
+2026-04-23 14:49:46,833 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: SOLVE (9 problems × 2 candidates, batched)
+2026-04-23 14:52:22,522 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: solve phase took 155.7s
+2026-04-23 14:52:22,525 [INFO] src.diagnostics.solution_diversity: [cycle 2] diversity: mean=0.306 var=0.0306 collapsed=2/9 backend=hash-fallback
+2026-04-23 14:52:22,525 [INFO] src.orchestrator.loop: [RSI tick 2] Step 4: VERIFY candidates
+2026-04-23 14:52:23,230 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=84925136-cae7-4b1f-8623-c0369a26d1b3 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:23,230 [INFO] src.verifier.property_engine: verify[ver_dc3d8293269e49bd] problem=84925136-cae7-4b1f-8623-c0369a26d1b3 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:23,276 [INFO] src.verifier.property_engine: verify[ver_faf47397430346fa] problem=877caf57-5a7d-4383-b102-e3c61588a0ca accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:23,405 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=0c2ce84d-7ffa-4de7-9016-2846c092a1df policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:23,405 [INFO] src.verifier.property_engine: verify[ver_c140bef7f8ed407a] problem=0c2ce84d-7ffa-4de7-9016-2846c092a1df accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:23,409 [INFO] src.verifier.property_engine: verify[ver_50924d68912f403f] problem=877caf57-5a7d-4383-b102-e3c61588a0ca accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:23,418 [INFO] src.verifier.property_engine: verify[ver_1c3e1da6da6348ec] problem=0c2ce84d-7ffa-4de7-9016-2846c092a1df accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:23,527 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=c76ef49a-eeaa-486b-af44-4dc53dcb5c8e policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:23,528 [INFO] src.verifier.property_engine: verify[ver_1f38a0f3d79a4b2a] problem=c76ef49a-eeaa-486b-af44-4dc53dcb5c8e accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:24,085 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=c76ef49a-eeaa-486b-af44-4dc53dcb5c8e policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:24,127 [INFO] src.verifier.property_engine: verify[ver_608c07c9ff744faf] problem=c76ef49a-eeaa-486b-af44-4dc53dcb5c8e accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:24,219 [INFO] src.verifier.property_engine: verify[ver_8b26ad0b73c84cbd] problem=d73eb203-c5a0-4516-8ee3-4f8eeded5ed7 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:24,267 [INFO] src.verifier.property_engine: verify[ver_8b79548feb61434c] problem=84925136-cae7-4b1f-8623-c0369a26d1b3 accepted=False n=3 pass=0 fail=3 err=0 classes=0 backends=[trusted:FAIL=3] reject=3 property FAIL (policy=quorum_2of3, pass=0/3)
+2026-04-23 14:52:24,511 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=d3ec8013-a464-4833-aa4a-f644852fd0d5 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:24,512 [INFO] src.verifier.property_engine: verify[ver_e12f0f18e30c4817] problem=d3ec8013-a464-4833-aa4a-f644852fd0d5 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:24,522 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=d3ec8013-a464-4833-aa4a-f644852fd0d5 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:24,522 [INFO] src.verifier.property_engine: verify[ver_5f2ae5f6aaba4fc6] problem=d3ec8013-a464-4833-aa4a-f644852fd0d5 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:24,527 [INFO] src.verifier.property_engine: verify[ver_0b4f2350e51c4f3b] problem=d73eb203-c5a0-4516-8ee3-4f8eeded5ed7 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:24,527 [INFO] src.verifier.property_engine: verify[ver_34db08d19f0149f6] problem=8f0ce33b-27c4-438b-8d07-463ef5ff25fb accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:24,966 [INFO] src.verifier.property_engine: verify[ver_1ed24c8c106f4c62] problem=8f0ce33b-27c4-438b-8d07-463ef5ff25fb accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:25,100 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=09ddc4a4-9b1e-47b9-9efb-5daefb88106c policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:25,101 [INFO] src.verifier.property_engine: verify[ver_ec7e2fd7b00c4c66] problem=09ddc4a4-9b1e-47b9-9efb-5daefb88106c accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:25,104 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=09ddc4a4-9b1e-47b9-9efb-5daefb88106c policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:25,104 [INFO] src.verifier.property_engine: verify[ver_e937943cedb1473d] problem=09ddc4a4-9b1e-47b9-9efb-5daefb88106c accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:25,128 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=93138022-d758-4c32-ae54-8425e42c2646 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 14:52:25,129 [INFO] src.verifier.property_engine: verify[ver_40d18443db394897] problem=93138022-d758-4c32-ae54-8425e42c2646 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 14:52:25,172 [INFO] src.verifier.property_engine: verify[ver_e58fec06512d4038] problem=93138022-d758-4c32-ae54-8425e42c2646 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 14:52:25,180 [INFO] src.orchestrator.loop: [RSI tick 2] candidates accepted=9
+2026-04-23 14:52:25,180 [INFO] src.orchestrator.loop: [RSI tick 2] Step 7: CALIBRATION CHECK
+2026-04-23 14:52:25,180 [INFO] src.orchestrator.loop: [RSI tick 2] Step 8: TRAIN (this cycle: 9 samples, rolling pool: 9 across 1 cycles)
+2026-04-23 14:52:25,181 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-23 14:52:27,289 [INFO] src.utils.vllm_backend: Loading HF model for training: unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 14:52:39,186 [INFO] src.trainer.custom_lora: Injected 448 LoRA layers, avg rank: 16
+2026-04-23 14:53:12,625 [INFO] src.trainer.custom_lora: Wrote PEFT adapter at outputs/lora_weights/lora_cycle_2 (r=16, 448 layers, targets=['down_proj', 'gate_proj', 'k_proj', 'o_proj', 'q_proj', 'up_proj', 'v_proj'])
+2026-04-23 14:53:12,694 [INFO] src.trainer.custom_lora:   Skipped 448/448 LoRA merges (bnb-quantized base — adapter stays separate for vLLM --enable-lora)
+2026-04-23 14:53:12,698 [INFO] src.trainer.custom_lora: Stripped 448 LoRA layers
+2026-04-23 14:53:13,176 [INFO] src.utils.vllm_backend: save_checkpoint: skipping for bnb-quantized base (save_pretrained would raise NotImplementedError; merge_lora already skipped so checkpoint == base). vLLM will reload base.
+2026-04-23 14:53:13,178 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-23 14:53:14,089 [INFO] src.utils.vllm_backend: Registered LoRA adapter id=2 at outputs/lora_weights/lora_cycle_2
+2026-04-23 14:53:14,092 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 14:54:34,323 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-23 14:54:34,323 [INFO] src.orchestrator.loop: [RSI tick 2] training done: 4 steps, score +0.000
+2026-04-23 14:54:34,323 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: HELD-OUT EVAL (x1)
+2026-04-23 14:54:34,323 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: QUICK eval — target_n=192 per-domain=173 (expected_post_filter_total≈192, full every 9999 cycles)
+2026-04-23 15:07:42,901 [INFO] src.orchestrator.loop:   Held-out eval: 0.512
+2026-04-23 15:07:42,901 [INFO] src.orchestrator.loop:     (prev 0.498, +0.014)
+2026-04-23 15:07:42,907 [INFO] src.orchestrator.loop:     paired delta [continuous]: +0.0052 ± 0.0157 (n=287, z=0.33, rho=0.632, MDE80=0.0440) [ref=prev_cycle]
+2026-04-23 15:07:42,908 [INFO] src.orchestrator.loop:     rolling paired[K=1]: +0.0052 ± 0.0157 (N_tot=287, z=0.33, MDE80=0.0440)
+2026-04-23 15:07:42,909 [INFO] src.orchestrator.loop:     strat-CUPED: +0.2067 ± 0.0140 (N=287, D=3, MDE80=0.0391)
+2026-04-23 15:08:45,783 [INFO] src.orchestrator.loop:   anchor eval: 0.167 (n=48) per_bench={'humaneval': 0.0, 'mbpp': 0.0, 'gsm8k': 0.5833333333333334, 'math': 0.08333333333333333} per_bench_n={'humaneval': 12, 'mbpp': 12, 'gsm8k': 12, 'math': 12} distinct={'humaneval': 12, 'mbpp': 12, 'gsm8k': 12, 'math': 12} offline={'humaneval': True, 'mbpp': True, 'gsm8k': True, 'math': True}
+2026-04-23 15:08:45,783 [INFO] src.orchestrator.loop:     (anchor prev 0.125, +0.042)
+2026-04-23 15:08:45,785 [INFO] src.orchestrator.loop:   curriculum: frontier='logic/reasoning' floor=0.05 (delta=+0.014)
+2026-04-23 15:08:45,854 [INFO] src.orchestrator.loop: [auto-diagnose cycle=2] ## Bottom line — 3-bullet TL;DR
+  1. Training-health signals missing — cannot attribute.
+  2. Damage-probe signals missing.
+  3. Verifier noisy: 90.0% of accepted samples carry `any_fail` warnings.
+2026-04-23 15:08:45,854 [INFO] src.orchestrator.loop: [auto-diagnose cycle=2] FIX THIS: Training-health signals missing — cannot attribute.
+2026-04-23 15:08:45,856 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-23 15:08:45,859 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=7.28e-06 (from 5.6e-06), bounded to ±30%; tracker=insufficient_data (n=1)
+2026-04-23 15:08:45,859 [INFO] src.orchestrator.loop:   meta: gradient_accumulation_steps bandit: picked 5 (from 4), bounded to ±30% of running best
+2026-04-23 15:08:45,860 [INFO] src.orchestrator.loop:   best-candidate: held-out=0.5122 (cycle 2) streak=1/2 — awaiting confirmation
+2026-04-23 15:08:45,860 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-23 15:08:45,860 [INFO] src.orchestrator.loop: CYCLE 3
+2026-04-23 15:08:45,860 [INFO] src.orchestrator.loop: ============================================================
+2026-04-23 15:08:45,861 [INFO] src.orchestrator.loop: [RSI tick 3] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/7)
+2026-04-23 15:19:07,341 [INFO] src.orchestrator.loop: [RSI tick 3] curriculum: frontier='code/implementation' floor=0.05
+2026-04-23 15:19:07,341 [INFO] src.orchestrator.loop: [RSI tick 3] Step 1: PROPOSE 20 problems (path=code_builtins)
+2026-04-23 15:21:33,390 [INFO] src.generator.task_synthesizer: propose_batch_code: 14/20 proposals failed — top issues: missing_problem=9, difficulty_below_frontier:0.00<0.05=5, missing_entry=4, missing_reference=4, too_few_tests=4
+2026-04-23 15:21:33,390 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): Alright, let's tackle this problem. The task is to design a novel Python coding problem that's challenging but manageable. I need to ensure it's not trivial and requires some algorithmic thinking. Let's brainstorm.\n\nHmm, maybe something involving dynamic programming or graph traversal. How about a p
+2026-04-23 15:26:13,306 [INFO] src.orchestrator.loop: [RSI tick 3] Step 2: PROPOSE + ADMIT properties
+2026-04-23 15:26:13,307 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: SOLVE (6 problems × 2 candidates, batched)
+2026-04-23 15:28:32,864 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: solve phase took 139.6s
+2026-04-23 15:28:32,866 [INFO] src.diagnostics.solution_diversity: [cycle 3] diversity: mean=0.448 var=0.0250 collapsed=0/6 backend=hash-fallback
+2026-04-23 15:28:32,867 [INFO] src.orchestrator.loop: [RSI tick 3] Step 4: VERIFY candidates
+2026-04-23 15:28:32,879 [INFO] src.verifier.property_engine: verify[ver_5662e58e28c443cb] problem=4a098e1a-4ebe-4593-ba51-f6b456999b71 accepted=False n=3 pass=0 fail=3 err=0 classes=0 backends=[trusted:FAIL=3] reject=3 property FAIL (policy=quorum_2of3, pass=0/3)
+2026-04-23 15:28:33,800 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=56e4735a-33b0-4675-ab91-5c195be08658 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 15:28:33,853 [INFO] src.verifier.property_engine: verify[ver_bc76ef59c7204c5a] problem=56e4735a-33b0-4675-ab91-5c195be08658 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 15:28:33,857 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=bf7390f7-750c-4102-8472-bc7e4747f46b policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 15:28:33,908 [INFO] src.verifier.property_engine: verify[ver_14eca44f396d47f5] problem=bf7390f7-750c-4102-8472-bc7e4747f46b accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 15:28:33,959 [INFO] src.verifier.property_engine: verify[ver_da5ef80957154c05] problem=bf7390f7-750c-4102-8472-bc7e4747f46b accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 15:28:33,961 [INFO] src.verifier.property_engine: verify[ver_c4ac6a79b52540b9] problem=4a098e1a-4ebe-4593-ba51-f6b456999b71 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 15:28:33,978 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=2545573d-11f7-476a-a2b6-9f4281cf6a51 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 15:28:33,983 [INFO] src.verifier.property_engine: verify[ver_6807f04bb44349f5] problem=2545573d-11f7-476a-a2b6-9f4281cf6a51 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 15:28:33,986 [INFO] src.verifier.property_engine: verify[ver_297af17f75084d74] problem=7cf5d8de-8f8d-4a4c-811d-7f5cb9d089bf accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 15:28:34,506 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=2545573d-11f7-476a-a2b6-9f4281cf6a51 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 15:28:34,612 [INFO] src.verifier.property_engine: verify[ver_893cf40e525641c0] problem=2545573d-11f7-476a-a2b6-9f4281cf6a51 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 15:28:34,665 [INFO] src.verifier.property_engine: verify[ver_0e02afdf230c416a] problem=56e4735a-33b0-4675-ab91-5c195be08658 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 15:28:34,670 [INFO] src.verifier.property_engine: verify[ver_90415ede11ff496c] problem=7cf5d8de-8f8d-4a4c-811d-7f5cb9d089bf accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 15:28:34,670 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=f9c09586-8988-443d-ac65-9ef4c6ebcfc4 policy=quorum_2of3 pass=2 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-23 15:28:34,670 [INFO] src.verifier.property_engine: verify[ver_946723227f76495c] problem=f9c09586-8988-443d-ac65-9ef4c6ebcfc4 accepted=True n=3 pass=2 fail=1 err=0 classes=2 backends=[trusted:FAIL=1,trusted:PASS=2]
+2026-04-23 15:28:34,743 [INFO] src.verifier.property_engine: verify[ver_3a9bb75542f54520] problem=f9c09586-8988-443d-ac65-9ef4c6ebcfc4 accepted=False n=3 pass=1 fail=2 err=0 classes=1 backends=[trusted:FAIL=2,trusted:PASS=1] reject=2 property FAIL (policy=quorum_2of3, pass=1/3)
+2026-04-23 15:28:34,748 [INFO] src.orchestrator.loop: [RSI tick 3] candidates accepted=5
+2026-04-23 15:28:34,748 [INFO] src.orchestrator.loop: [RSI tick 3] Step 7: CALIBRATION CHECK
+2026-04-23 15:28:34,748 [INFO] src.orchestrator.loop: [RSI tick 3] Step 8: TRAIN (this cycle: 5 samples, rolling pool: 5 across 1 cycles)
+2026-04-23 15:28:34,748 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-23 15:28:36,859 [INFO] src.utils.vllm_backend: Loading HF model for training: unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 15:28:49,366 [INFO] src.trainer.custom_lora: Injected 448 LoRA layers, avg rank: 16
+2026-04-23 15:29:13,350 [INFO] src.trainer.custom_lora: Wrote PEFT adapter at outputs/lora_weights/lora_cycle_3 (r=16, 448 layers, targets=['down_proj', 'gate_proj', 'k_proj', 'o_proj', 'q_proj', 'up_proj', 'v_proj'])
+2026-04-23 15:29:13,413 [INFO] src.trainer.custom_lora:   Skipped 448/448 LoRA merges (bnb-quantized base — adapter stays separate for vLLM --enable-lora)
+2026-04-23 15:29:13,417 [INFO] src.trainer.custom_lora: Stripped 448 LoRA layers
+2026-04-23 15:29:13,933 [INFO] src.utils.vllm_backend: save_checkpoint: skipping for bnb-quantized base (save_pretrained would raise NotImplementedError; merge_lora already skipped so checkpoint == base). vLLM will reload base.
+2026-04-23 15:29:13,935 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-23 15:29:14,959 [INFO] src.utils.vllm_backend: Registered LoRA adapter id=3 at outputs/lora_weights/lora_cycle_3
+2026-04-23 15:29:14,960 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit
+2026-04-23 15:30:35,347 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-23 15:30:35,348 [INFO] src.orchestrator.loop: [RSI tick 3] training done: 2 steps, score +0.000
+2026-04-23 15:30:35,348 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: HELD-OUT EVAL (x1)
+2026-04-23 15:30:35,348 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: QUICK eval — target_n=192 per-domain=173 (expected_post_filter_total≈192, full every 9999 cycles)
+2026-04-23 15:43:44,272 [INFO] src.orchestrator.loop:   Held-out eval: 0.484
+2026-04-23 15:43:44,272 [INFO] src.orchestrator.loop:     (prev 0.512, -0.028)
+2026-04-23 15:43:44,274 [INFO] src.orchestrator.loop:     paired delta [continuous]: -0.0122 ± 0.0141 (n=287, z=-0.87, rho=0.706, MDE80=0.0394) [ref=prev_cycle]
+2026-04-23 15:43:44,275 [INFO] src.orchestrator.loop:     rolling paired[K=2]: -0.0035 ± 0.0105 (N_tot=574, z=-0.33, MDE80=0.0295)
+2026-04-23 15:43:44,276 [INFO] src.orchestrator.loop:     strat-CUPED: +0.1509 ± 0.0130 (N=287, D=3, MDE80=0.0363)
+2026-04-23 15:44:47,070 [INFO] src.orchestrator.loop:   anchor eval: 0.208 (n=48) per_bench={'humaneval': 0.0, 'mbpp': 0.0, 'gsm8k': 0.6666666666666666, 'math': 0.16666666666666666} per_bench_n={'humaneval': 12, 'mbpp': 12, 'gsm8k': 12, 'math': 12} distinct={'humaneval': 12, 'mbpp': 12, 'gsm8k': 12, 'math': 12} offline={'humaneval': True, 'mbpp': True, 'gsm8k': True, 'math': True}
+2026-04-23 15:44:47,070 [INFO] src.orchestrator.loop:     (anchor prev 0.167, +0.042)
+2026-04-23 15:44:47,071 [INFO] src.orchestrator.loop:   curriculum: frontier='logic/reasoning' floor=0.00 (delta=-0.028)
+2026-04-23 15:44:47,143 [INFO] src.orchestrator.loop: [auto-diagnose cycle=3] ## Bottom line — 3-bullet TL;DR
+  1. Training-health signals missing — cannot attribute.
+  2. Damage-probe signals missing.
+  3. Verifier noisy: 93.3% of accepted samples carry `any_fail` warnings.
+2026-04-23 15:44:47,143 [INFO] src.orchestrator.loop: [auto-diagnose cycle=3] FIX THIS: Training-health signals missing — cannot attribute.
+2026-04-23 15:44:47,144 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-23 15:44:47,148 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=9.46e-06 (from 7.28e-06), bounded to ±30%; tracker=insufficient_data (n=2)
+2026-04-23 15:44:47,149 [WARNING] src.orchestrator.loop:   best-candidate REGRESSION: held-out=0.4843 cycle=3 < prior_max=0.5122 (tol=0.005) — streak NOT advanced.
+2026-04-23 15:44:47,149 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-23 15:44:47,149 [INFO] src.orchestrator.loop: CYCLE 4
+2026-04-23 15:44:47,149 [INFO] src.orchestrator.loop: ============================================================
+2026-04-23 15:44:47,149 [INFO] src.orchestrator.loop: [RSI tick 4] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/7)

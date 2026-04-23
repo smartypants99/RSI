@@ -1,0 +1,9 @@
+{"tick": 1, "independence_class": "exec.behavioral", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776953610.0375361, "session_id": "rsi"}
+{"tick": 1, "independence_class": "structural.static", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776953610.0376492, "session_id": "rsi"}
+{"tick": 1, "independence_class": "search.bounded", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776953610.0376952, "session_id": "rsi"}
+{"tick": 2, "independence_class": "exec.behavioral", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776955945.1807086, "session_id": "rsi"}
+{"tick": 2, "independence_class": "structural.static", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776955945.1807835, "session_id": "rsi"}
+{"tick": 2, "independence_class": "search.bounded", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776955945.1808224, "session_id": "rsi"}
+{"tick": 3, "independence_class": "exec.behavioral", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776958114.748498, "session_id": "rsi"}
+{"tick": 3, "independence_class": "structural.static", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776958114.748569, "session_id": "rsi"}
+{"tick": 3, "independence_class": "search.bounded", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1776958114.7486112, "session_id": "rsi"}

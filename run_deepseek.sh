@@ -27,7 +27,7 @@ exec python main.py \
     --load-in-4bit \
     --use-vllm \
     --gpu-memory-utilization 0.75 \
-    --domains code \
+    --domains code,math,logic \
     --mode rsi \
     --enable-task-synthesis \
     --synthesis-tasks-per-cycle 20 \

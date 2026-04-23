@@ -210,7 +210,7 @@ class VerifierConfig:
     # 2-of-3 PASS with at most 1 FAIL. Both relaxed policies still
     # enforce distinct-classes + duplicate-author rules and record
     # verdict_warn=any_fail on the accepted record.
-    verifier_accept_policy: str = "majority"
+    verifier_accept_policy: str = "any_fail_veto"  # strict: live cycle 2 showed 91.7% of majority-accepts carry any_fail warnings → noise dominates training
 
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):

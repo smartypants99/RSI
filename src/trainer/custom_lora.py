@@ -2341,15 +2341,21 @@ class CustomLoRATrainer:
         """
         from torch.optim.lr_scheduler import LambdaLR
 
-        if total_steps <= 2:
-            # Too few steps for cosine to make sense — use constant LR
+        if total_steps <= 4:
+            # Too few steps for cosine to make sense — use constant LR.
+            # Raised from 2 to 4 after live cycle 1 showed lr=0.0 at step 3
+            # on a 4-step budget (cosine decayed to zero before training
+            # accumulated signal). Constant LR is the safe choice below 5.
             return LambdaLR(optimizer, lambda _: 1.0)
 
         def lr_lambda(current_step: int) -> float:
             if current_step < warmup_steps:
                 return current_step / max(warmup_steps, 1)
             progress = (current_step - warmup_steps) / max(total_steps - warmup_steps, 1)
-            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+            # Floor at 0.1 × peak so the final step still trains meaningfully.
+            # Full decay to 0 was observed wasting the last step in short
+            # cycles. Standard QLoRA/LLM recipes floor at 0.1.
+            return max(0.1, 0.5 * (1.0 + math.cos(math.pi * progress)))
 
         return LambdaLR(optimizer, lr_lambda)
 

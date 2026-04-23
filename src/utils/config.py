@@ -121,7 +121,8 @@ class GeneratorConfig:
     # relaxed-accept-policy (majority/quorum_2of3) admits that bypassed a FAIL
     # verdict. Below the floor, keep all samples so starvation doesn't skip
     # training entirely. Set to 0 to disable.
-    sample_quality_min_clean_floor: int = 1
+    sample_quality_min_clean_floor: int = 0  # disabled; down-weight via sample_quality_any_fail_weight instead
+    sample_quality_any_fail_weight: float = 0.4  # task #13: down-weight any_fail samples instead of dropping
     # Continuous log-prob-of-gold score on non-code ground-truth items.
     # When True (default), DiagnosticsEngine._check_ground_truth_scored
     # blends the model's mean-per-token gold-prob into per_question['score']

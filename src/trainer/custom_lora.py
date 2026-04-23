@@ -398,6 +398,16 @@ class TrainingDataset(Dataset):
             consistency = getattr(sample, "consistency_score", 1.0)
             if consistency > 0.0:
                 weight = weight * consistency
+            # Task #13: samples accepted under verifier "majority" policy
+            # but carrying "any_fail" warnings (≥1 backend disagreed) are
+            # lower-quality. Down-weight at this rate rather than the
+            # hard-drop filter — drop observed in cycle 3 starving pool
+            # (8/9 dropped → 1 training step).
+            any_fail = "any_fail" in (getattr(sample, "verdict_warnings", ()) or ())
+            if any_fail:
+                weight = weight * float(
+                    getattr(self.config, "sample_quality_any_fail_weight", 0.4)
+                )
             entry["sample_weight"] = torch.tensor(weight, dtype=torch.float32)
             # Per-sample Brier score over its own [C:...] markers, compared
             # against the sample's ground-truth correctness. NaN -> -1 marker

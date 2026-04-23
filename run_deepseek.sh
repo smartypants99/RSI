@@ -8,6 +8,15 @@ set -euo pipefail
 
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 
+# Preflight: kill stale VLLM::EngineCore / multiprocessing.resource_tracker
+# orphans from a prior crashed main.py. They get reparented to init when
+# main.py dies abnormally and are invisible to nvidia-smi's compute-app
+# list but still pin KV-cache VRAM. Confirmed cause of 36GB "leaked" VRAM
+# blocking run on 2026-04-23 (unblocker task #1 diagnosis).
+for _proc in $(pgrep -f 'VLLM::EngineCore|multiprocessing.resource_tracker' 2>/dev/null); do
+    kill -9 "$_proc" 2>/dev/null || true
+done
+
 RESUME_ARG=""
 if [ "$#" -ge 1 ]; then
     RESUME_ARG="$*"

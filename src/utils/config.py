@@ -654,7 +654,13 @@ class OrchestratorConfig:
     # still matched to regression_revert_threshold=0.03 and the full-sweep
     # every 5 cycles provides the <1pp resolution. Shaves ~25% off quick
     # eval wall-clock on the 8-11 min quick cycle.
-    heldout_quick_subsample_n: int = 96
+    # Task #3 (2026-04-23): 96 → 192. Doubling N cuts MDE80 by √2 ≈ 1.41×;
+    # combined with rolling-K=5 (√5) + the continuous log-prob score path
+    # lands MDE80 ≈ 1.45%, materially close to the 1%/cycle target. Null-
+    # cycle wall-clock impact is small because chunked SPRT (futility_z=0.5,
+    # K=4 OBF) stops at chunk 1 on flat cycles; positive-signal cycles pay
+    # the full 2× but that's where we want the extra resolution.
+    heldout_quick_subsample_n: int = 192
     # Diff-analysis cycle 3 vs cycle 5 (both within MDE_80≈5.6%, opposite
     # signs): the quick-vs-full cadence swap at cycle%5==0 silently
     # re-weights the held-out domain mix — QUICK stratifies 1/N per domain

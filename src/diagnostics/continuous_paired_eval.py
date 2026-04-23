@@ -272,11 +272,207 @@ def theoretical_regression_adjusted_mde(
     return alpha_beta_z * se
 
 
+# ────────────────────────── multi-cycle rolling + stratified ──────────────────────────
+
+
+@dataclass(frozen=True)
+class RollingPairedDelta:
+    """Rolling-window paired delta pooled over the last K cycles.
+
+    Under H0 (constant underlying delta, stationary paired-difference
+    noise), pooling K cycles of per-question paired differences into one
+    concatenated vector multiplies the effective N by K. Since SE scales
+    as 1/√N, the rolling MDE shrinks by √K relative to single-cycle MDE.
+    At K=5 this is a 2.236× reduction (gemini-verified 2026-04-23).
+
+    Fields:
+        k_windows: number of cycles actually pooled (≤ requested window)
+        n_total:   Σ N_k (concatenated-pair count across pooled cycles)
+        delta:     weighted pooled mean of per-question (post − pre)
+        delta_se:  √(Var_pool / n_total)   where Var_pool is concatenated-vector variance
+        z:         delta / delta_se
+        mde_80:    2.802 · delta_se
+    """
+    k_windows: int
+    n_total: int
+    delta: float
+    delta_se: float
+    z: float
+    mde_80: float
+
+
+@dataclass(frozen=True)
+class StratifiedRegressionAdjustedDelta:
+    """Domain-stratified CUPED/ANCOVA delta (per-domain fixed effects).
+
+    Residual variance is the within-domain-weighted ANCOVA variance:
+        Var(δ̂_strat) ≈ (1/N) · Σ_d (n_d/N) · σ_{Y,d}² · (1 − ρ_d²)
+    which is ≤ pooled-CUPED variance σ_Y²(1−ρ²)/N whenever between-domain
+    mean differences or heterogeneous ρ_d are present (gemini-verified
+    2026-04-23). Strictly equal when domain means and ρ_d are identical.
+    """
+    n: int
+    domains: int
+    delta_adjusted: float
+    delta_se: float
+    mde_80: float
+
+
+def rolling_paired_delta_from_diffs(
+    cycle_diffs: list[list[float]],
+    *,
+    window: int = 5,
+) -> RollingPairedDelta | None:
+    """Pool the last `window` cycles' paired-difference vectors and compute
+    the concatenated-sample paired delta.
+
+    `cycle_diffs` is an ordered list of per-cycle per-question (post − pre)
+    difference vectors, OLDEST FIRST. The last `window` entries are used.
+    Returns None if fewer than 2 differences are available total.
+    """
+    if not cycle_diffs:
+        return None
+    pooled_windows = [d for d in cycle_diffs[-window:] if d]
+    if not pooled_windows:
+        return None
+    all_diffs: list[float] = []
+    for d in pooled_windows:
+        all_diffs.extend(d)
+    n = len(all_diffs)
+    if n < 2:
+        return None
+    m = _mean(all_diffs)
+    v = _var(all_diffs, m)
+    se = math.sqrt(v / n) if v > 0 else 0.0
+    z = m / se if se > 0 else 0.0
+    mde = _Z_ALPHA_BETA * se
+    return RollingPairedDelta(
+        k_windows=len(pooled_windows),
+        n_total=n,
+        delta=m,
+        delta_se=se,
+        z=z,
+        mde_80=mde,
+    )
+
+
+def paired_diffs(
+    pre_per_q: list[dict],
+    post_per_q: list[dict],
+    *,
+    score_key: str = "score",
+) -> list[float]:
+    """Extract the per-question (post − pre) difference vector used by
+    rolling_paired_delta_from_diffs. Returns [] if fewer than 2 matches."""
+    pre_map = _score_map(pre_per_q, score_key=score_key)
+    post_map = _score_map(post_per_q, score_key=score_key)
+    keys = sorted(pre_map.keys() & post_map.keys())
+    if len(keys) < 2:
+        return []
+    return [post_map[k] - pre_map[k] for k in keys]
+
+
+def _domain_of(rec: dict) -> str:
+    return str(
+        rec.get("domain")
+        or rec.get("subject")
+        or rec.get("category")
+        or "_"
+    )
+
+
+def stratified_regression_adjusted_delta(
+    pre_per_q: list[dict],
+    post_per_q: list[dict],
+    *,
+    score_key: str = "score",
+    min_per_domain: int = 3,
+) -> StratifiedRegressionAdjustedDelta | None:
+    """Domain-stratified CUPED: run regression_adjusted_delta within each
+    domain, then pool the per-domain δ̂_d and Var(δ̂_d) by domain weight.
+
+    Domains with fewer than `min_per_domain` matched pairs fall back to
+    the pooled continuous paired delta (no adjustment) for that bucket,
+    so they can't dominate with spurious near-zero residual variance.
+    Returns None if no domain has ≥2 matched pairs.
+    """
+    pre_by_key: dict[str, dict] = {}
+    for r in pre_per_q or []:
+        pre_by_key[f"{r.get('prompt', r.get('question',''))}|{r.get('expected','')}"] = r
+    post_by_key: dict[str, dict] = {}
+    for r in post_per_q or []:
+        post_by_key[f"{r.get('prompt', r.get('question',''))}|{r.get('expected','')}"] = r
+    shared = sorted(pre_by_key.keys() & post_by_key.keys())
+    if len(shared) < 2:
+        return None
+
+    by_domain: dict[str, tuple[list[dict], list[dict]]] = {}
+    for k in shared:
+        pr = pre_by_key[k]
+        po = post_by_key[k]
+        d = _domain_of(pr) or _domain_of(po)
+        pre_b, post_b = by_domain.setdefault(d, ([], []))
+        pre_b.append(pr)
+        post_b.append(po)
+
+    total_n = 0
+    weighted_delta = 0.0
+    weighted_var_times_n_sq = 0.0
+    domains_used = 0
+    for d, (pre_b, post_b) in by_domain.items():
+        n_d = len(pre_b)
+        if n_d < 2:
+            continue
+        if n_d >= min_per_domain:
+            res = regression_adjusted_delta(pre_b, post_b, score_key=score_key)
+            if res is None:
+                res_c = continuous_paired_delta(pre_b, post_b, score_key=score_key)
+                if res_c is None:
+                    continue
+                delta_d = res_c.delta
+                se_d = res_c.delta_se
+            else:
+                delta_d = res.delta_adjusted
+                se_d = res.delta_se
+        else:
+            res_c = continuous_paired_delta(pre_b, post_b, score_key=score_key)
+            if res_c is None:
+                continue
+            delta_d = res_c.delta
+            se_d = res_c.delta_se
+        total_n += n_d
+        weighted_delta += n_d * delta_d
+        weighted_var_times_n_sq += (n_d ** 2) * (se_d ** 2)
+        domains_used += 1
+
+    if total_n < 2 or domains_used == 0:
+        return None
+
+    delta_adj = weighted_delta / total_n
+    # Var(Σ w_d · δ̂_d) with w_d = n_d/N and independent-domain assumption:
+    #   Var(δ̂_strat) = Σ w_d² · Var(δ̂_d) = Σ (n_d/N)² · se_d²
+    var_strat = weighted_var_times_n_sq / (total_n ** 2)
+    se_strat = math.sqrt(var_strat) if var_strat > 0 else 0.0
+    mde = _Z_ALPHA_BETA * se_strat
+    return StratifiedRegressionAdjustedDelta(
+        n=total_n,
+        domains=domains_used,
+        delta_adjusted=delta_adj,
+        delta_se=se_strat,
+        mde_80=mde,
+    )
+
+
 __all__ = [
     "ContinuousPairedDelta",
     "RegressionAdjustedDelta",
+    "RollingPairedDelta",
+    "StratifiedRegressionAdjustedDelta",
     "continuous_paired_delta",
     "regression_adjusted_delta",
+    "rolling_paired_delta_from_diffs",
+    "paired_diffs",
+    "stratified_regression_adjusted_delta",
     "theoretical_paired_mde",
     "theoretical_regression_adjusted_mde",
 ]

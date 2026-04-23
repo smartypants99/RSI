@@ -145,6 +145,22 @@ class CycleResult:
         # Task #27: observed sample correlation ρ(pre, post). None on
         # binary path.
         self.paired_delta_rho: float | None = None
+        # Task #3: multi-cycle rolling paired-z (pooled over last K cycles'
+        # per-question diff vectors). Observability-only, NOT used for
+        # promotion. None when <2 pooled diffs available.
+        self.rolling_paired_delta: float | None = None
+        self.rolling_paired_delta_se: float | None = None
+        self.rolling_paired_n_total: int | None = None
+        self.rolling_paired_k_windows: int | None = None
+        self.rolling_paired_mde_80: float | None = None
+        self.rolling_paired_z: float | None = None
+        # Task #3: domain-stratified CUPED. Observability-only.
+        self.stratified_cuped_delta: float | None = None
+        self.stratified_cuped_delta_se: float | None = None
+        self.stratified_cuped_mde_80: float | None = None
+        self.stratified_cuped_domains: int | None = None
+        # Per-question diff vector cached for future rolling-window reads.
+        self._paired_diff_vector: list[float] = []
         # Task #27: populated when SPRT fires early and the rep loop
         # broke out of heldout_repetitions. None when SPRT was inactive
         # or didn't trigger.
@@ -2790,6 +2806,66 @@ class ImprovementLoop:
                 cpd.delta, cpd.delta_se, cpd.n, cpd.z, cpd.rho,
                 cpd.mde_80, chosen_src,
             )
+            # Task #3: multi-cycle rolling paired-z + stratified CUPED.
+            # Observability only — does NOT feed promotion logic.
+            try:
+                from ..diagnostics.continuous_paired_eval import (
+                    paired_diffs,
+                    rolling_paired_delta_from_diffs,
+                    stratified_regression_adjusted_delta,
+                )
+                cur_diffs = paired_diffs(chosen_ref, cur_per_q)
+                try:
+                    result._paired_diff_vector = list(cur_diffs)
+                except Exception:
+                    pass
+                window = int(getattr(
+                    self.config.orchestrator, "heldout_rolling_window", 5,
+                ))
+                if window > 1 and cur_diffs:
+                    prior_diffs: list[list[float]] = []
+                    for r in self.history[-(window - 1):]:
+                        pdv = getattr(r, "_paired_diff_vector", None)
+                        if pdv:
+                            prior_diffs.append(list(pdv))
+                    pooled = prior_diffs + [list(cur_diffs)]
+                    roll = rolling_paired_delta_from_diffs(
+                        pooled, window=window,
+                    )
+                    if roll is not None:
+                        result.rolling_paired_delta = roll.delta
+                        result.rolling_paired_delta_se = roll.delta_se
+                        result.rolling_paired_n_total = roll.n_total
+                        result.rolling_paired_k_windows = roll.k_windows
+                        result.rolling_paired_mde_80 = roll.mde_80
+                        result.rolling_paired_z = roll.z
+                        logger.info(
+                            "    rolling paired[K=%d]: %+.4f ± %.4f "
+                            "(N_tot=%d, z=%.2f, MDE80=%.4f)",
+                            roll.k_windows, roll.delta, roll.delta_se,
+                            roll.n_total, roll.z, roll.mde_80,
+                        )
+                if getattr(
+                    self.config.orchestrator,
+                    "heldout_stratified_cuped_enabled",
+                    True,
+                ):
+                    strat = stratified_regression_adjusted_delta(
+                        chosen_ref, cur_per_q,
+                    )
+                    if strat is not None:
+                        result.stratified_cuped_delta = strat.delta_adjusted
+                        result.stratified_cuped_delta_se = strat.delta_se
+                        result.stratified_cuped_mde_80 = strat.mde_80
+                        result.stratified_cuped_domains = strat.domains
+                        logger.info(
+                            "    strat-CUPED: %+.4f ± %.4f "
+                            "(N=%d, D=%d, MDE80=%.4f)",
+                            strat.delta_adjusted, strat.delta_se,
+                            strat.n, strat.domains, strat.mde_80,
+                        )
+            except Exception as e:  # observability path, never fatal
+                logger.debug("rolling/strat-CUPED skipped: %s", e)
         else:
             # Binary/McNemar legacy path.
             from ..diagnostics.paired_eval import paired_delta

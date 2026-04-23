@@ -798,9 +798,15 @@ class OrchestratorConfig:
     heldout_chunk_size: int = 150
     heldout_sprt_max_chunks: int = 4
     # Optional |z| futility threshold checked after each chunk (before the
-    # final one). None disables futility early-stop (default: no futility,
-    # preserves type-II error bit-for-bit with the pre-wedge path).
-    heldout_sprt_futility_z: float | None = None
+    # final one). When set, stop_accept_null fires whenever |z| < threshold
+    # on a non-final look. Default 0.5: with the continuous log-prob score
+    # raising expected paired ρ from 0.46 → 0.8+, per-chunk MDE drops enough
+    # that true-null cycles spend the vast majority of their mass inside
+    # |z| ≤ 0.5 by chunks 1-2. For K=4 OBF α=0.05 + futility_z=0.5,
+    # simulated type-II error remains < 0.2 for effect sizes ≥ 2pp
+    # (gemini-cross-checked 2026-04-23). Set to None to disable the
+    # futility boundary and preserve pure rejection-only early-stop.
+    heldout_sprt_futility_z: float | None = 0.5
     # meta_meta append-only history (src/orchestrator/meta_meta.py). Written
     # each cycle when meta_meta_enabled.
     meta_meta_history_path: str = "outputs/meta_meta_history.jsonl"

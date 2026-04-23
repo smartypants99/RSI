@@ -35,8 +35,10 @@ def test_generator_defaults_speed_pass():
 
 def test_orchestrator_quick_eval_defaults():
     cfg = OrchestratorConfig()
-    # Task #22 speed-round-2: 128 → 96 (SE still matches revert threshold).
-    assert cfg.heldout_quick_subsample_n == 96
+    # Task #3 (2026-04-23): 96 → 192. Doubling N drops MDE80 by √2 while
+    # chunked-SPRT futility clips null-cycle wall-clock at chunk 1.
+    # See heldout_quick_subsample_n doc in OrchestratorConfig for math.
+    assert cfg.heldout_quick_subsample_n == 192
     # Diff-analysis cycle 3 vs cycle 5: pinned to QUICK every cycle so
     # paired_delta is measuring the same population (same domain mix)
     # across cycles. See config comment on heldout_full_every for math.

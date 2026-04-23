@@ -62,6 +62,7 @@ from .data_generator import (
 from ..diagnostics.engine import DiagnosticResult
 from ..diagnostics.ground_truth import GroundTruthQuestion
 from ..utils.config import SynthesisConfig
+from ..utils.structured_logs import emit as _emit_structured_log
 from .reasoning_strategies import ReasoningStrategy, StrategyLibrary
 from ..verifier.verifier_of_verifiers import (
     verify_properties_trustworthy,
@@ -1000,6 +1001,11 @@ class TaskSynthesizer:
         # these each tick via set_frontier_hint() / set_difficulty_floor().
         self._frontier_skill: str = ""
         self._difficulty_floor_override: Optional[float] = None
+        # Structured observability wiring. Orchestrator calls
+        # set_observability_config(ocfg) at init; set_observability_cycle()
+        # stamps the current cycle on emitted rows. None → no emission.
+        self._obs_cfg = None
+        self._obs_cycle: Optional[int] = None
         # Cross-cycle few-shot banks (property_library). Orchestrator calls
         # set_registries(regs) once so propose_batch_code can rank admitted
         # properties and high-accept-count problems to inject as prompt prefix.
@@ -1406,6 +1412,51 @@ class TaskSynthesizer:
                 out.append(prop)
         return out
 
+    def set_observability_config(self, obs_cfg) -> None:
+        """Register an OrchestratorConfig-like object for propose_attempts.jsonl
+        emission. None disables."""
+        self._obs_cfg = obs_cfg
+
+    def set_observability_cycle(self, cycle: Optional[int]) -> None:
+        """Stamp the current cycle onto subsequent propose_batch_code rows."""
+        self._obs_cycle = cycle
+
+    def _emit_propose_attempt_log(
+        self,
+        *,
+        attempt_idx: int,
+        domain: str,
+        frontier: str,
+        parsed_successfully: bool,
+        failure_reason: Optional[str],
+        generation_time_ms: float,
+        num_tokens_generated: int,
+        entry_point: Optional[str],
+        num_tests: Optional[int],
+    ) -> None:
+        """Append one outputs/propose_attempts.jsonl row. Never raises."""
+        try:
+            if self._obs_cfg is None:
+                return
+            row = {
+                "cycle": self._obs_cycle,
+                "attempt_idx": int(attempt_idx),
+                "domain": str(domain),
+                "frontier": str(frontier or ""),
+                "parsed_successfully": bool(parsed_successfully),
+                "failure_reason": failure_reason,
+                "generation_time_ms": float(generation_time_ms),
+                "num_tokens_generated": int(num_tokens_generated),
+                "entry_point": entry_point,
+                "num_tests": num_tests,
+            }
+            _emit_structured_log("propose_attempts", row, self._obs_cfg)
+        except Exception as _e:  # pragma: no cover
+            logger.debug(
+                "propose_attempts emit failed (%s): %s",
+                type(_e).__name__, _e,
+            )
+
     def propose_batch_code(self, n: int) -> list[ProposedProblem]:
         """Simplified code-proposal path using trusted builtins.
 
@@ -1484,6 +1535,7 @@ class TaskSynthesizer:
         )
         for i, raw in enumerate(raws):
             parse = parse_code_proposal(raw, difficulty_floor=effective_floor)
+            _n_toks = len((raw or "").split())
             if not parse.ok:
                 for iss in parse.issues:
                     issue_tally[iss] += 1
@@ -1491,6 +1543,17 @@ class TaskSynthesizer:
                     first_failed_preview = (
                         getattr(parse, "_raw_preview", "") or raw[:300].replace("\n", "\\n")
                     )
+                self._emit_propose_attempt_log(
+                    attempt_idx=i,
+                    domain="code",
+                    frontier=frontier_skill,
+                    parsed_successfully=False,
+                    failure_reason=";".join(parse.issues) if parse.issues else "unknown",
+                    generation_time_ms=0.0,  # batch-level timing not split per item
+                    num_tokens_generated=_n_toks,
+                    entry_point=None,
+                    num_tests=None,
+                )
                 continue
             problem_hash = hashlib.sha256(parse.problem_text.encode("utf-8")).hexdigest()
             ctx = {
@@ -1537,6 +1600,17 @@ class TaskSynthesizer:
             accepted.append(pp)
             self._prior_prompts.append(pp.problem_text)
             self._prior_sigs.append(_normalize_for_dedup(pp.problem_text))
+            self._emit_propose_attempt_log(
+                attempt_idx=i,
+                domain="code",
+                frontier=frontier_skill,
+                parsed_successfully=True,
+                failure_reason=None,
+                generation_time_ms=0.0,
+                num_tokens_generated=_n_toks,
+                entry_point=parse.entry_point,
+                num_tests=len(parse.tests) if parse.tests else 0,
+            )
 
         total_failed = len(raws) - len(accepted)
         if total_failed:

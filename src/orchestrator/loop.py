@@ -414,6 +414,11 @@ class ImprovementLoop:
             try:
                 from ..generator.task_synthesizer import TaskSynthesizer
                 self._task_synthesizer = TaskSynthesizer(config.synthesis, self.model_loader)
+                # Structured observability — propose_attempts.jsonl
+                try:
+                    self._task_synthesizer.set_observability_config(config.orchestrator)
+                except Exception:
+                    pass
                 logger.info("Synthesis mode enabled (tasks_per_cycle=%d, consensus_threshold=%.2f)",
                             config.synthesis.tasks_per_cycle,
                             config.synthesis.property_consensus_threshold)

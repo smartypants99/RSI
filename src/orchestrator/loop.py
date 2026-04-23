@@ -822,6 +822,11 @@ class ImprovementLoop:
                         self._pending_best_score = 0.0
 
                 self.history.append(result)
+                self._safe_call(
+                    "cycle_summary_log",
+                    lambda: self._emit_cycle_summary_log(cycle, result),
+                    result,
+                )
 
                 self._improvement_ema = (
                     self._ema_alpha * result.improvement
@@ -3056,6 +3061,91 @@ class ImprovementLoop:
             cfg.min_questions_per_domain = orig_min
             cfg.max_questions_per_domain = orig_max
             self.diagnostics._frozen_eval_mode = orig_frozen
+
+    def _emit_cycle_summary_log(
+        self,
+        cycle: int,
+        result: CycleResult,
+    ) -> None:
+        """Append one denormalized row per cycle to outputs/cycle_summary.jsonl.
+
+        Captures every field an analyst needs to diff cycles without having
+        to join four other jsonl streams — per-phase timings, held-out
+        score, paired_delta + MDE, best-checkpoint state, and alarm flags.
+        Never raises.
+        """
+        try:
+            ocfg = self.config.orchestrator
+            start_ts = float(getattr(result, "timestamp", time.time()))
+            duration = float(getattr(result, "duration", 0.0))
+            end_ts = start_ts + duration
+            phase_times = dict(getattr(result, "phase_times", {}) or {})
+            any_alarm = bool(
+                getattr(result, "verifier_capture_alarm", False)
+                or getattr(result, "mode_collapse_detected", False)
+                or getattr(result, "regression_reverted", False)
+                or getattr(result, "diversity_alarm", False)
+            )
+            row = {
+                "cycle": int(cycle),
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "total_time_s": duration,
+                "propose_s": phase_times.get("generate", phase_times.get("propose")),
+                "solve_s": phase_times.get("solve"),
+                "verify_s": phase_times.get("verify"),
+                "train_s": phase_times.get("train"),
+                "heldout_s": phase_times.get("eval", phase_times.get("heldout")),
+                "anchor_s": phase_times.get("anchor"),
+                "accepts": int(getattr(result, "samples_verified", 0)),
+                "held_out_score": _nan_to_none(
+                    getattr(result, "eval_score", None)
+                ),
+                "heldout_eval_kind": getattr(result, "heldout_eval_kind", None),
+                "paired_delta": _nan_to_none(
+                    getattr(result, "paired_delta", None)
+                ),
+                "paired_delta_se": _nan_to_none(
+                    getattr(result, "paired_delta_se", None)
+                ),
+                "rho": _nan_to_none(
+                    getattr(result, "paired_delta_rho", None)
+                ),
+                "mde_80": _nan_to_none(
+                    getattr(result, "paired_delta_mde_80", None)
+                ),
+                "best_checkpoint_cycle": getattr(
+                    self, "_best_checkpoint_cycle", None
+                ),
+                "pending_best_streak": int(
+                    getattr(self, "_pending_best_streak", 0)
+                ),
+                "any_alarm": any_alarm,
+                "verifier_capture_alarm": bool(
+                    getattr(result, "verifier_capture_alarm", False)
+                ),
+                "mode_collapse_detected": bool(
+                    getattr(result, "mode_collapse_detected", False)
+                ),
+                "regression_reverted": bool(
+                    getattr(result, "regression_reverted", False)
+                ),
+                "diversity_alarm": bool(
+                    getattr(result, "diversity_alarm", False)
+                ),
+                "anchor_score": _nan_to_none(
+                    getattr(result, "anchor_score", None)
+                ),
+                "improvement": _nan_to_none(
+                    getattr(result, "improvement", None)
+                ),
+            }
+            _emit_structured_log("cycle_summary", row, ocfg)
+        except Exception as _e:  # pragma: no cover
+            logger.debug(
+                "cycle_summary emit failed (%s): %s",
+                type(_e).__name__, _e,
+            )
 
     def _emit_heldout_per_prompt_log(
         self,

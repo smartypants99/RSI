@@ -748,6 +748,12 @@ class OrchestratorConfig:
     # fires a verifier-capture alarm (self-graded loop drifting from ground
     # truth). Default True; consolidation flip confirms ON.
     anchor_eval_enabled: bool = True
+    # Skip the anchor phase on cycles where no training step ran (model
+    # identical to last cycle → anchor score would be identical). Saves
+    # ~1 min/cycle on quick cycles that don't train. Any trained cycle,
+    # and the final cycle, always run anchor. Default True (safe: identity
+    # result is redundant information).
+    anchor_skip_when_not_trained: bool = True
     anchor_eval_size: int = 200
     verifier_capture_alarm_threshold: float = 0.01
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [

@@ -3632,7 +3632,27 @@ class ImprovementLoop:
         # benchmarks — detects verifier capture when internal loop improves
         # while real-world tasks regress.
         anchor_delta: float | None = None
-        if self.config.orchestrator.anchor_eval_enabled:
+        # Skip anchor eval on cycles with no training step: model weights
+        # are identical to last cycle, so the anchor score would be
+        # identical too. Cycle-time win: ~1 min/cycle on no-train cycles.
+        _anchor_trained_this_cycle = bool(
+            getattr(result, "training_metrics", None)
+            and getattr(result.training_metrics, "steps", 0) > 0
+        )
+        _anchor_skip_no_train = bool(getattr(
+            self.config.orchestrator, "anchor_skip_when_not_trained", False,
+        ))
+        if (
+            self.config.orchestrator.anchor_eval_enabled
+            and _anchor_skip_no_train
+            and not _anchor_trained_this_cycle
+        ):
+            logger.info(
+                "[Cycle %d] anchor_eval: SKIPPED (no training this cycle; "
+                "model weights unchanged — score would be identical to last cycle)",
+                cycle,
+            )
+        elif self.config.orchestrator.anchor_eval_enabled:
             try:
                 from ..utils.external_benchmarks import (
                     run_anchor_eval,

@@ -21,7 +21,7 @@ exec python main.py \
     --domains code,math,logic \
     --mode rsi \
     --enable-task-synthesis \
-    --synthesis-tasks-per-cycle 30 \
+    --synthesis-tasks-per-cycle 20 \
     --property-consensus-threshold 0.7 \
     --consistency-samples 3 \
     --samples-per-weakness 60 \

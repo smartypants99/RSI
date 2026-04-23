@@ -937,7 +937,7 @@ class OrchestratorConfig:
     # promotion eligibility, and (b) N≥best_confirm_cycles consecutive eligible
     # cycles at or above the new high-water mark before promoting the new best.
     # Setting best_confirm_cycles=1 restores the old (broken) behavior.
-    best_min_samples_verified: int = 8
+    best_min_samples_verified: int = 5  # live cycle 3: positive paired delta at 5 accepts blocked by old gate of 8; matches min_train_samples
     best_confirm_cycles: int = 2
     # Task #11 concern #2: when the post-train anchor eval reports
     # distinct/n < this threshold on ANY benchmark (especially offline

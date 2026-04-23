@@ -359,7 +359,7 @@ class TrainerConfig:
     # update still moved weights more than ~1% per step given LoRA+'s
     # 16× B-side LR multiplier. 0.3 caps per-step update magnitude and is
     # standard practice for small-batch preference/RLHF training.
-    max_grad_norm: float = 0.1
+    max_grad_norm: float = 1.0
     target_modules: list[str] = field(default_factory=lambda: [
         # LLaMA/Mistral/Qwen-style
         "q_proj", "k_proj", "v_proj", "o_proj",

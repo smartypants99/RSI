@@ -284,6 +284,28 @@ def analyze_verifier_noise(
     r.md.append(f"- ...with `verdict_warnings` containing `any_fail`: **{n_acc_warned}** "
                 f"({'N/A' if frac is None else f'{frac:.2%}'})\n")
 
+    # Task #5: under `quorum_2of3`, any single failing property trips `any_fail`
+    # without signalling real verifier disagreement. The true "noise" signal is
+    # accepts that saw ≥2 non-PASS verdicts — those are candidates the policy
+    # admitted despite majority-failure-ish evidence. Compute the multi-fail
+    # rate separately so the TL;DR can distinguish structural-quorum noise
+    # from actual verifier flakiness.
+    def _fail_count(v: dict) -> int:
+        fc = get(v, "fail_count", default=None)
+        if isinstance(fc, int):
+            return fc
+        pb = get(v, "per_backend", default=[]) or []
+        return sum(1 for b in pb if str(b.get("verdict", "")).upper() != "PASS")
+    n_acc_multifail = sum(1 for v in accepted if _fail_count(v) >= 2)
+    frac_multifail = (n_acc_multifail / n_acc) if n_acc else None
+    r.lines.append(
+        f"  accepted multi-fail (fail_count≥2)={n_acc_multifail}  "
+        f"({'N/A' if frac_multifail is None else f'{frac_multifail:.2%}'})"
+    )
+    r.md.append(f"- ...with ≥2 non-PASS verdicts (real disagreement): "
+                f"**{n_acc_multifail}** "
+                f"({'N/A' if frac_multifail is None else f'{frac_multifail:.2%}'})\n")
+
     # Mean score_delta for prompts whose training samples had warnings vs not.
     # Keyed by training sample_id → warning flag; match to held-out score_delta via domain/prompt tag.
     warned_ids = {
@@ -323,7 +345,12 @@ def analyze_verifier_noise(
                 f"`{'N/A' if md_w is None else f'{md_w:+.4f}'}`\n")
     r.md.append(f"- Mean heldout Δ on *clean-only* domains: "
                 f"`{'N/A' if md_c is None else f'{md_c:+.4f}'}`\n")
-    r.signals.update(frac_accepted_warned=frac, delta_warned=md_w, delta_clean=md_c)
+    r.signals.update(
+        frac_accepted_warned=frac,
+        frac_accepted_multifail=frac_multifail,
+        delta_warned=md_w,
+        delta_clean=md_c,
+    )
     return r
 
 
@@ -472,8 +499,28 @@ def compose_tldr(summary_rows: list[dict], sig: dict) -> AnalysisResult:
     parts = []
     if rb is not None and isinstance(rbv, (int, float)):
         parts.append(f"ρ bottleneck domain `{rb}` ρ={rbv:+.3f} → that domain will never hit MDE at sane N.")
-    if isinstance(fw, (int, float)) and fw > 0.1:
-        parts.append(f"Verifier noisy: {fw:.1%} of accepted samples carry `any_fail` warnings.")
+    # Task #5 recalibration: under `quorum_2of3` with 3 properties, `any_fail`
+    # fires structurally whenever 1 of 3 properties fails (policy admits 2/3).
+    # Observed empirically: 14/15 accepts = pass=2,fail=1 deterministically —
+    # a property-generator artifact (one builtin systematically mismatches on
+    # clean candidates), not verifier flake. The real "noisy" signal is when
+    # ≥2 of 3 properties fail on an accept (quorum actually disagreed with
+    # itself). Fire only when frac_multifail > 0.1 OR frac_any_fail >> the
+    # structural floor (~0.66 for 3 props under quorum_2of3).
+    fwm = sig.get("frac_accepted_multifail")
+    any_fail_floor = 0.66  # loose upper bound for 3-property quorum_2of3
+    fired = False
+    if isinstance(fwm, (int, float)) and fwm > 0.1:
+        parts.append(
+            f"Verifier noisy: {fwm:.1%} of accepted samples have ≥2 property "
+            f"FAILs (real quorum disagreement)."
+        )
+        fired = True
+    if not fired and isinstance(fw, (int, float)) and fw > any_fail_floor:
+        parts.append(
+            f"Verifier noisy: {fw:.1%} of accepted samples carry `any_fail` "
+            f"(above structural quorum floor ~{any_fail_floor:.0%})."
+        )
     bullets.append(" ".join(parts) if parts else "ρ/verifier within acceptable ranges (or data missing).")
 
     for i, b in enumerate(bullets, 1):

@@ -21,7 +21,7 @@ from src.utils.config import TrainerConfig
 
 def test_trainer_config_small_cycle_defaults():
     cfg = TrainerConfig()
-    assert cfg.num_epochs == 2, "num_epochs default must be 2 for small-cycle RSI"
+    assert cfg.num_epochs == 3, "num_epochs default must be 3 for small-cycle RSI"
     assert cfg.gradient_accumulation_steps == 4, (
         "grad_accum default must be 4 so cycles with <30 samples get 2-4 steps"
     )

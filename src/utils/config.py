@@ -265,7 +265,13 @@ class TrainerConfig:
     # Cycle-3 (overfit) = 25+ steps on 9 samples, final loss 0.045.
     # With samples<30: num_epochs=2, grad_accum=4 keeps steps in the 2-4 range
     # instead of the 25+ that caused memorization.
-    num_epochs: int = 2
+    # Raised 2 → 3 (signal-amplifier, 2026-04-23). With warmup cap off and
+    # lr 8e-6, per-cycle B-delta was ~1.0% of base magnitude — AT the 1% MDE
+    # boundary, not comfortably beyond. Extra epoch lifts it to ~1.5%. Step
+    # count sanity: samples=10, grad_accum=4, batch=2 → ceil(10*3/8) = 4
+    # steps; samples=20 → 8 steps. Still far under the 25-step memorization
+    # failure from cycle 3. max_steps_per_cycle=8 remains the backstop.
+    num_epochs: int = 3
     batch_size: int = 2
     gradient_accumulation_steps: int = 4
     # Warmup-cycle epoch cap (task #14). Early cycles have the least-
@@ -812,6 +818,18 @@ class OrchestratorConfig:
     # Default "continuous" (task #27 landing). Flip back to "binary" to
     # reproduce pre-task-#25 MDE math.
     heldout_eval_mode: str = "continuous"
+    # Task #3: multi-cycle rolling paired-z window. Pools per-question
+    # (post - pre) difference vectors across the last K cycles into a
+    # concatenated paired-delta. Under stationary noise, SE shrinks by
+    # √K, so K=5 cuts MDE80 by ~2.24× relative to single-cycle.
+    # Observability-only: per-cycle paired_delta is still authoritative
+    # for regression_revert_threshold. Set to 1 to disable rolling.
+    # Gemini-verified 2026-04-23.
+    heldout_rolling_window: int = 5
+    # Task #3: domain-stratified CUPED alongside per-cycle paired delta.
+    # Runs regression_adjusted_delta per domain and pools
+    # Var = Σ(n_d/N)² · se_d². Observability-only.
+    heldout_stratified_cuped_enabled: bool = True
     # Task #27: group-sequential early-stop for held-out eval. When True
     # and heldout_repetitions >= 2, sprt_decide() is called after each
     # rep; break the rep loop on stop_reject_null (signal confirmed).

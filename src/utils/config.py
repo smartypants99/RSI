@@ -122,7 +122,7 @@ class GeneratorConfig:
     # verdict. Below the floor, keep all samples so starvation doesn't skip
     # training entirely. Set to 0 to disable.
     sample_quality_min_clean_floor: int = 0  # disabled; down-weight via sample_quality_any_fail_weight instead
-    sample_quality_any_fail_weight: float = 0.4  # task #13: down-weight any_fail samples instead of dropping
+    sample_quality_any_fail_weight: float = 0.15  # cycle-2 analyzer showed 91.7% any_fail accepts → harsh down-weight so clean samples dominate gradient
     # Continuous log-prob-of-gold score on non-code ground-truth items.
     # When True (default), DiagnosticsEngine._check_ground_truth_scored
     # blends the model's mean-per-token gold-prob into per_question['score']
@@ -210,7 +210,7 @@ class VerifierConfig:
     # 2-of-3 PASS with at most 1 FAIL. Both relaxed policies still
     # enforce distinct-classes + duplicate-author rules and record
     # verdict_warn=any_fail on the accepted record.
-    verifier_accept_policy: str = "any_fail_veto"  # strict: live cycle 2 showed 91.7% of majority-accepts carry any_fail warnings → noise dominates training
+    verifier_accept_policy: str = "quorum_2of3"  # middle path: ≥2 PASS ∧ ≤1 FAIL. strict=0 accepts (pool starved), majority=91.7% noise. quorum tolerates 2-pass-1-flake exec nondeterminism.
 
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):

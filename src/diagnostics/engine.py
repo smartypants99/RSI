@@ -1256,6 +1256,115 @@ class DiagnosticsEngine:
         torch.cuda.empty_cache()
         return result
 
+    def run_chunked(
+        self,
+        cycle: int,
+        chunk_size: int = 150,
+        max_prompts: int | None = None,
+    ):
+        """Stream partial DiagnosticResult chunks for intra-rep SPRT.
+
+        Yields ``DiagnosticResult`` objects carrying the CUMULATIVE
+        per_question/domain_scores/overall_score after each chunk. A
+        chunk is flushed whenever the running per_question count first
+        meets/exceeds ``chunk_size`` prompts relative to the previous
+        flush, and once more at the end to report any tail. Ordering is
+        deterministic: domains are processed in ``self.config.domains``
+        order and ``_probe_domain`` is seeded off ``cycle``, so the same
+        (cycle, chunk_size) yields the same sequence of chunks.
+
+        Wall-clock savings come from the caller (orchestrator) breaking
+        out of the iterator on an SPRT stop-decision — each chunk's
+        ``_probe_domain`` call is the only GPU cost paid, and the
+        remaining domains' generate_batch() is never invoked. At
+        N≈600 / chunk_size=150 across 6 domains this gives K=4 looks
+        spaced at ~25%, 50%, 75%, 100% of full cost; stopping at look 1
+        saves ~75%, look 2 ~50%, etc.
+
+        ``max_prompts`` caps total prompts across all yielded chunks —
+        stops accepting new per_question records once the cap is hit and
+        yields a final chunk. ``None`` means no cap.
+
+        Safety: this path never writes to mutable engine state (curriculum
+        updates are gated on ``_frozen_eval_mode`` being False, and the
+        orchestrator always sets frozen_eval_mode=True before calling into
+        diagnostics for held-out eval). The hash-set is cleared at entry
+        to mirror ``run()``'s semantics.
+        """
+        self._seen_hashes.clear()
+        result = DiagnosticResult(cycle=cycle, timestamp=time.time())
+        last_flush_total = 0
+        prompt_cap = max_prompts if (max_prompts and max_prompts > 0) else None
+
+        for domain in self.config.domains:
+            if prompt_cap is not None and result.total_questions >= prompt_cap:
+                break
+            score, evidence = self._probe_domain(domain, cycle)
+            if prompt_cap is not None:
+                remaining = prompt_cap - result.total_questions
+                if remaining <= 0:
+                    break
+                if remaining < len(evidence):
+                    evidence = evidence[:remaining]
+            # Recompute domain score on the (possibly trimmed) evidence so
+            # the reported domain_scores stay consistent with per_question.
+            if evidence:
+                dom_score = sum(1 for e in evidence if e["correct"]) / len(evidence)
+            else:
+                dom_score = score
+            result.domain_scores[domain] = dom_score
+            result.domain_question_counts[domain] = len(evidence)
+            result.total_questions += len(evidence)
+            result.total_correct += sum(1 for e in evidence if e["correct"])
+            for e in evidence:
+                qid = hashlib.md5(
+                    f"{e.get('domain','')}|{e.get('subdomain','')}|"
+                    f"{e.get('question','')}|{e.get('expected','')}".encode()
+                ).hexdigest()[:16]
+                raw_score = e.get("score")
+                if raw_score is None:
+                    score_val = 1.0 if e.get("correct", False) else 0.0
+                else:
+                    try:
+                        score_val = float(raw_score)
+                    except (TypeError, ValueError):
+                        score_val = 1.0 if e.get("correct", False) else 0.0
+                if score_val < 0.0:
+                    score_val = 0.0
+                elif score_val > 1.0:
+                    score_val = 1.0
+                result.per_question.append({
+                    "question_id": qid,
+                    "domain": e.get("domain", domain),
+                    "subdomain": e.get("subdomain", "general"),
+                    "question": e.get("question", ""),
+                    "expected": e.get("expected", ""),
+                    "correct": bool(e.get("correct", False)),
+                    "score": score_val,
+                    "difficulty": e.get("difficulty", "medium"),
+                    "confidence": e.get("confidence", 0.0),
+                    "check_type": e.get("check_type", "contains"),
+                })
+            # Flush a chunk when we've accumulated >= chunk_size new prompts
+            # since the last flush.
+            if result.total_questions - last_flush_total >= chunk_size:
+                last_flush_total = result.total_questions
+                yield result
+
+        # Tail chunk — ensure callers that haven't early-stopped see a
+        # final cumulative result even if the last domain didn't push past
+        # the chunk_size threshold. Skipped only if we already flushed at
+        # the exact same total_questions.
+        if result.total_questions > 0 and result.total_questions != last_flush_total:
+            yield result
+        elif result.total_questions == 0:
+            # Edge case: no prompts at all — still yield empty result so
+            # the caller's loop runs once with a well-defined object.
+            yield result
+
+        # Free VRAM for downstream phases (mirror run()).
+        torch.cuda.empty_cache()
+
     def generate_adaptive_questions(self, weak_domains: list[str], cycle: int = 0):
         """Escalation: ask the model to generate diagnostic questions for its weak areas.
 

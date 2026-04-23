@@ -46,6 +46,11 @@ Decision = Literal["stop_reject_null", "continue", "stop_accept_null"]
 # c_k = c / sqrt(k/K) with c=2.004 (Jennison-Turnbull). Verified vs gemini.
 _OBF_K3_ALPHA_05: tuple[float, float, float] = (3.471, 2.454, 2.004)
 
+# OBF K=4 α=0.05 two-sided. Jennison-Turnbull Table 2.3: c=2.024, so
+# c_k = 2.024 / sqrt(k/4). Used by the intra-rep chunked-SPRT wedge
+# (chunk_size=150, N≈600 → K=4 looks at 25/50/75/100%).
+_OBF_K4_ALPHA_05: tuple[float, float, float, float] = (4.049, 2.863, 2.337, 2.024)
+
 
 @dataclass(frozen=True)
 class SequentialDecision:
@@ -75,8 +80,10 @@ def obf_critical_values(K: int = 3, alpha: float = 0.05) -> tuple[float, ...]:
     """
     if K == 3 and abs(alpha - 0.05) < 1e-9:
         return _OBF_K3_ALPHA_05
+    if K == 4 and abs(alpha - 0.05) < 1e-9:
+        return _OBF_K4_ALPHA_05
     raise NotImplementedError(
-        f"obf_critical_values currently ships only K=3 α=0.05 "
+        f"obf_critical_values currently ships only K∈{{3,4}} α=0.05 "
         f"(got K={K}, α={alpha}). Add the Jennison-Turnbull solver "
         f"or import a pre-tabulated c value."
     )
@@ -90,6 +97,7 @@ def sprt_decide(
     delta_se: float,
     K: int = 3,
     alpha: float = 0.05,
+    futility_z: float | None = None,
 ) -> SequentialDecision:
     """Decide whether to stop or continue at interim look `look` (1-indexed).
 
@@ -121,6 +129,15 @@ def sprt_decide(
     z = delta / delta_se
     if abs(z) >= critical:
         decision: Decision = "stop_reject_null"
+    elif (
+        futility_z is not None
+        and look < K
+        and abs(z) < futility_z
+    ):
+        # Optional futility (accept-null) boundary — only fires before the
+        # final look. Symmetric single-threshold form; no spending function.
+        # futility_z=None (default) preserves prior behavior bit-for-bit.
+        decision = "stop_accept_null"
     else:
         decision = "continue"
     return SequentialDecision(

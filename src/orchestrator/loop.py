@@ -147,6 +147,11 @@ class CycleResult:
         # or didn't trigger.
         self.sprt_stopped_at_rep: int | None = None
         self.sprt_decision: str | None = None
+        # Intra-rep chunked-SPRT (K=4 OBF over chunk_size-prompt blocks).
+        # Populated when heldout_chunked_sprt_enabled fires; None when
+        # disabled / never triggered / no reference available.
+        self.chunked_sprt_stopped_at_chunk: int | None = None
+        self.chunked_sprt_decision: str | None = None
         # Task #14: set True when solution-diversity tracker raised a
         # mode-collapse alarm this cycle.
         self.diversity_alarm: bool = False
@@ -2838,6 +2843,124 @@ class ImprovementLoop:
             K=K,
         )
 
+    def _run_heldout_chunked_sprt(
+        self, *, chunk_size: int, K: int, futility_z: float | None,
+    ):
+        """Iterate diagnostics.run_chunked() applying SPRT after each chunk.
+
+        Returns a tuple ``(result, stop_chunk, decision)`` where ``result``
+        is a DiagnosticResult built from whatever per_question chunks were
+        consumed before the SPRT boundary fired (or the full N was
+        consumed). ``stop_chunk`` / ``decision`` are None when no early-
+        stop occurred. On any internal error, returns
+        ``(None, None, None)`` so the caller falls back to the
+        non-chunked run() path.
+
+        Reference selection (for the running paired delta) mirrors
+        _compute_paired_delta_with_base_cache: prefer the BaseHeldoutCache,
+        fall back to the last-cycle per_question. Without a reference we
+        cannot compute z, so we skip SPRT decisions and just concatenate
+        the chunks into a full result.
+
+        OBF K=4 α=0.05 critical values used here: (4.049, 2.863, 2.337,
+        2.024) — Jennison-Turnbull Table 2.3 with c=2.024, c_k=c/√(k/K).
+        """
+        try:
+            from ..diagnostics.continuous_paired_eval import (
+                continuous_paired_delta,
+            )
+            from ..diagnostics.sequential_eval import sprt_decide
+        except Exception as exc:  # pragma: no cover
+            logger.debug("chunked-SPRT deps unavailable: %s", exc)
+            return (None, None, None)
+
+        base_cache = getattr(self, "_heldout_base_cache", None)
+        base_records = (
+            base_cache.to_per_question_records()
+            if base_cache is not None and base_cache.entries else None
+        )
+        prev_per_q = next(
+            (
+                getattr(r, "_eval_per_rep_per_question", None)
+                for r in reversed(self.history)
+                if getattr(r, "_eval_per_rep_per_question", None)
+            ),
+            None,
+        )
+        prev_records = prev_per_q[-1] if prev_per_q else None
+
+        final_result = None
+        chunk_idx = 0
+        stop_chunk: int | None = None
+        decision_str: str | None = None
+        try:
+            for partial in self.diagnostics.run_chunked(
+                self.HELDOUT_CYCLE_SEED, chunk_size=chunk_size,
+            ):
+                chunk_idx += 1
+                final_result = partial
+                if chunk_idx > K:
+                    # Safety cap — run_chunked may legitimately yield more
+                    # than K chunks if chunk_size doesn't evenly divide N.
+                    # Exhaust the generator silently (no more SPRT looks
+                    # since K is exhausted).
+                    continue
+                cur = list(partial.per_question)
+                if not cur:
+                    continue
+                # Pick reference with larger overlap (base > prev on ties).
+                cur_keys = {self._per_q_key(r) for r in cur}
+
+                def _overlap(ref):
+                    if not ref:
+                        return 0
+                    return sum(
+                        1 for r in ref if self._per_q_key(r) in cur_keys
+                    )
+
+                base_overlap = _overlap(base_records)
+                prev_overlap = _overlap(prev_records)
+                chosen_ref = None
+                if base_overlap >= prev_overlap and base_overlap >= 2:
+                    chosen_ref = base_records
+                elif prev_overlap >= 2:
+                    chosen_ref = prev_records
+                if chosen_ref is None:
+                    continue
+
+                cpd = continuous_paired_delta(chosen_ref, cur)
+                if cpd is None or cpd.delta_se <= 0:
+                    continue
+
+                interim = sprt_decide(
+                    look=chunk_idx,
+                    n_so_far=cpd.n,
+                    delta=cpd.delta,
+                    delta_se=cpd.delta_se,
+                    K=K,
+                    futility_z=futility_z,
+                )
+                if interim.decision in ("stop_reject_null", "stop_accept_null"):
+                    stop_chunk = chunk_idx
+                    decision_str = interim.decision
+                    logger.info(
+                        "  chunked-SPRT %s at chunk %d/%d "
+                        "(n=%d, |z|=%.3f, crit=%.3f) — skipping remaining "
+                        "~%d%% of held-out eval.",
+                        interim.decision, chunk_idx, K, cpd.n,
+                        abs(interim.z), interim.critical,
+                        int(100 * max(0, K - chunk_idx) / max(1, K)),
+                    )
+                    break
+        except Exception as exc:
+            logger.warning(
+                "chunked-SPRT path failed (%s); falling back to full run().",
+                exc,
+            )
+            return (None, None, None)
+
+        return (final_result, stop_chunk, decision_str)
+
     def _maybe_populate_base_cache(
         self, cycle: int, result: "CycleResult",
         cur_per_q: list[dict] | None,
@@ -3062,13 +3185,47 @@ class ImprovementLoop:
         sprt_K = 3
         sprt_fired_at: int | None = None
         sprt_decision_str: str | None = None
+        # Intra-rep chunked SPRT (K=4 OBF). Wired only on full held-out
+        # evals — quick eval is already short enough that the per-chunk
+        # overhead (recomputing continuous_paired_delta K times) is net
+        # negative. heldout_chunked_sprt_enabled gates the whole path.
+        ocfg = self.config.orchestrator
+        chunked_sprt_enabled = bool(getattr(
+            ocfg, "heldout_chunked_sprt_enabled", True,
+        )) and is_full_cycle and hasattr(self.diagnostics, "run_chunked")
+        chunk_size = int(getattr(ocfg, "heldout_chunk_size", 150))
+        chunk_K = int(getattr(ocfg, "heldout_sprt_max_chunks", 4))
+        futility_z = getattr(ocfg, "heldout_sprt_futility_z", None)
+        # Per-rep chunked-SPRT bookkeeping — preserved across reps for log
+        # aggregation; we only record the FIRST rep that fires early-stop
+        # (usually only one rep with the default heldout_repetitions=1).
+        chunk_stop_rep: int | None = None
+        chunk_stop_chunk: int | None = None
+        chunk_stop_decision: str | None = None
 
         try:
             cfg.max_questions_per_domain = max(orig_max, heldout_target_per_domain)
             cfg.questions_per_domain = heldout_target_per_domain
             for i in range(reps):
+                d = None
                 try:
-                    d = self.diagnostics.run(self.HELDOUT_CYCLE_SEED)
+                    if chunked_sprt_enabled:
+                        d = self._run_heldout_chunked_sprt(
+                            chunk_size=chunk_size,
+                            K=chunk_K,
+                            futility_z=futility_z,
+                        )
+                        # _run_heldout_chunked_sprt returns a (result,
+                        # stop_chunk, decision) tuple; None result means
+                        # fall through to the non-chunked path.
+                        if isinstance(d, tuple):
+                            d, _stop_chunk, _decision = d
+                            if _stop_chunk is not None and chunk_stop_rep is None:
+                                chunk_stop_rep = i + 1
+                                chunk_stop_chunk = _stop_chunk
+                                chunk_stop_decision = _decision
+                    if d is None:
+                        d = self.diagnostics.run(self.HELDOUT_CYCLE_SEED)
                 except Exception as e:
                     logger.warning(f"  held-out rep {i+1}/{reps} failed: {type(e).__name__}: {e}")
                     continue
@@ -3118,6 +3275,9 @@ class ImprovementLoop:
         if sprt_fired_at is not None:
             result.sprt_stopped_at_rep = sprt_fired_at
             result.sprt_decision = sprt_decision_str
+        if chunk_stop_chunk is not None:
+            result.chunked_sprt_stopped_at_chunk = chunk_stop_chunk
+            result.chunked_sprt_decision = chunk_stop_decision
         result.eval_scores_all = scores
         result.eval_domain_scores = dict(eval_diag.domain_scores) if eval_diag else {}
         # meta_analyst ASK 1: surface the per-subdomain breakdown that run()

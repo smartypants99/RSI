@@ -116,7 +116,7 @@ class GeneratorConfig:
     # relaxed-accept-policy (majority/quorum_2of3) admits that bypassed a FAIL
     # verdict. Below the floor, keep all samples so starvation doesn't skip
     # training entirely. Set to 0 to disable.
-    sample_quality_min_clean_floor: int = 16
+    sample_quality_min_clean_floor: int = 1
 
     def __post_init__(self):
         if self.min_reasoning_steps < 1:
@@ -239,7 +239,7 @@ class TrainerConfig:
     # regressed -15pp. LR=5e-5 over-drives QLoRA on the 32B base — lowered
     # to 2e-5. Still 4× the original 5e-6 (which was too timid to move the
     # loss) but not the 5e-5 that was causing damage.
-    learning_rate: float = 2e-5
+    learning_rate: float = 4e-6
     # Defaults tuned for small-cycle RSI regime (typ. 5-30 verified samples/cycle).
     # Cycle-2 (success) = 1-2 optimizer steps, final loss ~0.4-0.8.
     # Cycle-3 (overfit) = 25+ steps on 9 samples, final loss 0.045.
@@ -345,7 +345,7 @@ class TrainerConfig:
     # update still moved weights more than ~1% per step given LoRA+'s
     # 16× B-side LR multiplier. 0.3 caps per-step update magnitude and is
     # standard practice for small-batch preference/RLHF training.
-    max_grad_norm: float = 0.3
+    max_grad_norm: float = 0.1
     target_modules: list[str] = field(default_factory=lambda: [
         # LLaMA/Mistral/Qwen-style
         "q_proj", "k_proj", "v_proj", "o_proj",
@@ -407,7 +407,7 @@ class TrainerConfig:
     # with lr_B = lr_A * lora_plus_ratio. Canonical ratio = 16.
     # When DoRA is active, the `magnitude` parameter joins the A (slow) group.
     use_lora_plus: bool = True
-    lora_plus_ratio: float = 16.0
+    lora_plus_ratio: float = 4.0
 
     # rsLoRA (Kalajdzievski 2023): scaling = alpha / sqrt(rank) instead of
     # alpha / rank. Strictly dominates classic scaling as rank grows.

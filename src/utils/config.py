@@ -122,7 +122,14 @@ class GeneratorConfig:
     # verdict. Below the floor, keep all samples so starvation doesn't skip
     # training entirely. Set to 0 to disable.
     sample_quality_min_clean_floor: int = 0  # disabled; down-weight via sample_quality_any_fail_weight instead
-    sample_quality_any_fail_weight: float = 0.15  # cycle-2 analyzer showed 91.7% any_fail accepts → harsh down-weight so clean samples dominate gradient
+    # Raised 0.15 → 1.0 (task #5, 2026-04-24). The 0.15 down-weight was
+    # compensating for the 91.7% any_fail rate created by the now-dropped
+    # structural type-check property; under any_fail_veto with 2 behavioral
+    # properties, accepts carry NO any_fail warnings, so 0.15 was either
+    # a no-op or (if a relaxed policy is re-enabled) an unwanted silent
+    # gradient attenuation. At 1.0, relaxed-policy admits are trained at
+    # full weight — consistent with opting into relaxation explicitly.
+    sample_quality_any_fail_weight: float = 1.0
     # Continuous log-prob-of-gold score on non-code ground-truth items.
     # When True (default), DiagnosticsEngine._check_ground_truth_scored
     # blends the model's mean-per-token gold-prob into per_question['score']

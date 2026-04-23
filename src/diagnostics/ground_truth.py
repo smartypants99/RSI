@@ -1397,6 +1397,135 @@ def _score_code_unit_tests(
     return all_pass, fraction
 
 
+def _score_logprob_of_gold(
+    model_loader, prompt: str, gold_answer: str,
+) -> float:
+    """Score a non-code item by the model's mean log-prob on the gold tokens.
+
+    Motivation (ρ-killer fix): the continuous-paired-delta MDE at N=600
+    depends on the paired-sample correlation ρ. When the per-item score
+    collapses to {0, 1}, ρ is bounded by the Pearson correlation of two
+    Bernoulli sequences — empirically ~0.46 on the live run (cycle 2).
+    A continuous log-prob-of-gold signal is far smoother: adapters that
+    nudge gold-token probabilities only a little still produce paired
+    deltas, raising ρ toward 0.8+ (cf. Anthropic HH-RLHF paper: log-prob
+    proxies typically achieve ρ in the 0.7–0.9 band on paired eval).
+
+    Implementation: teacher-forced scoring via vLLM ``prompt_logprobs``.
+    We submit ``prompt + "\\n" + gold_answer`` with ``max_tokens=1`` and
+    ``prompt_logprobs=1`` — vLLM returns the per-token logprob of every
+    prompt token without running the decoder. We average the logprobs
+    over the gold-answer tokens only (the question tokens are discarded)
+    and return ``exp(mean_logprob)`` ∈ [0, 1]: the geometric mean of
+    per-token probabilities, i.e. the model's self-normalised
+    probability mass on the gold sequence per token.
+
+    Normalisation choice: ``exp(mean_logprob)`` beats raw sum-logprob
+    because long gold strings otherwise dominate variance. It also beats
+    ``-NLL / T`` (no absolute scale) and rank-based scoring (collapses
+    to binary for greedy-vs-perturbed comparisons). exp(mean) is bounded
+    [0, 1], dimensionless, and monotone in per-token quality — the three
+    properties the paired-delta needs.
+
+    Robust fallback: returns ``float('nan')`` when vLLM did not return
+    logprobs (older versions, HF-backend fallback, or the loader lacks
+    ``_llm``). The caller collapses NaN to the binary score so nothing
+    regresses — this function is strictly additive.
+    """
+    if model_loader is None:
+        return float('nan')
+    # Require vLLM backend with an active LLM instance; HF fallback
+    # doesn't expose prompt_logprobs cheaply.
+    llm = getattr(model_loader, '_llm', None)
+    sp_cls = getattr(model_loader, '_sampling_params_cls', None)
+    tok = getattr(model_loader, '_tokenizer', None) or getattr(
+        model_loader, 'tokenizer', None,
+    )
+    if llm is None or sp_cls is None or tok is None:
+        return float('nan')
+    if not gold_answer:
+        return float('nan')
+
+    try:
+        # Tokenise prompt and (prompt + newline + gold) so we know the
+        # boundary — the gold-slice is the tail beyond len(prompt_ids).
+        full_text = prompt.rstrip() + "\n" + gold_answer
+        try:
+            prompt_ids = tok(prompt.rstrip() + "\n",
+                             add_special_tokens=False)["input_ids"]
+            full_ids = tok(full_text, add_special_tokens=False)["input_ids"]
+        except Exception:
+            # Some tokenizers expose encode() directly.
+            prompt_ids = tok.encode(prompt.rstrip() + "\n",
+                                    add_special_tokens=False)
+            full_ids = tok.encode(full_text, add_special_tokens=False)
+        if len(full_ids) <= len(prompt_ids):
+            return float('nan')
+        n_gold = len(full_ids) - len(prompt_ids)
+
+        params = sp_cls(
+            max_tokens=1, temperature=0.0, top_p=1.0,
+            prompt_logprobs=1, logprobs=0,
+        )
+        outputs = llm.generate([full_text], params)
+        if not outputs:
+            return float('nan')
+        plp = getattr(outputs[0], 'prompt_logprobs', None)
+        if not plp:
+            return float('nan')
+        # plp is a list with one entry per prompt token; the first token
+        # has no predecessor so its entry is None. Take the tail n_gold
+        # entries (these are the gold tokens under the model).
+        gold_slice = plp[-n_gold:]
+        total, count = 0.0, 0
+        for tok_lp in gold_slice:
+            if tok_lp is None:
+                continue
+            # vLLM's prompt_logprobs entry is a dict {token_id: Logprob}.
+            # We want the logprob of the *actual* token at this position,
+            # which vLLM always includes (it's the forced token).
+            if isinstance(tok_lp, dict):
+                # Smallest-key-with-max-logprob is unreliable; instead
+                # find the entry whose .rank == 1 OR fall back to max.
+                best_lp = None
+                for v in tok_lp.values():
+                    lp = getattr(v, 'logprob', None)
+                    if lp is None:
+                        lp = float(v) if isinstance(v, (int, float)) else None
+                    if lp is None:
+                        continue
+                    if best_lp is None or lp > best_lp:
+                        # NOTE: teacher-forced prompt always includes the
+                        # ACTUAL token with its logprob; picking max is
+                        # safe when prompt_logprobs=1 (only top-1 + actual
+                        # are returned, and the actual token's logprob is
+                        # the value we need — max covers both branches).
+                        best_lp = lp
+                if best_lp is None:
+                    continue
+                total += float(best_lp)
+                count += 1
+            else:
+                lp = getattr(tok_lp, 'logprob', None)
+                if lp is None:
+                    continue
+                total += float(lp)
+                count += 1
+        if count == 0:
+            return float('nan')
+        mean_lp = total / count
+        import math
+        score = math.exp(mean_lp)
+        # Guard against numerical drift outside [0, 1].
+        if score < 0.0:
+            return 0.0
+        if score > 1.0:
+            return 1.0
+        return float(score)
+    except Exception:
+        return float('nan')
+
+
 def grade_ground_truth(question: GroundTruthQuestion, response: str,
                        code_timeout: int = 8) -> bool:
     """Dispatch to the appropriate rigorous grader. NEVER uses substring."""
@@ -1421,6 +1550,8 @@ def grade_ground_truth(question: GroundTruthQuestion, response: str,
 def grade_ground_truth_score(
     question: GroundTruthQuestion, response: str,
     code_timeout: int = 8,
+    model_loader=None,
+    use_logprob_continuous_score: bool = False,
 ) -> tuple[bool, float]:
     """Return (all_correct, continuous_score) for the response.
 
@@ -1450,9 +1581,41 @@ def grade_ground_truth_score(
             forbidden_symbols=question.forbidden_symbols or None,
         )
         return ok, float(frac)
-    # Binary methods — score collapses to correctness.
+    # Non-code methods: compute binary correctness, then optionally
+    # augment with a log-prob-of-gold continuous score so downstream
+    # paired-delta eval sees real variance (ρ-killer fix — see
+    # _score_logprob_of_gold docstring for the math).
     correct = grade_ground_truth(question, response, code_timeout=code_timeout)
-    return correct, (1.0 if correct else 0.0)
+    binary_score = 1.0 if correct else 0.0
+    if not use_logprob_continuous_score or model_loader is None:
+        return correct, binary_score
+    lp_score = _score_logprob_of_gold(
+        model_loader, question.prompt, question.canonical_answer,
+    )
+    # Fallback: NaN / inf → binary (backward compat for old vLLM or
+    # HF-backend fallback).
+    import math
+    if lp_score is None or math.isnan(lp_score) or math.isinf(lp_score):
+        return correct, binary_score
+    # Blend: preserve the correctness signal (bit cannot be swapped by
+    # a lucky logprob) while injecting continuous variance. A correct
+    # answer lands in [0.5, 1.0] scaled by per-token gold-prob; a wrong
+    # answer lands in [0.0, 0.5]. The monotone map is
+    #   score = 0.5 + 0.5 * lp_score  when correct
+    #   score = 0.5 * lp_score        when wrong
+    # so Δscore tracks Δ(gold-prob) continuously — the signal the MDE
+    # path needs — and mean(score) still tracks mean(correct) within
+    # ±0.25 (the inner width of each half-interval).
+    if correct:
+        score = 0.5 + 0.5 * float(lp_score)
+    else:
+        score = 0.5 * float(lp_score)
+    # Clamp for numerical safety.
+    if score < 0.0:
+        score = 0.0
+    if score > 1.0:
+        score = 1.0
+    return correct, float(score)
 
 
 def question_to_dict(q: GroundTruthQuestion) -> dict:

@@ -2124,9 +2124,14 @@ class DiagnosticsEngine:
         )
         try:
             from .ground_truth import grade_ground_truth_score
+            use_lp = bool(getattr(
+                self.config, 'use_logprob_continuous_score', False,
+            ))
             return grade_ground_truth_score(
                 gtq, response,
                 code_timeout=self.config.code_execution_timeout,
+                model_loader=self.model if use_lp else None,
+                use_logprob_continuous_score=use_lp,
             )
         except Exception as e:
             logger.debug("grade_ground_truth_score failed (%s): %s", type(e).__name__, e)

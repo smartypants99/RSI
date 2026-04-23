@@ -56,6 +56,11 @@ class DiagnosticsConfig:
     significance_alpha: float = 0.05
     min_evidence_for_weakness: int = 8
     activation_probes_per_domain: int = 2
+    # Mirror of GeneratorConfig.use_logprob_continuous_score — consumed
+    # by _check_ground_truth_scored() to enable vLLM prompt_logprobs
+    # gold-token scoring on non-code items. See GeneratorConfig for the
+    # ρ-lift rationale.
+    use_logprob_continuous_score: bool = True
 
     def __post_init__(self):
         if self.batch_size < 1:
@@ -117,6 +122,15 @@ class GeneratorConfig:
     # verdict. Below the floor, keep all samples so starvation doesn't skip
     # training entirely. Set to 0 to disable.
     sample_quality_min_clean_floor: int = 1
+    # Continuous log-prob-of-gold score on non-code ground-truth items.
+    # When True (default), DiagnosticsEngine._check_ground_truth_scored
+    # blends the model's mean-per-token gold-prob into per_question['score']
+    # for numeric_exact / sympy_equiv / exact_mc / exact_string methods.
+    # This lifts the paired-sample correlation ρ from ~0.46 (binary)
+    # toward 0.8+ (continuous) — the load-bearing assumption for the
+    # ≤1% MDE at N=600 wedge-1 claim (task #25). Disable if vLLM
+    # prompt_logprobs adds unacceptable latency or breaks compat.
+    use_logprob_continuous_score: bool = True
 
     def __post_init__(self):
         if self.min_reasoning_steps < 1:
@@ -756,6 +770,23 @@ class OrchestratorConfig:
     # regression guard) are untouched — early-stop is a throughput knob
     # only, not a decision-rule change.
     sprt_early_stop_enabled: bool = True
+    # Intra-rep chunked SPRT (ships the run_chunked primitive). When True
+    # and the held-out branch runs a full (non-quick) eval, the loop
+    # iterates diagnostics.run_chunked() and calls sprt_decide after each
+    # chunk against the BaseHeldoutCache reference. Breaks on
+    # stop_reject_null or stop_accept_null. Safety gates unaffected —
+    # promotion eligibility, capture alarm, mode-collapse, regression guard
+    # all run against the (partial) accumulated per_question exactly as
+    # they would against a full-N result.
+    # OBF K=4 α=0.05 critical values are (4.049, 2.863, 2.337, 2.024);
+    # see diagnostics/sequential_eval.py for the derivation and JT Table 2.3.
+    heldout_chunked_sprt_enabled: bool = True
+    heldout_chunk_size: int = 150
+    heldout_sprt_max_chunks: int = 4
+    # Optional |z| futility threshold checked after each chunk (before the
+    # final one). None disables futility early-stop (default: no futility,
+    # preserves type-II error bit-for-bit with the pre-wedge path).
+    heldout_sprt_futility_z: float | None = None
     # meta_meta append-only history (src/orchestrator/meta_meta.py). Written
     # each cycle when meta_meta_enabled.
     meta_meta_history_path: str = "outputs/meta_meta_history.jsonl"
@@ -874,6 +905,23 @@ class OrchestratorConfig:
             raise ValueError(
                 "heldout_eval_max_tokens must be >= 1, "
                 f"got {self.heldout_eval_max_tokens}"
+            )
+        if self.heldout_chunk_size < 1:
+            raise ValueError(
+                f"heldout_chunk_size must be >= 1, got {self.heldout_chunk_size}"
+            )
+        if self.heldout_sprt_max_chunks not in (3, 4):
+            raise ValueError(
+                "heldout_sprt_max_chunks must be 3 or 4 (OBF tables), "
+                f"got {self.heldout_sprt_max_chunks}"
+            )
+        if (
+            self.heldout_sprt_futility_z is not None
+            and self.heldout_sprt_futility_z < 0
+        ):
+            raise ValueError(
+                "heldout_sprt_futility_z must be >= 0 or None, "
+                f"got {self.heldout_sprt_futility_z}"
             )
         if self.heldout_quick_subsample_n < 0:
             raise ValueError(

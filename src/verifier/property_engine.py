@@ -48,8 +48,80 @@ from typing import Any, Callable, Literal, Optional, Protocol
 
 from ..utils.sandbox import run_python_sandboxed
 from ..utils.sympy_utils import HAS_SYMPY
+from ..utils.structured_logs import emit as _emit_structured_log
 
 logger = logging.getLogger(__name__)
+
+# Module-level observability carrier. The orchestrator calls
+# ``set_observability_config(ocfg)`` at init time; verify() reads it to
+# append one row per candidate to outputs/verify_decisions.jsonl. None
+# ⇒ no emission (zero-cost). See src/utils/structured_logs.py.
+_OBS_CFG: Any = None
+# Optional per-verify metadata carrier. Callers can set this via
+# ``set_observability_context(cycle=..., candidate_idx=...)`` before
+# invoking verify() so the emitted row can be joined against the cycle
+# and candidate index. Thread-unsafe by design — property_engine's
+# verify() is already called serially per candidate.
+_OBS_CONTEXT: dict = {"cycle": None, "candidate_idx": None}
+
+
+def set_observability_config(obs_cfg: Any) -> None:
+    """Register an OrchestratorConfig-like object so verify() can emit
+    structured rows. Pass None to disable."""
+    global _OBS_CFG
+    _OBS_CFG = obs_cfg
+
+
+def set_observability_context(*, cycle: Optional[int] = None,
+                               candidate_idx: Optional[int] = None) -> None:
+    """Stamp cycle / candidate_idx onto subsequent verify() emissions.
+    Safe to call with None to clear."""
+    _OBS_CONTEXT["cycle"] = cycle
+    _OBS_CONTEXT["candidate_idx"] = candidate_idx
+
+
+def _emit_verify_decision(record: "VerificationRecord") -> None:
+    """Append one outputs/verify_decisions.jsonl row from a VerificationRecord.
+
+    Never raises. Aggregates per-backend (verdict, time) tuples from
+    record.per_property.
+    """
+    try:
+        if _OBS_CFG is None:
+            return
+        from collections import Counter as _Counter
+        backends_tried: set = set()
+        per_backend: list[dict] = []
+        for pv in record.per_property:
+            backends_tried.add(pv.backend)
+            per_backend.append({
+                "backend": pv.backend,
+                "verdict": pv.verdict,
+                "time_ms": int(pv.duration_ms),
+                "property_id": pv.property_id,
+            })
+        row = {
+            "cycle": _OBS_CONTEXT.get("cycle"),
+            "problem_id": record.problem_id,
+            "candidate_idx": _OBS_CONTEXT.get("candidate_idx"),
+            "candidate_hash": record.candidate_hash,
+            "n_backends_tried": len(backends_tried),
+            "per_backend": per_backend,
+            "accepted": bool(record.accepted),
+            "accept_policy": record.accept_policy,
+            "verdict_warnings": list(record.verdict_warnings or ()),
+            "independence_classes_count": len(record.distinct_classes),
+            "pass_count": record.pass_count,
+            "fail_count": record.fail_count,
+            "error_count": record.error_count,
+            "reject_reason": record.reject_reason,
+        }
+        _emit_structured_log("verify_decisions", row, _OBS_CFG)
+    except Exception as _e:  # pragma: no cover
+        logger.debug(
+            "verify_decisions emit failed (%s): %s",
+            type(_e).__name__, _e,
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -861,7 +933,7 @@ def verify(
     except Exception as _e:  # pragma: no cover — telemetry must never break verify
         logger.debug("verify backend-summary log failed (%s)", _e)
 
-    return VerificationRecord(
+    _record = VerificationRecord(
         record_id=record_id,
         problem_id=problem_id,
         candidate_hash=cand_hash,
@@ -879,6 +951,8 @@ def verify(
         accept_policy=accept_policy,
         verdict_warnings=tuple(verdict_warnings),
     )
+    _emit_verify_decision(_record)
+    return _record
 
 
 # ═════════════════════════════════════════════════════════════════════════

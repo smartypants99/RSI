@@ -355,6 +355,13 @@ class ImprovementLoop:
             self.trainer.set_observability_config(config.orchestrator)
         except Exception:
             pass
+        # Install the same observability config on property_engine so verify()
+        # can append to outputs/verify_decisions.jsonl.
+        try:
+            from ..verifier import property_engine as _pe
+            _pe.set_observability_config(config.orchestrator)
+        except Exception:
+            pass
         # Task #14: sample-quality clean-floor filter plumbed from generator
         # config through a trainer attribute. Trainer reads it at train() time.
         self.trainer._sample_quality_min_clean_floor = int(

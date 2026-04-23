@@ -1755,15 +1755,22 @@ class TaskSynthesizer:
         )
         stash_problem_ctx(problem.problem_id, problem.problem_ctx or {})
 
-        # Pick 3 builtins spanning distinct classes for the code domain.
-        # passes_provided_tests  → exec.behavioral  (ground-truth tests)
-        # passes_generated_edge_cases → search.bounded (vs reference oracle)
-        # output_type_matches_signature → structural.static (type check)
-        # Three distinct classes satisfies §2.1's quorum floor.
+        # Pick 2 builtins spanning distinct classes for the code domain.
+        # passes_provided_tests       → exec.behavioral  (ground-truth tests)
+        # passes_generated_edge_cases → search.bounded   (vs reference oracle)
+        #
+        # Dropped (task #5, 2026-04-24): output_type_matches_signature
+        # (structural.static). Empirical cycle-3 data: 14/15 accepts showed
+        # this property deterministically failing even when both behavioral
+        # properties passed — the R1-distilled model emits Python return-type
+        # annotations that don't match the expected signature exactly (stylistic
+        # mismatch, not a correctness issue). Keeping it forced quorum_2of3
+        # policy to absorb the false failure, which down-weighted ALL such
+        # samples 6.7× in training. Dropping leaves 2 distinct classes, which
+        # satisfies quorum_distinct_classes_required=2 at the verify call sites.
         names = [
             "passes_provided_tests",
             "passes_generated_edge_cases",
-            "output_type_matches_signature",
         ]
         out: list[Any] = []
         for name in names:

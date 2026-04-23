@@ -347,6 +347,13 @@ class ImprovementLoop:
         # orchestrator is asked to (e.g. for cycle_metrics dumps).
         if getattr(config.orchestrator, "collect_training_loss_trajectory", False):
             self.trainer.set_collect_loss_trajectory(True)
+        # Structured observability: the trainer emits one training_steps.jsonl
+        # row per optimizer step when the flag is on. Passing the orchestrator
+        # config carries both .output_dir and the gate flags in one object.
+        try:
+            self.trainer.set_observability_config(config.orchestrator)
+        except Exception:
+            pass
         # Task #14: sample-quality clean-floor filter plumbed from generator
         # config through a trainer attribute. Trainer reads it at train() time.
         self.trainer._sample_quality_min_clean_floor = int(

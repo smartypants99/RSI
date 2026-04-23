@@ -23,6 +23,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from ..utils.config import TrainerConfig
 from ..utils.model_loader import ModelLoader
+from ..utils.structured_logs import emit as _emit_structured_log, is_enabled as _obs_enabled
 from ..generator.data_generator import TrainingSample, PreferencePair
 
 logger = logging.getLogger(__name__)
@@ -734,6 +735,104 @@ class CustomLoRATrainer:
         # Off by default to avoid growing lists in long runs.
         self._collect_loss_trajectory: bool = False
         self._loss_trajectory: list[float] = []
+        # Structured-observability: orchestrator wires an OrchestratorConfig
+        # stand-in here (.output_dir, .structured_observability_enabled,
+        # .structured_log_training_steps). When None, emit is a no-op.
+        self._obs_cfg = None
+
+    def set_observability_config(self, obs_cfg) -> None:
+        """Wire an OrchestratorConfig (or any object with the expected
+        attributes) so the optimizer-step loop can emit training_steps
+        records. Safe to pass None (disables)."""
+        self._obs_cfg = obs_cfg
+
+    def _emit_training_step_log(
+        self,
+        *,
+        cycle: int,
+        step_idx: int,
+        loss_unweighted: float,
+        loss_weighted: float,
+        sample_weight: Optional[float],
+        verdict_warnings: Optional[tuple[str, ...]],
+        lora_params: list,
+        lr_A: Optional[float],
+        lr_B: Optional[float],
+        clip_fraction: Optional[float],
+        time_ms: float,
+        sample_idx_in_batch: Optional[int] = None,
+    ) -> None:
+        """Append one training_steps.jsonl record. Never raises.
+
+        Called AFTER optimizer.step() so post-step B statistics reflect the
+        update that just landed. Grad norms are read from .grad BEFORE
+        zero_grad() by keeping this call sequenced correctly at the call
+        site; when grads have already been zeroed the values come back 0.0
+        (acceptable — the emitter can't reconstruct vanished state).
+        """
+        try:
+            if not _obs_enabled(self._obs_cfg, "training_steps"):
+                return
+            # Split lora_params into A, B, magnitude (DoRA) groups by name hint.
+            grad_sq_A = 0.0
+            grad_sq_B = 0.0
+            grad_sq_mag = 0.0
+            grad_sq_total = 0.0
+            post_B_max = 0.0
+            post_B_sum = 0.0
+            post_B_count = 0
+            for p in lora_params:
+                g = getattr(p, "grad", None)
+                name = getattr(p, "_lora_role", "")  # best-effort tag
+                if g is not None:
+                    v = float(g.detach().float().pow(2).sum().item())
+                    grad_sq_total += v
+                    if "A" in name or name == "":
+                        # Fallback: bucket by tensor shape. LoRA A has
+                        # (rank, in_features); B has (out_features, rank).
+                        # Heuristic — rank is typically the smaller dim.
+                        if p.ndim >= 2 and p.shape[0] <= p.shape[1]:
+                            grad_sq_A += v
+                        elif p.ndim >= 2:
+                            grad_sq_B += v
+                            # Track post-step B statistics.
+                            b_abs = p.detach().float().abs()
+                            post_B_max = max(post_B_max, float(b_abs.max().item()))
+                            post_B_sum += float(b_abs.mean().item())
+                            post_B_count += 1
+                        else:
+                            grad_sq_mag += v
+            record = {
+                "cycle": int(cycle),
+                "step_idx": int(step_idx),
+                "sample_idx_in_batch": sample_idx_in_batch,
+                "loss_unweighted": float(loss_unweighted),
+                "loss_weighted": float(loss_weighted),
+                "sample_weight": (
+                    float(sample_weight) if sample_weight is not None else None
+                ),
+                "verdict_warnings": (
+                    list(verdict_warnings) if verdict_warnings else []
+                ),
+                "grad_norm_lora_A": math.sqrt(grad_sq_A),
+                "grad_norm_lora_B": math.sqrt(grad_sq_B),
+                "grad_norm_magnitude": math.sqrt(grad_sq_mag),
+                "grad_norm_total": math.sqrt(grad_sq_total),
+                "lr_A": lr_A,
+                "lr_B": lr_B,
+                "post_step_B_max_abs": post_B_max,
+                "post_step_B_mean_abs": (
+                    post_B_sum / post_B_count if post_B_count else 0.0
+                ),
+                "clip_fraction": clip_fraction,
+                "time_ms": float(time_ms),
+            }
+            _emit_structured_log("training_steps", record, self._obs_cfg)
+        except Exception as _e:  # pragma: no cover — defensive
+            logger.debug(
+                "training_steps emit failed (%s): %s",
+                type(_e).__name__, _e,
+            )
 
     def set_collect_loss_trajectory(self, enabled: bool) -> None:
         """Toggle per-step loss collection. Must be set before `train()`."""
@@ -1253,9 +1352,40 @@ class CustomLoRATrainer:
                     if self._collect_loss_trajectory:
                         self._loss_trajectory.append(float(unweighted_loss))
                     if accum_count % effective_accum == 0:
-                        torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
+                        import time as _time
+                        _t0 = _time.perf_counter()
+                        _pre_norm = torch.nn.utils.clip_grad_norm_(
+                            lora_params, self.config.max_grad_norm,
+                        )
+                        _clip_frac = (
+                            1.0 if float(_pre_norm) > self.config.max_grad_norm
+                            else 0.0
+                        )
                         optimizer.step()
                         scheduler.step()
+                        # Emit BEFORE zero_grad so grad-norm stats are available.
+                        _lr_A = _lr_B = None
+                        for g in optimizer.param_groups:
+                            tag = g.get("name", "")
+                            if "A" in tag and _lr_A is None:
+                                _lr_A = g.get("lr")
+                            elif "B" in tag and _lr_B is None:
+                                _lr_B = g.get("lr")
+                        if _lr_A is None and optimizer.param_groups:
+                            _lr_A = optimizer.param_groups[0].get("lr")
+                        _elapsed_ms = (_time.perf_counter() - _t0) * 1000.0
+                        self._emit_training_step_log(
+                            cycle=cycle,
+                            step_idx=step_count,
+                            loss_unweighted=float(unweighted_loss),
+                            loss_weighted=float(loss.item()) * float(effective_accum),
+                            sample_weight=None,
+                            verdict_warnings=None,
+                            lora_params=lora_params,
+                            lr_A=_lr_A, lr_B=_lr_B,
+                            clip_fraction=_clip_frac,
+                            time_ms=_elapsed_ms,
+                        )
                         optimizer.zero_grad()
                         step_count += 1
 
@@ -1265,9 +1395,31 @@ class CustomLoRATrainer:
             # Flush any remaining accumulated gradients. last_loss already holds
             # the most recent batch's unweighted loss from the loop above.
             if accum_count % effective_accum != 0:
-                torch.nn.utils.clip_grad_norm_(lora_params, self.config.max_grad_norm)
+                import time as _time
+                _t0 = _time.perf_counter()
+                _pre_norm = torch.nn.utils.clip_grad_norm_(
+                    lora_params, self.config.max_grad_norm,
+                )
+                _clip_frac = (
+                    1.0 if float(_pre_norm) > self.config.max_grad_norm
+                    else 0.0
+                )
                 optimizer.step()
                 scheduler.step()
+                _lr_A = optimizer.param_groups[0].get("lr") if optimizer.param_groups else None
+                _elapsed_ms = (_time.perf_counter() - _t0) * 1000.0
+                self._emit_training_step_log(
+                    cycle=cycle,
+                    step_idx=step_count,
+                    loss_unweighted=float(last_loss),
+                    loss_weighted=float(last_loss),
+                    sample_weight=None,
+                    verdict_warnings=None,
+                    lora_params=lora_params,
+                    lr_A=_lr_A, lr_B=None,
+                    clip_fraction=_clip_frac,
+                    time_ms=_elapsed_ms,
+                )
                 optimizer.zero_grad()
                 step_count += 1
         except _EarlyStop:

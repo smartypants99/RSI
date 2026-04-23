@@ -78,6 +78,19 @@ nvidia-smi                       # find the PID in the bottom table
 kill -9 <PID>                    # only kill PIDs you own
 ```
 
+### Orphan VRAM holders invisible to `nvidia-smi`
+
+If `nvidia-smi` shows VRAM used but the "Processes" table is empty (or lists a PID that `/proc/<pid>` says doesn't exist), the holder is an orphan CUDA-context subprocess reparented to init — typically `VLLM::EngineCore` or `multiprocessing.resource_tracker` from a crashed main.py. `nvidia-smi --query-compute-apps` caches stale PIDs and will not show it.
+
+Use `fuser` (or `lsof`) to find the real holder and kill it:
+
+```bash
+fuser -v /dev/nvidia*            # prints PIDs actually holding the device files
+kill -9 <PID>                    # safe — they are orphans, nothing talks to them
+```
+
+Do NOT try `nvidia-smi --gpu-reset` / `nvidia-smi -r` on vast.ai — it returns `Unable to reset GPU: Insufficient Permissions` (containers lack the required capability). A pod reboot via the vast.ai UI works; `fuser` + `kill -9` is faster and doesn't lose uptime.
+
 ---
 
 ## 5. VRAM decision tree

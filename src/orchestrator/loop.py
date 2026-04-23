@@ -15,6 +15,8 @@ import json
 import math
 import shutil
 import signal
+import subprocess
+import sys
 import time
 import traceback
 import logging
@@ -827,6 +829,17 @@ class ImprovementLoop:
                     lambda: self._emit_cycle_summary_log(cycle, result),
                     result,
                 )
+                # Auto-diagnose: run analyze_cycle.py and surface TL;DR to
+                # stderr + outputs/auto_diagnosis.jsonl. Wrapped in _safe_call
+                # AND internally try/excepts — never crashes the loop.
+                if getattr(
+                    self.config.orchestrator, "auto_diagnose_enabled", True
+                ):
+                    self._safe_call(
+                        "auto_diagnose",
+                        lambda: self._auto_diagnose_cycle(cycle, result),
+                        result,
+                    )
 
                 self._improvement_ema = (
                     self._ema_alpha * result.improvement
@@ -5023,6 +5036,123 @@ class ImprovementLoop:
                 f.write(line + "\n")
         except Exception as e:
             logger.debug(f"Could not append to update-log.txt: {e}")
+
+    def _auto_diagnose_cycle(self, cycle: int, result: "CycleResult | None" = None) -> None:
+        """Shell out to scripts/analyze_cycle.py and surface its TL;DR.
+
+        Purpose: the operator doesn't want to re-run analyze_cycle.py by hand
+        after every cycle. This thin wrapper captures its stdout, extracts the
+        "## Bottom line — 3-bullet TL;DR" section, logs it (WARNING if the
+        cycle was reverted/alarmed/ineligible, INFO otherwise), and appends a
+        structured jsonl row to outputs/auto_diagnosis.jsonl. All exceptions
+        are swallowed — a diagnostic tool must never crash the training loop.
+        """
+        try:
+            repo_root = Path(__file__).resolve().parents[2]
+            script = repo_root / "scripts" / "analyze_cycle.py"
+            out_dir = self.config.orchestrator.output_dir
+            cmd = [sys.executable, str(script), str(int(cycle)),
+                   "--logs-dir", str(out_dir)]
+            try:
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=10,
+                    cwd=str(repo_root),
+                )
+                stdout = proc.stdout or ""
+                stderr = proc.stderr or ""
+            except subprocess.TimeoutExpired:
+                stdout, stderr = "", "analyze_cycle.py timed out after 10s"
+            except Exception as e:  # pragma: no cover - defensive
+                stdout, stderr = "", f"analyze_cycle.py failed: {type(e).__name__}: {e}"
+
+            # Extract the "## Bottom line — 3-bullet TL;DR" section.
+            tldr_lines: list[str] = []
+            bullets: list[str] = []
+            if stdout:
+                in_tldr = False
+                for line in stdout.splitlines():
+                    if line.startswith("## Bottom line"):
+                        in_tldr = True
+                        tldr_lines.append(line)
+                        continue
+                    if in_tldr:
+                        if line.startswith("## ") or line.startswith("[wrote]"):
+                            break
+                        tldr_lines.append(line)
+                        stripped = line.strip()
+                        # Bullets look like "1. ...", "2. ..." etc.
+                        if (
+                            stripped
+                            and len(stripped) >= 3
+                            and stripped[0].isdigit()
+                            and stripped[1:3] in (". ", ") ")
+                        ):
+                            bullets.append(stripped[2:].lstrip(". )"))
+            verbatim_tldr = "\n".join(tldr_lines).rstrip()
+            # Pad/truncate to exactly 3 bullets for stable jsonl schema.
+            reason_bullets = (bullets + ["", "", ""])[:3]
+
+            alarmed = False
+            if result is not None:
+                alarmed = bool(
+                    getattr(result, "verifier_capture_alarm", False)
+                    or getattr(result, "regression_reverted", False)
+                    or getattr(result, "diversity_alarm", False)
+                    or getattr(result, "mode_collapse_detected", False)
+                )
+            cycle_eligible = not alarmed
+
+            banner = f"[auto-diagnose cycle={cycle}] "
+            if verbatim_tldr:
+                msg = banner + verbatim_tldr
+            elif stderr.strip():
+                last = stderr.strip().splitlines()[-1]
+                msg = banner + "(no TL;DR produced) " + last
+            else:
+                msg = banner + "(no output)"
+            # Emit to stderr explicitly so it shows up even if logger is quiet.
+            try:
+                sys.stderr.write(msg + "\n")
+                sys.stderr.flush()
+            except Exception:
+                pass
+            if alarmed:
+                logger.warning(msg)
+            else:
+                logger.info(msg)
+            # "FIX THIS" bottom-line — surface the 1st bullet prominently.
+            first = reason_bullets[0].strip() if reason_bullets else ""
+            if first:
+                fix_line = f"[auto-diagnose cycle={cycle}] FIX THIS: {first}"
+                try:
+                    sys.stderr.write(fix_line + "\n")
+                    sys.stderr.flush()
+                except Exception:
+                    pass
+                if alarmed:
+                    logger.warning(fix_line)
+                else:
+                    logger.info(fix_line)
+
+            row = {
+                "cycle": int(cycle),
+                "ts": time.time(),
+                "reason_bullets": reason_bullets,
+                "verbatim_tldr": verbatim_tldr,
+                "cycle_eligible": bool(cycle_eligible),
+            }
+            try:
+                out_dir.mkdir(parents=True, exist_ok=True)
+                jsonl_path = out_dir / "auto_diagnosis.jsonl"
+                with jsonl_path.open("a") as f:
+                    f.write(json.dumps(row) + "\n")
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug(f"auto_diagnose: jsonl write failed: {e}")
+        except Exception as e:  # pragma: no cover - absolute belt-and-braces
+            try:
+                logger.debug(f"auto_diagnose: swallowed {type(e).__name__}: {e}")
+            except Exception:
+                pass
 
     def _log_cycle(self, result: CycleResult):
         """Log cycle results to file."""

@@ -592,6 +592,12 @@ class OrchestratorConfig:
     # Execution mode: "classic" = diagnose→generate→verify→train (default);
     # "rsi" = full RSI tick per spec §4 (requires synthesis enabled).
     mode: str = "classic"
+    # Auto-diagnose: after each cycle finishes, shell out to
+    # scripts/analyze_cycle.py and surface its "Bottom line" TL;DR to stderr
+    # + append a structured row to outputs/auto_diagnosis.jsonl. Zero effect
+    # on loop logic; never crashes the loop. Default on — operator wants to
+    # see likely cause inline whenever a cycle regresses/alarms.
+    auto_diagnose_enabled: bool = True
     # Speed knob: RSI Step 0 diagnostics refresh period. Reuse the prior tick's
     # DiagnosticResult for N-1 cycles, re-run fully every Nth cycle (and always
     # on cycle 1 / post-training). On 32B-R1 the 240-prompt diagnostic is

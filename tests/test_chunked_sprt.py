@@ -327,3 +327,100 @@ def test_chunked_sprt_weak_delta_futility_fires(tmp_path):
     assert decision == "stop_accept_null"
     assert result is not None
     assert len(result.per_question) == 50
+
+
+# ---------------------------------------------------------------------------
+# sprt_decisions.jsonl telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_sprt_decisions_jsonl_emitted_per_chunk(tmp_path):
+    """Every SPRT look — including the final stop — lands one row in
+    outputs/sprt_decisions.jsonl under the orchestrator output_dir.
+    """
+    import json
+
+    loop = _make_loop(tmp_path)
+    # Reuse the strong-signal setup to force a chunk-1 stop.
+    import random
+    rng = random.Random(2)
+    all_prompts = [(f"q{i}", f"e{i}") for i in range(200)]
+    base_recs = []
+    post_scores = []
+    for i, (p, e) in enumerate(all_prompts):
+        b = rng.uniform(0.0, 0.2)
+        post = min(1.0, b + 0.7 + rng.uniform(-0.05, 0.05))
+        base_recs.append({
+            "prompt": p, "expected": e, "correct": b >= 0.5, "score": b,
+        })
+        post_scores.append(post)
+    loop._heldout_base_cache = _FakeHeldoutCache(base_recs)
+    chunks = []
+    running = []
+    for i in range(4):
+        for j, (p, e) in enumerate(all_prompts[i * 50:(i + 1) * 50]):
+            gi = i * 50 + j
+            running.append((p, e, post_scores[gi]))
+        chunks.append(_mk_partial(running))
+    loop.diagnostics = _ScriptedDiag(chunks)
+    loop.HELDOUT_CYCLE_SEED = 42
+    result, stop_chunk, decision = loop._run_heldout_chunked_sprt(
+        chunk_size=50, K=4, futility_z=None, cycle=7,
+    )
+    assert stop_chunk == 1
+    path = tmp_path / "sprt_decisions.jsonl"
+    assert path.exists(), "sprt_decisions.jsonl should have been written"
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line]
+    assert len(rows) == 1, rows
+    r = rows[0]
+    assert r["cycle"] == 7
+    assert r["chunk_idx"] == 1
+    assert r["decision"] == "stop_reject_null"
+    assert r["continuing"] is False
+    assert r["n_so_far"] == 50
+    assert isinstance(r["z"], float) and abs(r["z"]) > 2.0
+
+
+def test_sprt_decisions_jsonl_null_delta_emits_one_row_per_chunk(tmp_path):
+    """Under a null delta the generator runs all 4 chunks; each one gets
+    its own row with continuing=True on 1-3 and continuing=True on row 4
+    as well (run_chunked exhausted, not an SPRT stop)."""
+    import json
+
+    loop = _make_loop(tmp_path)
+    all_prompts = [(f"q{i}", f"e{i}") for i in range(200)]
+    import random
+    rng = random.Random(0)
+    base_recs = []
+    post_scores = []
+    for i, (p, e) in enumerate(all_prompts):
+        b = 0.3 if i % 2 else 0.7
+        perturb = rng.choice([-0.05, 0.05])
+        base_recs.append({
+            "prompt": p, "expected": e, "correct": b >= 0.5, "score": b,
+        })
+        post_scores.append(max(0.0, min(1.0, b + perturb)))
+    loop._heldout_base_cache = _FakeHeldoutCache(base_recs)
+    chunks = []
+    running = []
+    for i in range(4):
+        for j, (p, e) in enumerate(all_prompts[i * 50:(i + 1) * 50]):
+            gi = i * 50 + j
+            running.append((p, e, post_scores[gi]))
+        chunks.append(_mk_partial(running))
+    loop.diagnostics = _ScriptedDiag(chunks)
+    loop.HELDOUT_CYCLE_SEED = 42
+    _, stop_chunk, _ = loop._run_heldout_chunked_sprt(
+        chunk_size=50, K=4, futility_z=None, cycle=3,
+    )
+    assert stop_chunk is None
+    path = tmp_path / "sprt_decisions.jsonl"
+    assert path.exists()
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line]
+    # One row per chunk — all 4 chunks consumed since no early-stop.
+    assert len(rows) == 4, rows
+    for idx, r in enumerate(rows, start=1):
+        assert r["cycle"] == 3
+        assert r["chunk_idx"] == idx
+        assert r["decision"] == "continue"
+        assert r["continuing"] is True

@@ -2868,8 +2868,55 @@ class ImprovementLoop:
             K=K,
         )
 
+    def _emit_sprt_decision_row(
+        self,
+        *,
+        cycle: int,
+        chunk_idx: int,
+        n_so_far: int,
+        z: float | None,
+        decision: str,
+        continuing: bool,
+    ) -> None:
+        """Append one row per chunked-SPRT look to outputs/sprt_decisions.jsonl.
+
+        Zero-cost when the chunked-SPRT path is disabled: this is only
+        called from inside _run_heldout_chunked_sprt, which itself is
+        gated on heldout_chunked_sprt_enabled. Never raises.
+
+        Schema: {cycle, chunk_idx, n_so_far, z, decision, continuing, ts}.
+        decision ∈ {"continue", "stop_reject_null", "stop_accept_null",
+        "no_reference", "degenerate_se"} — the latter two cover looks
+        where sprt_decide was not called (insufficient overlap or
+        delta_se ≤ 0). `continuing` tracks whether the outer loop kept
+        iterating run_chunked() after this row.
+        """
+        try:
+            ocfg = getattr(self.config, "orchestrator", None)
+            out_dir = getattr(ocfg, "output_dir", None)
+            if out_dir is None:
+                return
+            path = Path(out_dir) / "sprt_decisions.jsonl"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            row = {
+                "ts": time.time(),
+                "cycle": int(cycle),
+                "chunk_idx": int(chunk_idx),
+                "n_so_far": int(n_so_far),
+                "z": None if z is None else float(z),
+                "decision": str(decision),
+                "continuing": bool(continuing),
+            }
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
+                f.flush()
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.debug("sprt_decisions emit failed (%s): %s",
+                         type(exc).__name__, exc)
+
     def _run_heldout_chunked_sprt(
         self, *, chunk_size: int, K: int, futility_z: float | None,
+        cycle: int = 0,
     ):
         """Iterate diagnostics.run_chunked() applying SPRT after each chunk.
 
@@ -2932,6 +2979,10 @@ class ImprovementLoop:
                     continue
                 cur = list(partial.per_question)
                 if not cur:
+                    self._emit_sprt_decision_row(
+                        cycle=cycle, chunk_idx=chunk_idx, n_so_far=0,
+                        z=None, decision="no_reference", continuing=True,
+                    )
                     continue
                 # Pick reference with larger overlap (base > prev on ties).
                 cur_keys = {self._per_q_key(r) for r in cur}
@@ -2951,10 +3002,19 @@ class ImprovementLoop:
                 elif prev_overlap >= 2:
                     chosen_ref = prev_records
                 if chosen_ref is None:
+                    self._emit_sprt_decision_row(
+                        cycle=cycle, chunk_idx=chunk_idx, n_so_far=len(cur),
+                        z=None, decision="no_reference", continuing=True,
+                    )
                     continue
 
                 cpd = continuous_paired_delta(chosen_ref, cur)
                 if cpd is None or cpd.delta_se <= 0:
+                    self._emit_sprt_decision_row(
+                        cycle=cycle, chunk_idx=chunk_idx,
+                        n_so_far=(cpd.n if cpd is not None else len(cur)),
+                        z=None, decision="degenerate_se", continuing=True,
+                    )
                     continue
 
                 interim = sprt_decide(
@@ -2965,7 +3025,15 @@ class ImprovementLoop:
                     K=K,
                     futility_z=futility_z,
                 )
-                if interim.decision in ("stop_reject_null", "stop_accept_null"):
+                is_stop = interim.decision in (
+                    "stop_reject_null", "stop_accept_null",
+                )
+                self._emit_sprt_decision_row(
+                    cycle=cycle, chunk_idx=chunk_idx, n_so_far=cpd.n,
+                    z=interim.z, decision=interim.decision,
+                    continuing=not is_stop,
+                )
+                if is_stop:
                     stop_chunk = chunk_idx
                     decision_str = interim.decision
                     logger.info(
@@ -3407,6 +3475,7 @@ class ImprovementLoop:
                             chunk_size=chunk_size,
                             K=chunk_K,
                             futility_z=futility_z,
+                            cycle=cycle,
                         )
                         # _run_heldout_chunked_sprt returns a (result,
                         # stop_chunk, decision) tuple; None result means

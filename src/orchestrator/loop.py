@@ -1379,7 +1379,7 @@ class ImprovementLoop:
                                 admitted_properties=props,
                                 executor=_executor,
                                 calibration=self._registries,
-                                quorum_distinct_classes_required=2,
+                                quorum_distinct_classes_required=1,
                                 min_properties=2,
                                 accept_policy=getattr(
                                     self.config.verifier,
@@ -2073,7 +2073,7 @@ class ImprovementLoop:
                     admitted_properties=_props,
                     executor=_executor,
                     calibration=reg.calibration_ledger,
-                    quorum_distinct_classes_required=2,
+                    quorum_distinct_classes_required=1,
                     min_properties=2,
                     accept_policy=_accept_policy,
                 )

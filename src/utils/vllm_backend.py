@@ -99,6 +99,31 @@ class VLLMModelLoader:
         # unlock speculative decoding. Validation of the bnb+speculative
         # incompatibility lives in VLLMConfig.__post_init__.
         self.quantization_scheme = str(quantization_scheme or "auto")
+        # Auto-detect AWQ/GPTQ from the model path when the caller left the
+        # scheme on "auto" and no bnb config was supplied. Without this
+        # vLLM would either try to load the quant weights as fp16 (OOM on
+        # 32B) or refuse — both fatal. Heuristic-only; explicit scheme wins.
+        if self.quantization_scheme == "auto" and not self.quantization_config:
+            low = model_path.lower()
+            if "awq" in low:
+                # awq_marlin kernel is the fast path (Ampere+). Plain "awq"
+                # triggers the legacy CUDA kernel which is ~2× slower and
+                # rejects bfloat16. vLLM auto-converts "awq_marlin" → "awq"
+                # fallback if the GPU can't run Marlin.
+                self.quantization_scheme = "awq_marlin"
+            elif "gptq" in low:
+                self.quantization_scheme = "gptq_marlin"
+        # AWQ / GPTQ kernels only support float16 weights. bfloat16 crashes
+        # at VllmConfig validation. Override a caller-specified bfloat16 to
+        # float16 when loading a quantized model; warn once so this isn't
+        # invisible magic. bf16 remains fine for unquantized / bnb bases.
+        if self.quantization_scheme in ("awq", "awq_marlin", "gptq", "gptq_marlin"):
+            if self.dtype == "bfloat16":
+                logger.info(
+                    "AWQ/GPTQ kernel requires float16 weights — overriding "
+                    "configured dtype=bfloat16 to float16 for this load."
+                )
+                self.dtype = "float16"
         self.speculative_draft_model = speculative_draft_model or None
         self.num_speculative_tokens = int(num_speculative_tokens or 0)
         if self.coresident_training_enabled:
@@ -124,9 +149,12 @@ class VLLMModelLoader:
         # Expose a config-like object so components that read model_loader.config
         # (e.g., CustomLoRATrainer accessing config.max_seq_length) work uniformly.
         from .config import ModelConfig
+        # Pass `self.dtype` (already overridden to float16 for AWQ/GPTQ above)
+        # rather than the raw ctor arg so downstream trainers see the same
+        # dtype the vLLM engine is using.
         self.config = ModelConfig(
             model_path=model_path,
-            dtype=dtype,
+            dtype=self.dtype,
             max_seq_length=max_model_len,
             allow_remote_code=allow_remote_code,
             quantization_config=quantization_config,
@@ -423,9 +451,19 @@ class VLLMModelLoader:
 
     def generate_batch(self, prompts: list[str], max_new_tokens: int = 2048,
                        temperature: float = 0.7, top_p: float = 0.9,
-                       stop: list[str] | None = None) -> list[str]:
+                       stop: list[str] | None = None,
+                       raw: bool = False) -> list[str]:
         if not prompts:
             return []
+        # Auto-wrap prompts in the tokenizer's chat template unless the caller
+        # opted out (`raw=True`) or the prompt is already chat-formatted. Found
+        # critical on 2026-04-24: instruct models (Qwen2.5-Coder-32B-Instruct,
+        # DeepSeek-R1-Distill) emit token streams without proper BPE space-
+        # prefix when fed raw prompts → output has no spaces between words,
+        # Python references are uncompilable, parser 100% fails. Chat template
+        # switches the model into its trained distribution.
+        if not raw:
+            prompts = [self._maybe_apply_chat_template(p) for p in prompts]
 
         if self._llm is not None:
             # vLLM path (fast)
@@ -448,10 +486,48 @@ class VLLMModelLoader:
             # HF fallback (during training phase eval)
             return self._hf_generate_batch(prompts, max_new_tokens, temperature, top_p)
 
+    def _maybe_apply_chat_template(self, prompt: str) -> str:
+        """Wrap `prompt` in the tokenizer's chat template when it looks raw.
+        Heuristic: if the prompt already contains chat special tokens
+        (`<|im_start|>`, `<|Assistant|>`, `<|begin_of_text|>`, etc.), assume
+        the caller pre-formatted it and pass through. Otherwise wrap as a
+        single user message and add the assistant generation prompt."""
+        tok = self._tokenizer
+        if tok is None or not hasattr(tok, "apply_chat_template"):
+            return prompt
+        if not getattr(tok, "chat_template", None):
+            return prompt
+        low = prompt[:200]
+        if any(
+            marker in prompt
+            for marker in ("<|im_start|>", "<|Assistant|>", "<｜Assistant｜>",
+                           "<|begin_of_text|>", "<|start_header_id|>")
+        ):
+            return prompt
+        try:
+            return tok.apply_chat_template(
+                [{"role": "user", "content": prompt}],
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+        except Exception:
+            return prompt
+
     def _hf_generate_batch(self, prompts, max_new_tokens=2048, temperature=0.7, top_p=0.9):
         """HF generate_batch fallback."""
         if not self._hf_model:
             raise RuntimeError("Neither vLLM nor HF model is loaded")
+        # Mirror the chat-template wrap logic from the vLLM path. `prompts`
+        # reaching here is already post-wrap when dispatched from generate_batch,
+        # but direct _hf_generate_batch callers (eval paths) miss it. Re-apply
+        # defensively — _maybe_apply_chat_template no-ops if already wrapped.
+        if self._hf_tokenizer is not None:
+            orig = self._tokenizer
+            self._tokenizer = self._hf_tokenizer
+            try:
+                prompts = [self._maybe_apply_chat_template(p) for p in prompts]
+            finally:
+                self._tokenizer = orig
         original_side = self._hf_tokenizer.padding_side
         try:
             self._hf_tokenizer.padding_side = "left"

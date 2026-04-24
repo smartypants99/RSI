@@ -132,7 +132,18 @@ def main() -> None:
     if saved is None:
         logger.error("save_lora_weights returned None — adapter may not have been written")
         sys.exit(1)
-    logger.info(f"Saved format-primer adapter to: {saved}")
+    # save_lora_weights nests under `{out_dir}/lora_cycle_{cycle}/`. Flatten so
+    # downstream consumers (load_lora_weights, run_deepseek.sh) can point at
+    # out_dir directly and find lora_weights.pt.
+    saved = Path(saved)
+    if saved != out_dir and saved.is_dir():
+        for item in saved.iterdir():
+            dest = out_dir / item.name
+            if dest.exists():
+                dest.unlink() if dest.is_file() else None
+            item.rename(dest)
+        saved.rmdir()
+    logger.info(f"Saved format-primer adapter (flattened) to: {out_dir}")
 
     # Drop a small manifest so RSI preload code can sanity-check shape.
     manifest = {

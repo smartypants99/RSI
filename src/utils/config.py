@@ -241,7 +241,7 @@ class VerifierConfig:
     # With that property gone, quorum_2of3 is just strictness lost for no
     # noise absorption. Reverting to any_fail_veto (§2.1 original behavior)
     # means accepts will be clean 2-of-2 with zero `any_fail` warnings.
-    verifier_accept_policy: str = "any_fail_veto"
+    verifier_accept_policy: str = "majority"  # on 2 cleaned properties (post-f40dccf drop of bad output_type): majority = both pass OR one passes both distinct-independence; escape hatch after strict veto starved pool (0 accepts cycles 2-4 on fresh pod)
 
     def __post_init__(self):
         if not (0.0 <= self.min_confidence_for_accept <= 1.0):

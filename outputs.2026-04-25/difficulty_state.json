@@ -1,0 +1,104 @@
+{
+  "subdomain_stats": {
+    "code/computing": {
+      "attempts": 8,
+      "correct": 8
+    },
+    "code/implementation": {
+      "attempts": 82,
+      "correct": 82
+    },
+    "math/symbolic": {
+      "attempts": 76,
+      "correct": 44
+    },
+    "math/word_problem": {
+      "attempts": 86,
+      "correct": 62
+    },
+    "math/math": {
+      "attempts": 10,
+      "correct": 10
+    },
+    "math/probability": {
+      "attempts": 34,
+      "correct": 4
+    },
+    "math/calculus": {
+      "attempts": 37,
+      "correct": 37
+    },
+    "math/combinatorics": {
+      "attempts": 34,
+      "correct": 34
+    },
+    "math/number_theory": {
+      "attempts": 101,
+      "correct": 78
+    },
+    "math/percentage": {
+      "attempts": 48,
+      "correct": 48
+    },
+    "math/arithmetic": {
+      "attempts": 44,
+      "correct": 21
+    },
+    "math/algebra": {
+      "attempts": 29,
+      "correct": 3
+    },
+    "logic/reasoning": {
+      "attempts": 34,
+      "correct": 30
+    },
+    "logic/syllogism": {
+      "attempts": 425,
+      "correct": 190
+    },
+    "logic/propositional": {
+      "attempts": 40,
+      "correct": 36
+    }
+  },
+  "last_cycle_wrong": [
+    "logic/propositional",
+    "logic/reasoning",
+    "logic/syllogism",
+    "math/arithmetic",
+    "math/number_theory",
+    "math/probability",
+    "math/symbolic",
+    "math/word_problem"
+  ],
+  "last_cycle_right": [
+    "code/computing",
+    "code/implementation",
+    "logic/propositional",
+    "logic/reasoning",
+    "logic/syllogism",
+    "math/arithmetic",
+    "math/calculus",
+    "math/combinatorics",
+    "math/math",
+    "math/number_theory",
+    "math/percentage",
+    "math/probability",
+    "math/symbolic",
+    "math/word_problem"
+  ],
+  "proposals_accepted_total": 25,
+  "proposals_rejected_total": 10,
+  "last_accepted": 16,
+  "last_rejected": 4,
+  "difficulty_floor": 0.05,
+  "ratchet_history": [
+    {
+      "cycle": 2,
+      "heldout_delta": 0.07467581898932951,
+      "floor_before": 0.0,
+      "floor_after": 0.05
+    }
+  ],
+  "cycles_recorded": 2
+}

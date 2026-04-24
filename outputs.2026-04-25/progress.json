@@ -1,0 +1,147 @@
+{
+  "cycle": 2,
+  "timestamp": 1777044359.2543597,
+  "scores": {
+    "pre_training": 0.6946107784431138,
+    "post_training": 0.6946107784431138,
+    "held_out_eval": 0.686411149825784,
+    "improvement": 0.0,
+    "improvement_ema": 0.0,
+    "best_score": 0.0,
+    "best_checkpoint_cycle": null
+  },
+  "domain_scores": {
+    "pre": {
+      "code": 0.9464285714285714,
+      "math": 0.6351351351351351,
+      "logic": 0.43243243243243246
+    },
+    "post": {},
+    "eval": {
+      "code": 1.0,
+      "math": 0.6694214876033058,
+      "logic": 0.5867768595041323
+    }
+  },
+  "subdomain_scores": {
+    "pre": {
+      "code/implementation": 1.0,
+      "code/bit_manipulation": 1.0,
+      "code/prediction": 0.7272727272727273,
+      "code/debugging": 1.0,
+      "code/computing": 1.0,
+      "math/algebra": 0.2631578947368421,
+      "math/number_theory": 1.0,
+      "math/symbolic": 0.5625,
+      "math/word_problem": 0.875,
+      "math/probability": 0.0,
+      "math/combinatorics": 1.0,
+      "math/arithmetic": 0.6666666666666666,
+      "math/calculus": 0.75,
+      "logic/syllogism": 0.3333333333333333,
+      "logic/reasoning": 0.8,
+      "logic/propositional": 0.375,
+      "logic/fallacies": 1.0,
+      "logic/modal": 0.0
+    },
+    "post": {},
+    "eval": {
+      "code/computing": 1.0,
+      "code/implementation": 1.0,
+      "math/symbolic": 0.5789473684210527,
+      "math/word_problem": 0.7209302325581395,
+      "math/math": 1.0,
+      "math/probability": 0.14285714285714285,
+      "math/calculus": 1.0,
+      "math/combinatorics": 1.0,
+      "math/number_theory": 0.6923076923076923,
+      "math/percentage": 1.0,
+      "math/arithmetic": 0.5,
+      "logic/reasoning": 0.8823529411764706,
+      "logic/syllogism": 0.4523809523809524,
+      "logic/propositional": 0.9
+    }
+  },
+  "samples": {
+    "generated": 16,
+    "verified": 16,
+    "rejected": 0,
+    "pass_rate": 1.0,
+    "diversity": {
+      "mean": 0.35871487021179216,
+      "variance": 0.00906613867875782,
+      "n_problems": 16,
+      "n_collapsed": 0,
+      "fraction_collapsed": 0.0,
+      "mode_collapse_alarm": false,
+      "embedding_backend": "hash-fallback"
+    }
+  },
+  "training": {
+    "avg_loss": 0.431406465669473,
+    "final_loss": 0.25598689913749695,
+    "steps": 6,
+    "learning_rate": 5.6e-06,
+    "lora_layers": 448
+  },
+  "calibration": {
+    "ece": null,
+    "brier": null,
+    "samples": 0
+  },
+  "timing": {
+    "rsi_step0_diagnose": 413.29087257385254,
+    "rsi_step1_propose": 315.5388431549072,
+    "rsi_step2_admit": 0.0014574527740478516,
+    "rsi_step3_solve": 200.4391860961914,
+    "rsi_step4_verify": 4.793187618255615,
+    "rsi_step7_calibration": 0.00027942657470703125,
+    "rsi_step8_train": 170.23262929916382,
+    "eval": 616.5589225292206
+  },
+  "escalations": {
+    "verification": false,
+    "diagnosis": false,
+    "generation": false
+  },
+  "degradation_count": 0,
+  "plateau_count": 1,
+  "errors": [],
+  "history_summary": [
+    {
+      "cycle": 1,
+      "pre": 0.5,
+      "post": 0.5,
+      "improvement": 0.0,
+      "eval": 0.6117353308364545,
+      "eval_subdomain": {},
+      "pass_rate": 1.5555555555555556,
+      "had_errors": false
+    },
+    {
+      "cycle": 2,
+      "pre": 0.6946107784431138,
+      "post": 0.6946107784431138,
+      "improvement": 0.0,
+      "eval": 0.686411149825784,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 1.0,
+        "math/symbolic": 0.5789473684210527,
+        "math/word_problem": 0.7209302325581395,
+        "math/math": 1.0,
+        "math/probability": 0.14285714285714285,
+        "math/calculus": 1.0,
+        "math/combinatorics": 1.0,
+        "math/number_theory": 0.6923076923076923,
+        "math/percentage": 1.0,
+        "math/arithmetic": 0.5,
+        "logic/reasoning": 0.8823529411764706,
+        "logic/syllogism": 0.4523809523809524,
+        "logic/propositional": 0.9
+      },
+      "pass_rate": 1.0,
+      "had_errors": false
+    }
+  ]
+}

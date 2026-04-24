@@ -1,0 +1,6 @@
+{"tick": 1, "independence_class": "exec.behavioral", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1777041624.6641257, "session_id": "rsi"}
+{"tick": 1, "independence_class": "search.bounded", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1777041624.6644013, "session_id": "rsi"}
+{"tick": 2, "independence_class": "exec.behavioral", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1777043572.398325, "session_id": "rsi"}
+{"tick": 2, "independence_class": "search.bounded", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1777043572.3984015, "session_id": "rsi"}
+{"tick": 3, "independence_class": "exec.behavioral", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1777045218.6105888, "session_id": "rsi"}
+{"tick": 3, "independence_class": "search.bounded", "true_accept_rate": NaN, "true_reject_rate": NaN, "error_rate": 0.0, "suspended": false, "n_probes": 0, "recorded_at": 1777045218.6106992, "session_id": "rsi"}

@@ -1,0 +1,263 @@
+2026-04-24 14:32:11,750 [INFO] __main__: Domain subset: RSI will only probe/train on ['code', 'math', 'logic']
+2026-04-24 14:32:13,810 [INFO] src.orchestrator.loop: GRPO reward_fn installed: property_quorum (code domain)
+2026-04-24 14:32:13,811 [INFO] src.orchestrator.loop: fast_student: manager constructed (model=Qwen/Qwen2.5-Coder-1.5B-Instruct, redistill_every=2)
+2026-04-24 14:32:13,819 [INFO] src.orchestrator.loop: Synthesis mode enabled (tasks_per_cycle=20, consensus_threshold=0.70)
+2026-04-24 14:32:13,822 [INFO] src.orchestrator.loop: RSI registries opened (sid=rsi)
+2026-04-24 14:32:13,823 [INFO] src.utils.fast_start: fast_start: pre-stashed 0 prior-run training samples from outputs (cap=30, excluding sid=rsi)
+2026-04-24 14:32:13,824 [INFO] src.orchestrator.loop: ============================================================
+2026-04-24 14:32:13,824 [INFO] src.orchestrator.loop: RECURSIVE SELF-IMPROVEMENT SYSTEM
+2026-04-24 14:32:13,824 [INFO] src.orchestrator.loop: ============================================================
+2026-04-24 14:32:16,362 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit
+2026-04-24 14:32:16,478 [WARNING] huggingface_hub.utils._http: Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+2026-04-24 14:32:54,313 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-24 14:32:54,313 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-24 14:32:54,313 [INFO] src.orchestrator.loop: CYCLE 1
+2026-04-24 14:32:54,313 [INFO] src.orchestrator.loop: ============================================================
+2026-04-24 14:32:54,314 [INFO] src.orchestrator.loop: [RSI tick 1] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/7)
+2026-04-24 14:32:54,314 [INFO] src.orchestrator.loop: [RSI tick 1] skip_first_diagnostics=True — using uniform default diag
+2026-04-24 14:32:54,314 [INFO] src.orchestrator.loop: [RSI tick 1] curriculum: frontier='(none)' floor=0.00
+2026-04-24 14:32:54,314 [INFO] src.orchestrator.loop: [RSI tick 1] Step 1: PROPOSE 15 problems (path=code_builtins)
+2026-04-24 14:35:02,933 [INFO] src.generator.task_synthesizer: propose_batch_code: 15/15 proposals accepted
+2026-04-24 14:37:35,028 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 6/15 proposals the model could already solve blind
+2026-04-24 14:37:35,030 [INFO] src.orchestrator.loop: [RSI tick 1] Step 2: PROPOSE + ADMIT properties
+2026-04-24 14:37:35,031 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: SOLVE (9 problems × 2 candidates, batched)
+2026-04-24 14:40:23,019 [INFO] src.orchestrator.loop: [RSI tick 1] Step 3: solve phase took 168.0s
+2026-04-24 14:40:23,026 [INFO] src.diagnostics.solution_diversity: [cycle 1] diversity: mean=0.346 var=0.0017 collapsed=0/9 backend=hash-fallback
+2026-04-24 14:40:23,027 [INFO] src.orchestrator.loop: [RSI tick 1] Step 4: VERIFY candidates
+2026-04-24 14:40:23,543 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=214d513e-fdf5-470e-9c58-a5584bbf4436 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:23,734 [INFO] src.verifier.property_engine: verify[ver_8df25cf253af47af] problem=214d513e-fdf5-470e-9c58-a5584bbf4436 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:23,735 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=8c6b418a-bfa3-454d-9e16-a72540877b06 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:23,739 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=214d513e-fdf5-470e-9c58-a5584bbf4436 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:23,739 [INFO] src.verifier.property_engine: verify[ver_84c93f3bb92243d1] problem=8c6b418a-bfa3-454d-9e16-a72540877b06 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:23,743 [INFO] src.verifier.property_engine: verify[ver_46121432a08a4f8c] problem=214d513e-fdf5-470e-9c58-a5584bbf4436 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:23,745 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=8c6b418a-bfa3-454d-9e16-a72540877b06 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:23,746 [INFO] src.verifier.property_engine: verify[ver_a979dcbb5bf044f3] problem=f51ffc63-8488-4622-8c6a-3adf0b82eb07 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 14:40:23,747 [INFO] src.verifier.property_engine: verify[ver_b20c68cb4538466c] problem=f51ffc63-8488-4622-8c6a-3adf0b82eb07 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 14:40:23,748 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=7598ffd6-c08e-4529-ba46-21f548363225 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:23,749 [INFO] src.verifier.property_engine: verify[ver_312cb44cf17244e6] problem=8c6b418a-bfa3-454d-9e16-a72540877b06 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:23,795 [INFO] src.verifier.property_engine: verify[ver_25972b4674e54892] problem=7598ffd6-c08e-4529-ba46-21f548363225 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:23,803 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=7598ffd6-c08e-4529-ba46-21f548363225 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:23,804 [INFO] src.verifier.property_engine: verify[ver_4e015e19a08742e7] problem=7598ffd6-c08e-4529-ba46-21f548363225 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,132 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=ad299fcb-d432-48fd-8d2b-2d9ebaab4bd9 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:24,174 [INFO] src.verifier.property_engine: verify[ver_1c5b3208f30c470e] problem=ad299fcb-d432-48fd-8d2b-2d9ebaab4bd9 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,339 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=ad299fcb-d432-48fd-8d2b-2d9ebaab4bd9 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:24,341 [INFO] src.verifier.property_engine: verify[ver_58be649dfcc746e4] problem=ad299fcb-d432-48fd-8d2b-2d9ebaab4bd9 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,342 [INFO] src.verifier.property_engine: verify[ver_96f23f4ea4d742d4] problem=e5025f41-1b0a-4e07-a5e4-6cf6d9bdd363 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 14:40:24,375 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=e5025f41-1b0a-4e07-a5e4-6cf6d9bdd363 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:24,378 [INFO] src.verifier.property_engine: verify[ver_58bc9ba9975e4cbb] problem=69d84768-8db3-4525-a224-017e9e8eb45e accepted=True n=2 pass=2 fail=0 err=0 classes=2 backends=[trusted:PASS=2]
+2026-04-24 14:40:24,419 [INFO] src.verifier.property_engine: verify[ver_910e25db28d54764] problem=e5025f41-1b0a-4e07-a5e4-6cf6d9bdd363 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,421 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=e1aa9ad4-ccbc-4efb-b2fb-4232c8531487 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:24,464 [INFO] src.verifier.property_engine: verify[ver_3366649573bb4430] problem=e1aa9ad4-ccbc-4efb-b2fb-4232c8531487 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,587 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=e1aa9ad4-ccbc-4efb-b2fb-4232c8531487 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:24,587 [INFO] src.verifier.property_engine: verify[ver_02c8c1ed3ab2481b] problem=e1aa9ad4-ccbc-4efb-b2fb-4232c8531487 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,590 [INFO] src.verifier.property_engine: verify[ver_0ac0be1a665e488d] problem=69d84768-8db3-4525-a224-017e9e8eb45e accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 14:40:24,591 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=bbf0e28d-1422-48bb-a6f7-a4c4fb9fc87c policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:24,592 [INFO] src.verifier.property_engine: verify[ver_1cc1bd5f95a94fb9] problem=bbf0e28d-1422-48bb-a6f7-a4c4fb9fc87c accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,647 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=bbf0e28d-1422-48bb-a6f7-a4c4fb9fc87c policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 14:40:24,647 [INFO] src.verifier.property_engine: verify[ver_714004ae34804e9b] problem=bbf0e28d-1422-48bb-a6f7-a4c4fb9fc87c accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 14:40:24,663 [INFO] src.orchestrator.loop: [RSI tick 1] candidates accepted=14
+2026-04-24 14:40:24,663 [INFO] src.orchestrator.loop: [RSI tick 1] Step 7: CALIBRATION CHECK
+2026-04-24 14:40:24,664 [INFO] src.orchestrator.loop: [RSI tick 1] Step 8: TRAIN (this cycle: 14 samples, rolling pool: 14 across 1 cycles)
+2026-04-24 14:40:24,664 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-24 14:40:26,274 [INFO] src.utils.vllm_backend: Loading HF model for training: unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit
+2026-04-24 14:40:32,707 [INFO] src.trainer.custom_lora: Injected 448 LoRA layers, avg rank: 16
+2026-04-24 14:42:13,243 [INFO] src.trainer.custom_lora: Wrote PEFT adapter at outputs/lora_weights/lora_cycle_1 (r=16, 448 layers, targets=['down_proj', 'gate_proj', 'k_proj', 'o_proj', 'q_proj', 'up_proj', 'v_proj'])
+2026-04-24 14:42:13,294 [INFO] src.trainer.custom_lora:   Skipped 448/448 LoRA merges (bnb-quantized base — adapter stays separate for vLLM --enable-lora)
+2026-04-24 14:42:13,296 [INFO] src.trainer.custom_lora: Stripped 448 LoRA layers
+2026-04-24 14:42:13,641 [INFO] src.utils.vllm_backend: save_checkpoint: skipping for bnb-quantized base (save_pretrained would raise NotImplementedError; merge_lora already skipped so checkpoint == base). vLLM will reload base.
+2026-04-24 14:42:13,642 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-24 14:42:14,419 [INFO] src.utils.vllm_backend: Registered LoRA adapter id=1 at outputs/lora_weights/lora_cycle_1
+2026-04-24 14:42:14,419 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit
+2026-04-24 14:43:05,063 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-24 14:43:05,063 [INFO] src.orchestrator.loop: [RSI tick 1] training done: 6 steps, score +0.000
+2026-04-24 14:43:05,063 [INFO] src.orchestrator.loop: [Cycle 1] Phase 5b: HELD-OUT EVAL (x1)
+2026-04-24 14:50:33,243 [INFO] src.orchestrator.loop:   Held-out eval: 0.612
+2026-04-24 14:50:33,248 [INFO] src.orchestrator.loop: heldout_base_cache: populated 801 base predictions from cycle 1 full eval (model_id=unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit)
+2026-04-24 14:50:37,659 [WARNING] src.utils.external_benchmarks: datasets load failed for math (Dataset 'hendrycks/competition_math' doesn't exist on the Hub or cannot be accessed.); falling back to offline fixture
+2026-04-24 14:57:18,248 [WARNING] src.utils.external_benchmarks: anchor_eval suspicious-clean: benchmark=math score=1.000 n=12 distinct=12 reasons=offline_fixture — score is NOT a valid held-out signal
+2026-04-24 14:57:18,248 [INFO] src.orchestrator.loop:   anchor eval: 0.593 (n=162) per_bench={'humaneval': 0.82, 'mbpp': 0.1, 'gsm8k': 0.76, 'math': 1.0} per_bench_n={'humaneval': 50, 'mbpp': 50, 'gsm8k': 50, 'math': 12} distinct={'humaneval': 50, 'mbpp': 50, 'gsm8k': 50, 'math': 12} offline={'humaneval': False, 'mbpp': False, 'gsm8k': False, 'math': True}
+2026-04-24 14:57:18,248 [WARNING] src.orchestrator.loop:   anchor eval SUSPECT per-benchmark alarms: [{'benchmark': 'math', 'score': 1.0, 'n': 12, 'distinct': 12, 'reasons': ['offline_fixture']}]
+2026-04-24 14:57:18,249 [INFO] src.orchestrator.loop:   curriculum: frontier='logic/propositional' floor=0.00 (delta=n/a)
+2026-04-24 14:57:18,310 [INFO] src.orchestrator.loop: [auto-diagnose cycle=1] ## Bottom line — 3-bullet TL;DR
+  1. Training-health signals missing — cannot attribute.
+  2. Damage-probe signals missing.
+  3. Verifier noisy: 92.9% of accepted samples carry `any_fail` (above structural quorum floor ~66%).
+2026-04-24 14:57:18,311 [INFO] src.orchestrator.loop: [auto-diagnose cycle=1] FIX THIS: Training-health signals missing — cannot attribute.
+2026-04-24 14:57:18,312 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-24 14:57:18,314 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=5.60e-06 (from 8e-06), bounded to ±30%; tracker=insufficient_data (n=0)
+2026-04-24 14:57:18,318 [INFO] src.orchestrator.loop:   best-candidate: held-out=0.6117 (cycle 1) streak=1/2 — awaiting confirmation
+2026-04-24 14:57:18,318 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-24 14:57:18,318 [INFO] src.orchestrator.loop: CYCLE 2
+2026-04-24 14:57:18,318 [INFO] src.orchestrator.loop: ============================================================
+2026-04-24 14:57:18,318 [INFO] src.orchestrator.loop: [RSI tick 2] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/7)
+2026-04-24 15:04:11,609 [INFO] src.orchestrator.loop: [RSI tick 2] curriculum: frontier='(none)' floor=0.00
+2026-04-24 15:04:11,609 [INFO] src.orchestrator.loop: [RSI tick 2] Step 1: PROPOSE 20 problems (path=code_builtins)
+2026-04-24 15:06:35,458 [INFO] src.generator.task_synthesizer: propose_batch_code: 20/20 proposals accepted
+2026-04-24 15:09:27,144 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 4/20 proposals the model could already solve blind
+2026-04-24 15:09:27,148 [INFO] src.orchestrator.loop: [RSI tick 2] Step 2: PROPOSE + ADMIT properties
+2026-04-24 15:09:27,152 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: SOLVE (16 problems × 2 candidates, batched)
+2026-04-24 15:12:47,591 [INFO] src.orchestrator.loop: [RSI tick 2] Step 3: solve phase took 200.4s
+2026-04-24 15:12:47,604 [INFO] src.diagnostics.solution_diversity: [cycle 2] diversity: mean=0.359 var=0.0091 collapsed=0/16 backend=hash-fallback
+2026-04-24 15:12:47,604 [INFO] src.orchestrator.loop: [RSI tick 2] Step 4: VERIFY candidates
+2026-04-24 15:12:48,372 [INFO] src.verifier.property_engine: verify[ver_f4bfa7db59854915] problem=ebd456e6-a7c5-4abc-b3e9-d6eeaf982250 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:48,373 [INFO] src.verifier.property_engine: verify[ver_e7c1dd69255248f4] problem=a27c507d-1695-4f9b-8ccc-3d349f0be9ae accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:48,440 [INFO] src.verifier.property_engine: verify[ver_f4c460f989d445e2] problem=659ff899-8c20-42e1-9cf6-ce6c5d908bb9 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:48,441 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=a27c507d-1695-4f9b-8ccc-3d349f0be9ae policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:48,446 [INFO] src.verifier.property_engine: verify[ver_c1323a8e2c874c9b] problem=a27c507d-1695-4f9b-8ccc-3d349f0be9ae accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:48,510 [INFO] src.verifier.property_engine: verify[ver_2693db37ea4a4bb4] problem=ebd456e6-a7c5-4abc-b3e9-d6eeaf982250 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:48,656 [INFO] src.verifier.property_engine: verify[ver_139318daac774ddb] problem=659ff899-8c20-42e1-9cf6-ce6c5d908bb9 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:48,743 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=42c4481b-9374-4fc4-b8fa-0903ac5dbfd5 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:48,747 [INFO] src.verifier.property_engine: verify[ver_14dd1ce234f7488e] problem=42c4481b-9374-4fc4-b8fa-0903ac5dbfd5 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:48,817 [INFO] src.verifier.property_engine: verify[ver_b4618fd59bce4a6e] problem=42c4481b-9374-4fc4-b8fa-0903ac5dbfd5 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:48,910 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=e787172c-e540-4213-9bdc-51cd4d9b7b6f policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:48,911 [INFO] src.verifier.property_engine: verify[ver_457ecddf93594573] problem=e787172c-e540-4213-9bdc-51cd4d9b7b6f accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:49,273 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=e787172c-e540-4213-9bdc-51cd4d9b7b6f policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:49,358 [INFO] src.verifier.property_engine: verify[ver_1311dcd686254be4] problem=e787172c-e540-4213-9bdc-51cd4d9b7b6f accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:49,794 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=47b3b088-62d1-47ef-8053-0515e72184c7 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:49,795 [INFO] src.verifier.property_engine: verify[ver_0edfaa7284c9452b] problem=47b3b088-62d1-47ef-8053-0515e72184c7 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:49,977 [INFO] src.verifier.property_engine: verify[ver_aac43b2da0784dc0] problem=ac7deeeb-bf6f-4fcd-8d65-b00fbc113b9a accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:49,986 [INFO] src.verifier.property_engine: verify[ver_09ffc4b34b454606] problem=ac7deeeb-bf6f-4fcd-8d65-b00fbc113b9a accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:50,076 [INFO] src.verifier.property_engine: verify[ver_6164f48c49864bcd] problem=47b3b088-62d1-47ef-8053-0515e72184c7 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:50,087 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=54c75bae-42b5-4641-9897-30e13d655e00 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:50,150 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=54c75bae-42b5-4641-9897-30e13d655e00 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:50,151 [INFO] src.verifier.property_engine: verify[ver_365c85bdd3df4680] problem=54c75bae-42b5-4641-9897-30e13d655e00 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:50,152 [INFO] src.verifier.property_engine: verify[ver_48300d7c9db2497e] problem=54c75bae-42b5-4641-9897-30e13d655e00 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:50,249 [INFO] src.verifier.property_engine: verify[ver_760f6ca457524a08] problem=4a35fe06-214a-46f3-82f7-0c893ce0047b accepted=False n=2 pass=0 fail=1 err=1 classes=0 backends=[trusted:ERROR=1,trusted:FAIL=1] reject=1 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:50,525 [INFO] src.verifier.property_engine: verify[ver_9a487e55913b49fb] problem=d97edeac-b6e4-4afa-99d4-71f5fbbf60ef accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:50,792 [INFO] src.verifier.property_engine: verify[ver_ec9d8cbed9124873] problem=4a35fe06-214a-46f3-82f7-0c893ce0047b accepted=False n=2 pass=0 fail=1 err=1 classes=0 backends=[trusted:ERROR=1,trusted:FAIL=1] reject=1 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:50,800 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=d97edeac-b6e4-4afa-99d4-71f5fbbf60ef policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:50,800 [INFO] src.verifier.property_engine: verify[ver_96af4e3457274a4e] problem=d97edeac-b6e4-4afa-99d4-71f5fbbf60ef accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:50,801 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=a90ef183-f213-444e-b16a-a7a40370e19d policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:50,801 [INFO] src.verifier.property_engine: verify[ver_cf4cbc1fd2f7434f] problem=a90ef183-f213-444e-b16a-a7a40370e19d accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:51,042 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=a90ef183-f213-444e-b16a-a7a40370e19d policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:51,192 [INFO] src.verifier.property_engine: verify[ver_f36b131b560c4a93] problem=a90ef183-f213-444e-b16a-a7a40370e19d accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:51,529 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=66d58483-1dfe-43bf-b6a0-b0892b704ee5 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:51,529 [INFO] src.verifier.property_engine: verify[ver_5a25a0b373674432] problem=66d58483-1dfe-43bf-b6a0-b0892b704ee5 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:51,802 [INFO] src.verifier.property_engine: verify[ver_4f6aca4f69ab4ff2] problem=fb317476-95f1-47f0-bd5a-3f79161fd854 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:51,809 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=fb317476-95f1-47f0-bd5a-3f79161fd854 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:51,810 [INFO] src.verifier.property_engine: verify[ver_6e2e635dca954d3c] problem=fb317476-95f1-47f0-bd5a-3f79161fd854 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:51,810 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=66d58483-1dfe-43bf-b6a0-b0892b704ee5 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:51,815 [INFO] src.verifier.property_engine: verify[ver_6279060c989d4728] problem=66d58483-1dfe-43bf-b6a0-b0892b704ee5 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:51,890 [INFO] src.verifier.property_engine: verify[ver_847800e65ca04f5c] problem=31d664f3-d834-41ce-be81-e5d6dce145d2 accepted=False n=2 pass=0 fail=1 err=1 classes=0 backends=[trusted:ERROR=1,trusted:FAIL=1] reject=1 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:52,274 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=07cb90cb-04ec-48d3-a340-b528f321c204 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:52,275 [INFO] src.verifier.property_engine: verify[ver_ee726a22184e4683] problem=31d664f3-d834-41ce-be81-e5d6dce145d2 accepted=False n=2 pass=0 fail=1 err=1 classes=0 backends=[trusted:ERROR=1,trusted:FAIL=1] reject=1 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:52,275 [INFO] src.verifier.property_engine: verify[ver_30ee3f6faf7949cd] problem=07cb90cb-04ec-48d3-a340-b528f321c204 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:52,276 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=b719f279-cffb-4703-bd66-94508e71b7c9 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:52,277 [INFO] src.verifier.property_engine: verify[ver_5c16287995e0433e] problem=07cb90cb-04ec-48d3-a340-b528f321c204 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:12:52,278 [INFO] src.verifier.property_engine: verify[ver_1408985859d94315] problem=b719f279-cffb-4703-bd66-94508e71b7c9 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:52,388 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=b719f279-cffb-4703-bd66-94508e71b7c9 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:12:52,388 [INFO] src.verifier.property_engine: verify[ver_ff508d42471347e8] problem=b719f279-cffb-4703-bd66-94508e71b7c9 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:12:52,398 [INFO] src.orchestrator.loop: [RSI tick 2] candidates accepted=16
+2026-04-24 15:12:52,398 [INFO] src.orchestrator.loop: [RSI tick 2] Step 7: CALIBRATION CHECK
+2026-04-24 15:12:52,398 [INFO] src.orchestrator.loop: [RSI tick 2] Step 8: TRAIN (this cycle: 16 samples, rolling pool: 16 across 1 cycles)
+2026-04-24 15:12:52,398 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-24 15:12:54,208 [INFO] src.utils.vllm_backend: Loading HF model for training: unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit
+2026-04-24 15:13:00,397 [INFO] src.trainer.custom_lora: Injected 448 LoRA layers, avg rank: 16
+2026-04-24 15:14:51,344 [INFO] src.trainer.custom_lora: Wrote PEFT adapter at outputs/lora_weights/lora_cycle_2 (r=16, 448 layers, targets=['down_proj', 'gate_proj', 'k_proj', 'o_proj', 'q_proj', 'up_proj', 'v_proj'])
+2026-04-24 15:14:51,400 [INFO] src.trainer.custom_lora:   Skipped 448/448 LoRA merges (bnb-quantized base — adapter stays separate for vLLM --enable-lora)
+2026-04-24 15:14:51,402 [INFO] src.trainer.custom_lora: Stripped 448 LoRA layers
+2026-04-24 15:14:51,694 [INFO] src.utils.vllm_backend: save_checkpoint: skipping for bnb-quantized base (save_pretrained would raise NotImplementedError; merge_lora already skipped so checkpoint == base). vLLM will reload base.
+2026-04-24 15:14:51,695 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-24 15:14:52,487 [INFO] src.utils.vllm_backend: Registered LoRA adapter id=2 at outputs/lora_weights/lora_cycle_2
+2026-04-24 15:14:52,487 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit
+2026-04-24 15:15:42,630 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-24 15:15:42,631 [INFO] src.orchestrator.loop: [RSI tick 2] training done: 6 steps, score +0.000
+2026-04-24 15:15:42,631 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: HELD-OUT EVAL (x1)
+2026-04-24 15:15:42,631 [INFO] src.orchestrator.loop: [Cycle 2] Phase 5b: QUICK eval — target_n=192 per-domain=173 (expected_post_filter_total≈192, full every 9999 cycles)
+2026-04-24 15:19:27,080 [INFO] src.orchestrator.loop:   Held-out eval: 0.686
+2026-04-24 15:19:27,080 [INFO] src.orchestrator.loop:     (prev 0.612, +0.075)
+2026-04-24 15:19:27,082 [INFO] src.orchestrator.loop:     paired delta [continuous]: +0.0000 ± 0.0000 (n=287, z=0.00, rho=1.000, MDE80=0.0000) [ref=prev_cycle]
+2026-04-24 15:19:27,083 [INFO] src.orchestrator.loop:     rolling paired[K=1]: +0.0000 ± 0.0000 (N_tot=287, z=0.00, MDE80=0.0000)
+2026-04-24 15:19:27,083 [INFO] src.orchestrator.loop:     strat-CUPED: +0.0000 ± 0.0000 (N=287, D=3, MDE80=0.0000)
+2026-04-24 15:25:59,185 [WARNING] src.utils.external_benchmarks: anchor_eval suspicious-clean: benchmark=math score=1.000 n=12 distinct=12 reasons=offline_fixture — score is NOT a valid held-out signal
+2026-04-24 15:25:59,188 [INFO] src.orchestrator.loop:   anchor eval: 0.599 (n=162) per_bench={'humaneval': 0.82, 'mbpp': 0.1, 'gsm8k': 0.78, 'math': 1.0} per_bench_n={'humaneval': 50, 'mbpp': 50, 'gsm8k': 50, 'math': 12} distinct={'humaneval': 50, 'mbpp': 50, 'gsm8k': 50, 'math': 12} offline={'humaneval': False, 'mbpp': False, 'gsm8k': False, 'math': True}
+2026-04-24 15:25:59,188 [WARNING] src.orchestrator.loop:   anchor eval SUSPECT per-benchmark alarms: [{'benchmark': 'math', 'score': 1.0, 'n': 12, 'distinct': 12, 'reasons': ['offline_fixture']}]
+2026-04-24 15:25:59,188 [INFO] src.orchestrator.loop:     (anchor prev 0.593, +0.006)
+2026-04-24 15:25:59,189 [INFO] src.orchestrator.loop:   curriculum: frontier='logic/propositional' floor=0.05 (delta=+0.075)
+2026-04-24 15:25:59,251 [INFO] src.orchestrator.loop: [auto-diagnose cycle=2] ## Bottom line — 3-bullet TL;DR
+  1. Training-health signals missing — cannot attribute.
+  2. Damage-probe signals missing.
+  3. Verifier noisy: 96.7% of accepted samples carry `any_fail` (above structural quorum floor ~66%).
+2026-04-24 15:25:59,251 [INFO] src.orchestrator.loop: [auto-diagnose cycle=2] FIX THIS: Training-health signals missing — cannot attribute.
+2026-04-24 15:25:59,252 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-24 15:25:59,255 [INFO] src.orchestrator.loop:   meta: LR bandit: picked lr=7.28e-06 (from 5.6e-06), bounded to ±30%; tracker=insufficient_data (n=1)
+2026-04-24 15:25:59,255 [INFO] src.orchestrator.loop:   meta: gradient_accumulation_steps bandit: picked 5 (from 4), bounded to ±30% of running best
+2026-04-24 15:25:59,257 [INFO] src.orchestrator.loop:   PROMOTE: new confirmed best held-out=0.6117 (cycle 1, confirmed after 2 consecutive eligible cycles)
+2026-04-24 15:25:59,257 [INFO] src.orchestrator.loop: 
+============================================================
+2026-04-24 15:25:59,257 [INFO] src.orchestrator.loop: CYCLE 3
+2026-04-24 15:25:59,257 [INFO] src.orchestrator.loop: ============================================================
+2026-04-24 15:25:59,257 [INFO] src.orchestrator.loop: [RSI tick 3] Step 0: SET_DIAGNOSTICS (cache=miss, age=-1/7)
+2026-04-24 15:32:13,712 [INFO] src.orchestrator.loop: [RSI tick 3] curriculum: frontier='(none)' floor=0.05
+2026-04-24 15:32:13,712 [INFO] src.orchestrator.loop: [RSI tick 3] Step 1: PROPOSE 20 problems (path=code_builtins)
+2026-04-24 15:34:37,279 [INFO] src.generator.task_synthesizer: propose_batch_code: 2/20 proposals failed — top issues: difficulty_below_frontier:0.00<0.05=2
+2026-04-24 15:34:37,279 [INFO] src.generator.task_synthesizer: propose_batch_code: first failing response preview (300 chars): PROBLEM: Given a directed graph represented as an adjacency list and two nodes `start` and `end`, determine the shortest path from `start` to `end` that passes through exactly one node with a specific label `label`. If no such path exists, return -1. The graph may contain cycles and negative weights
+2026-04-24 15:37:27,307 [INFO] src.generator.task_synthesizer: propose_batch_code: frontier gate dropped 6/18 proposals the model could already solve blind
+2026-04-24 15:37:27,309 [INFO] src.orchestrator.loop: [RSI tick 3] Step 2: PROPOSE + ADMIT properties
+2026-04-24 15:37:27,310 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: SOLVE (12 problems × 2 candidates, batched)
+2026-04-24 15:40:15,107 [INFO] src.orchestrator.loop: [RSI tick 3] Step 3: solve phase took 167.8s
+2026-04-24 15:40:15,111 [INFO] src.diagnostics.solution_diversity: [cycle 3] diversity: mean=0.429 var=0.0118 collapsed=0/12 backend=hash-fallback
+2026-04-24 15:40:15,111 [INFO] src.orchestrator.loop: [RSI tick 3] Step 4: VERIFY candidates
+2026-04-24 15:40:15,841 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=6173e734-8584-4e53-8c0d-c5548776afa0 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:15,935 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=e69a146d-225a-49e0-8a8a-8d96fe96f381 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:15,936 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=67a28ea8-7de4-43cd-bdb1-cbdd9a464f90 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:16,023 [INFO] src.verifier.property_engine: verify[ver_262ea0c183804123] problem=6173e734-8584-4e53-8c0d-c5548776afa0 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:16,249 [INFO] src.verifier.property_engine: verify[ver_ba883e5d2fb344db] problem=e69a146d-225a-49e0-8a8a-8d96fe96f381 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:16,250 [INFO] src.verifier.property_engine: verify[ver_eb606d10b3ba4a0c] problem=67a28ea8-7de4-43cd-bdb1-cbdd9a464f90 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:16,252 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=e69a146d-225a-49e0-8a8a-8d96fe96f381 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:16,253 [INFO] src.verifier.property_engine: verify[ver_c830aa101f5d40fe] problem=e69a146d-225a-49e0-8a8a-8d96fe96f381 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:16,253 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=7e6b3c01-d9fe-4787-a872-18bcaafb623a policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:16,253 [INFO] src.verifier.property_engine: verify[ver_707b0ba822904b26] problem=7e6b3c01-d9fe-4787-a872-18bcaafb623a accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:16,256 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=67a28ea8-7de4-43cd-bdb1-cbdd9a464f90 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:16,256 [INFO] src.verifier.property_engine: verify[ver_1de876faef73499b] problem=67a28ea8-7de4-43cd-bdb1-cbdd9a464f90 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:16,257 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=6173e734-8584-4e53-8c0d-c5548776afa0 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:16,257 [INFO] src.verifier.property_engine: verify[ver_1d40d4f2c1cb40c0] problem=6173e734-8584-4e53-8c0d-c5548776afa0 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:16,403 [INFO] src.verifier.property_engine: verify[ver_74bab4b2db8944ee] problem=7e6b3c01-d9fe-4787-a872-18bcaafb623a accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:17,168 [INFO] src.verifier.property_engine: verify[ver_4b3414e364a64101] problem=d0cdb691-e71a-4e04-b247-420b1295ea72 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:17,238 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=55075743-1859-4e7f-aed6-ef3e5be652ea policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:17,239 [INFO] src.verifier.property_engine: verify[ver_7fa0b115f1b24406] problem=55075743-1859-4e7f-aed6-ef3e5be652ea accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:17,244 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=55075743-1859-4e7f-aed6-ef3e5be652ea policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:17,244 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=c9a7277f-c804-4a4c-96eb-47c8df475733 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:17,244 [INFO] src.verifier.property_engine: verify[ver_4a3253096af44352] problem=55075743-1859-4e7f-aed6-ef3e5be652ea accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:17,244 [INFO] src.verifier.property_engine: verify[ver_6be8325599944555] problem=d0cdb691-e71a-4e04-b247-420b1295ea72 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:17,314 [INFO] src.verifier.property_engine: verify[ver_6333073bb4ca498c] problem=c9a7277f-c804-4a4c-96eb-47c8df475733 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:17,317 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=c9a7277f-c804-4a4c-96eb-47c8df475733 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:17,389 [INFO] src.verifier.property_engine: verify[ver_56594b7005b3424f] problem=c9a7277f-c804-4a4c-96eb-47c8df475733 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:17,461 [INFO] src.verifier.property_engine: verify[ver_c2930c6d8848484e] problem=971c5d25-c205-48c4-a8ed-0c71ae435c91 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:17,822 [INFO] src.verifier.property_engine: verify[ver_d99fbe2e61994da1] problem=971c5d25-c205-48c4-a8ed-0c71ae435c91 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:17,966 [INFO] src.verifier.property_engine: verify[ver_05c3562af0224128] problem=6c05131e-a83c-42c4-bc70-43476dd2daa6 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:18,158 [INFO] src.verifier.property_engine: verify[ver_6819ec84c6ca4414] problem=6a45afeb-0a03-4b0a-bda0-3cb261cc4942 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:18,509 [INFO] src.verifier.property_engine: verify[ver_468d523fb8424532] problem=6a45afeb-0a03-4b0a-bda0-3cb261cc4942 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:18,510 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=85430d2f-ee58-42d4-81c2-4a8009f7391b policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:18,512 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=85430d2f-ee58-42d4-81c2-4a8009f7391b policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:18,512 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=ad07bf01-06d8-4960-be0a-c44ceb63cf63 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:18,512 [WARNING] src.verifier.property_engine: verify accept-with-fail: problem=6c05131e-a83c-42c4-bc70-43476dd2daa6 policy=majority pass=1 fail=1 err=0 — accepted under relaxed policy; verdict_warn=any_fail
+2026-04-24 15:40:18,513 [INFO] src.verifier.property_engine: verify[ver_93ebed4fda9e493c] problem=85430d2f-ee58-42d4-81c2-4a8009f7391b accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:18,513 [INFO] src.verifier.property_engine: verify[ver_ec38f0354b7848ab] problem=85430d2f-ee58-42d4-81c2-4a8009f7391b accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:18,513 [INFO] src.verifier.property_engine: verify[ver_99e36bf2108a4039] problem=ad07bf01-06d8-4960-be0a-c44ceb63cf63 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:18,514 [INFO] src.verifier.property_engine: verify[ver_1933fb6dfe7c4cda] problem=6c05131e-a83c-42c4-bc70-43476dd2daa6 accepted=True n=2 pass=1 fail=1 err=0 classes=1 backends=[trusted:FAIL=1,trusted:PASS=1]
+2026-04-24 15:40:18,599 [INFO] src.verifier.property_engine: verify[ver_939a5da854d744b7] problem=ad07bf01-06d8-4960-be0a-c44ceb63cf63 accepted=False n=2 pass=0 fail=2 err=0 classes=0 backends=[trusted:FAIL=2] reject=2 property FAIL (policy=majority, pass=0/2)
+2026-04-24 15:40:18,610 [INFO] src.orchestrator.loop: [RSI tick 3] candidates accepted=15
+2026-04-24 15:40:18,610 [INFO] src.orchestrator.loop: [RSI tick 3] Step 7: CALIBRATION CHECK
+2026-04-24 15:40:18,610 [INFO] src.orchestrator.loop: [RSI tick 3] Step 8: TRAIN (this cycle: 15 samples, rolling pool: 15 across 1 cycles)
+2026-04-24 15:40:18,610 [INFO] src.utils.vllm_backend: Unloading vLLM to free GPU memory for training
+2026-04-24 15:40:20,516 [INFO] src.utils.vllm_backend: Loading HF model for training: unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit
+2026-04-24 15:40:26,212 [INFO] src.trainer.custom_lora: Injected 448 LoRA layers, avg rank: 16
+2026-04-24 15:41:53,221 [INFO] src.trainer.custom_lora: Wrote PEFT adapter at outputs/lora_weights/lora_cycle_3 (r=16, 448 layers, targets=['down_proj', 'gate_proj', 'k_proj', 'o_proj', 'q_proj', 'up_proj', 'v_proj'])
+2026-04-24 15:41:53,274 [INFO] src.trainer.custom_lora:   Skipped 448/448 LoRA merges (bnb-quantized base — adapter stays separate for vLLM --enable-lora)
+2026-04-24 15:41:53,276 [INFO] src.trainer.custom_lora: Stripped 448 LoRA layers
+2026-04-24 15:41:53,609 [INFO] src.utils.vllm_backend: save_checkpoint: skipping for bnb-quantized base (save_pretrained would raise NotImplementedError; merge_lora already skipped so checkpoint == base). vLLM will reload base.
+2026-04-24 15:41:53,610 [INFO] src.utils.vllm_backend: Unloading HF model to free GPU memory for vLLM
+2026-04-24 15:41:54,401 [INFO] src.utils.vllm_backend: Registered LoRA adapter id=3 at outputs/lora_weights/lora_cycle_3
+2026-04-24 15:41:54,401 [INFO] src.utils.vllm_backend: Loading model with vLLM: unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit
+2026-04-24 15:42:44,892 [INFO] src.utils.vllm_backend: vLLM backend ready
+2026-04-24 15:42:44,892 [INFO] src.orchestrator.loop: [RSI tick 3] training done: 5 steps, score +0.000
+2026-04-24 15:42:44,892 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: HELD-OUT EVAL (x1)
+2026-04-24 15:42:44,892 [INFO] src.orchestrator.loop: [Cycle 3] Phase 5b: QUICK eval — target_n=192 per-domain=173 (expected_post_filter_total≈192, full every 9999 cycles)
+2026-04-24 15:46:03,689 [WARNING] src.orchestrator.loop: Signal 15 received — raising KeyboardInterrupt for graceful exit
+2026-04-24 15:46:03,690 [WARNING] src.orchestrator.loop: Interrupted — saving state before exit
+2026-04-24 15:46:03,690 [WARNING] src.utils.vllm_backend: Cannot save checkpoint — HF model not loaded
+2026-04-24 15:46:03,696 [INFO] src.orchestrator.loop:   Cleaned up empty checkpoint dir: cycle_3
+2026-04-24 15:46:03,696 [INFO] src.orchestrator.loop: Emergency checkpoint saved at cycle 2

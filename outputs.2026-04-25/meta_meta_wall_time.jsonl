@@ -1,0 +1,16 @@
+{"cycle_id": 1, "phase": "rsi_step0_diagnose", "ms": 0.18215179443359375}
+{"cycle_id": 1, "phase": "rsi_step1_propose", "ms": 280716.5901660919}
+{"cycle_id": 1, "phase": "rsi_step2_admit", "ms": 0.8175373077392578}
+{"cycle_id": 1, "phase": "rsi_step3_solve", "ms": 167987.48397827148}
+{"cycle_id": 1, "phase": "rsi_step4_verify", "ms": 1636.4667415618896}
+{"cycle_id": 1, "phase": "rsi_step7_calibration", "ms": 0.5202293395996094}
+{"cycle_id": 1, "phase": "rsi_step8_train", "ms": 160398.4580039978}
+{"cycle_id": 1, "phase": "eval", "ms": 853186.733007431}
+{"cycle_id": 2, "phase": "rsi_step0_diagnose", "ms": 413290.87257385254}
+{"cycle_id": 2, "phase": "rsi_step1_propose", "ms": 315538.8431549072}
+{"cycle_id": 2, "phase": "rsi_step2_admit", "ms": 1.4574527740478516}
+{"cycle_id": 2, "phase": "rsi_step3_solve", "ms": 200439.1860961914}
+{"cycle_id": 2, "phase": "rsi_step4_verify", "ms": 4793.187618255615}
+{"cycle_id": 2, "phase": "rsi_step7_calibration", "ms": 0.27942657470703125}
+{"cycle_id": 2, "phase": "rsi_step8_train", "ms": 170232.62929916382}
+{"cycle_id": 2, "phase": "eval", "ms": 616558.9225292206}

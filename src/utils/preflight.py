@@ -331,10 +331,14 @@ def _check_config_coherence(config) -> list[CheckResult]:
             "Raise --lora-rank or lower TrainerConfig.min_rank",
         ))
 
-    # GRPO requires reference model (LoRA-zeroed); incompatible with 4bit because
-    # quantized base can't be cleanly zeroed out for the reference pass
+    # DPO/mixed use LoRA-A zeroing at reference-forward time over the same
+    # bnb-4bit base (see custom_lora.py::_forward_logprobs(use_reference=True));
+    # that path IS supported on 4-bit, but this stale warning predates the
+    # LoRA-zeroing implementation and stays in place pending that audit.
+    # GRPO is PPO-style with a π_old snapshot (no reference-model forward),
+    # so bnb-4bit is fine for GRPO — removed from this warning (task #9).
     mode = getattr(t, "training_mode", "sft")
-    if mode in ("dpo", "grpo", "mixed") and q.get("load_in_4bit"):
+    if mode in ("dpo", "mixed") and q.get("load_in_4bit"):
         results.append(CheckResult(
             "rl_vs_4bit", False,
             f"training_mode={mode} needs clean reference forward; 4-bit quantization "

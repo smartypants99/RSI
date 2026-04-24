@@ -128,6 +128,70 @@ def make_property_quorum_reward_fn(
     return _reward
 
 
+def make_code_quorum_pass_fn() -> Callable[[str, str, "TrainingSample"], float]:
+    """Build a quorum_pass_fn for code-domain GRPO rollouts (task #9).
+
+    Re-runs the two live code-domain properties against the completion:
+      - `passes_provided_tests`       (exec.behavioral)
+      - `passes_generated_edge_cases` (search.bounded)
+
+    Returns fraction PASS ∈ [0, 1] (0.0, 0.5, or 1.0 with 2 properties).
+    Requires `sample.problem_id` populated AND the problem's ctx previously
+    stashed via `stash_problem_ctx` at verify time (the orchestrator does
+    this in the normal RSI pipeline). Non-code samples or samples missing
+    ctx return 0.0 — caller can wrap this with a canonical-answer fallback.
+
+    Why rerun instead of caching verify verdicts: rollouts are NEW
+    completions sampled at temperature>0, not the originally-verified
+    candidate. Each rollout needs a fresh property pass to know whether
+    the new completion passes.
+
+    Cost note: each call runs 2 sandboxed subprocesses (~100-500ms each).
+    At G=8 rollouts × ~15 prompts/cycle = 120 rollouts × ~1s total verify
+    = ~2 min extra per GRPO cycle. Acceptable cost for dense reward.
+    """
+    from ..verifier.property_engine import get_builtin_check_fn, get_problem_ctx
+
+    _NAMES = ("passes_provided_tests", "passes_generated_edge_cases")
+
+    def _pass_fraction(prompt: str, completion: str, sample: "TrainingSample") -> float:
+        pid = getattr(sample, "problem_id", "") or ""
+        if not pid:
+            return 0.0
+        if not get_problem_ctx(pid):
+            return 0.0
+        if (sample.domain or "").lower() != "code":
+            return 0.0
+        passes = 0
+        total = 0
+        for name in _NAMES:
+            fn = get_builtin_check_fn(name)
+            if fn is None:
+                continue
+            total += 1
+            try:
+                verdict = fn(pid, completion)
+            except Exception as e:
+                logger.debug(
+                    f"quorum_pass_fn: {name} raised ({type(e).__name__}: {e}); "
+                    "counting as fail"
+                )
+                continue
+            # check_fn returns (bool|str, reason). Treat True as PASS.
+            ok = False
+            if isinstance(verdict, tuple) and verdict:
+                ok = verdict[0] is True
+            elif isinstance(verdict, bool):
+                ok = verdict
+            if ok:
+                passes += 1
+        if total == 0:
+            return 0.0
+        return passes / float(total)
+
+    return _pass_fraction
+
+
 def make_ood_bonus_reward_fn(
     base_reward_fn: RewardFn, ood_alpha: float = DEFAULT_OOD_ALPHA,
 ) -> RewardFn:

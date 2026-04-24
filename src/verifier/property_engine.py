@@ -1231,6 +1231,23 @@ def get_property(name: str) -> Optional[Property]:
     return _BUILTIN.get(name)
 
 
+def get_builtin_check_fn(name: str) -> Optional[Callable[..., Any]]:
+    """Resolve a builtin Property's trusted check_fn by property name.
+
+    Returns None if no builtin with that name is registered or it has no
+    trusted check_fn. Used by GRPO rollout scoring (task #9) to run the
+    same sandboxed code properties used by the verifier directly against
+    a new rollout completion, without going through the full
+    admit/discriminate pipeline.
+
+    The returned callable has signature ``(problem_id, candidate) -> (bool|str, reason)``.
+    """
+    prop = _BUILTIN.get(name)
+    if prop is None:
+        return None
+    return _TRUSTED_CHECK_FNS.get(prop.property_id)
+
+
 def builtin_properties(independence_class: Optional[str] = None) -> list[Property]:
     if independence_class is None:
         return list(_BUILTIN.values())

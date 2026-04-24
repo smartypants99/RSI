@@ -362,6 +362,24 @@ class ImprovementLoop:
         # canonical dispatcher (contains/math_equiv/code_executes/...).
         self.verifier.set_ground_truth_grader(self.diagnostics._check_answer)
         self.trainer = CustomLoRATrainer(config.trainer, self.model_loader)
+        # Task #9: install property-quorum reward_fn as the default for GRPO
+        # rollouts. Without this the default reward returns 0.0 on code-domain
+        # rollouts (no canonical answer) → zero advantage → no GRPO update.
+        # PRM reward (installed later per-cycle if use_prm=True) overrides this.
+        try:
+            from ..trainer.grpo import (
+                make_property_quorum_reward_fn,
+                make_code_quorum_pass_fn,
+            )
+            self.trainer.set_reward_fn(
+                make_property_quorum_reward_fn(make_code_quorum_pass_fn())
+            )
+            logger.info("GRPO reward_fn installed: property_quorum (code domain)")
+        except Exception as exc:  # pragma: no cover — defensive only
+            logger.warning(
+                f"Could not install property_quorum reward_fn ({type(exc).__name__}: {exc}) "
+                "— GRPO will fall back to canonical-answer grading if activated"
+            )
         # Wire observability: collect training loss trajectory when the
         # orchestrator is asked to (e.g. for cycle_metrics dumps).
         if getattr(config.orchestrator, "collect_training_loss_trajectory", False):
@@ -2082,6 +2100,7 @@ class ImprovementLoop:
                         verdict_warnings=tuple(
                             getattr(pe_record, "verdict_warnings", ()) or ()
                         ),
+                        problem_id=pid,  # task #9: for GRPO rollout reward ctx lookup
                     )
                     training_samples.append(ts_obj)
                     reg.training_pool.append_sample(TrainingPoolRecord(

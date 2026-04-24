@@ -19,6 +19,7 @@ from src.trainer.grpo import (
     DEFAULT_PLATEAU_WINDOW,
     KLDivergenceGuard,
     install_kl_guard,
+    make_code_quorum_pass_fn,
     make_ood_bonus_reward_fn,
     make_property_quorum_reward_fn,
     should_switch_to_grpo,
@@ -66,6 +67,79 @@ def test_quorum_reward_handles_quorum_fn_exception():
 def test_quorum_reward_handles_nonfinite():
     r = make_property_quorum_reward_fn(lambda p, c, s: float("nan"))
     assert r("p", "c", _FakeSample()) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# make_code_quorum_pass_fn — task #9: activates GRPO on code-domain rollouts.
+#   Without this the default reward returns 0.0 on code completions (no
+#   canonical answer) → zero advantage → no GRPO update. The test below
+#   proves the "GRPO is a no-op on code" bug is fixed by running a real
+#   sandboxed passes_provided_tests check against a rollout completion.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _CodeSample:
+    prompt: str = "Write add(a, b) that returns a+b"
+    response: str = ""
+    domain: str = "code"
+    expected_answer: str = ""
+    problem_id: str = ""
+    category_novelty: float = 0.0
+
+
+def test_code_quorum_pass_fn_runs_real_properties_on_rollout(tmp_path, monkeypatch):
+    """End-to-end test: stash a code problem's ctx, call pass_fn on a
+    completion that should PASS the provided tests, assert non-zero reward.
+    This directly disproves "GRPO on code is a no-op" — a binary canonical
+    grade would have returned 0.0 here.
+    """
+    from src.verifier.property_engine import stash_problem_ctx, clear_problem_ctx
+
+    pid = "t9_unittest_problem"
+    stash_problem_ctx(
+        pid,
+        {
+            "tests": ["add(2, 3) == 5", "add(0, 0) == 0"],
+            "reference": "def add(a, b):\n    return a + b\n",
+            "entry_point": "add",
+            "edge_inputs": ["(2, 3)", "(0, 0)"],
+        },
+    )
+    try:
+        pass_fn = make_code_quorum_pass_fn()
+        sample = _CodeSample(problem_id=pid)
+        good_completion = "```python\ndef add(a, b):\n    return a + b\n```"
+        r = pass_fn("p", good_completion, sample)
+        # With 2 live properties and a correct completion, expect 1.0
+        # (or at least > 0 if one of the sandbox checks bails on this host).
+        assert r > 0.0, (
+            "code_quorum_pass_fn returned 0.0 on a correct completion — "
+            "GRPO code-domain would be a no-op"
+        )
+        # Sanity: a broken completion should fail the tests.
+        bad_completion = "```python\ndef add(a, b):\n    return a - b\n```"
+        r_bad = pass_fn("p", bad_completion, sample)
+        assert r_bad < r, "bad completion should score lower than good"
+    finally:
+        clear_problem_ctx(pid)
+
+
+def test_code_quorum_pass_fn_zero_without_problem_id():
+    pass_fn = make_code_quorum_pass_fn()
+    sample = _CodeSample(problem_id="")  # empty pid
+    assert pass_fn("p", "any completion", sample) == 0.0
+
+
+def test_code_quorum_pass_fn_zero_on_non_code_domain():
+    from src.verifier.property_engine import stash_problem_ctx, clear_problem_ctx
+    pid = "t9_math_problem"
+    stash_problem_ctx(pid, {"tests": ["2+2==4"]})
+    try:
+        pass_fn = make_code_quorum_pass_fn()
+        sample = _CodeSample(problem_id=pid, domain="math")
+        assert pass_fn("p", "x", sample) == 0.0
+    finally:
+        clear_problem_ctx(pid)
 
 
 def test_ood_wrap_over_arbitrary_base_reward():

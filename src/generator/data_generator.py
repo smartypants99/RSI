@@ -101,6 +101,12 @@ class TrainingSample:
     # (GeneratorConfig.sample_quality_min_clean_floor) can drop these when
     # the clean pool is large enough.
     verdict_warnings: tuple[str, ...] = ()
+    # Task #9: carries the original problem_id through to GRPO rollout
+    # reward scoring. Populated at RSI sample-construction time; empty for
+    # legacy synthesized samples without a registered problem ctx.
+    # The GRPO property-quorum reward fn looks up stash_problem_ctx(pid)
+    # and reruns code properties against the rollout completion.
+    problem_id: str = ""
 
     def __post_init__(self):
         # Sync per-step confidences from the chain if not explicitly provided.

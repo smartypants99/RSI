@@ -3820,16 +3820,18 @@ class ImprovementLoop:
                 benchmarks = list(ocfg.anchor_eval_benchmarks)
                 per_bench = max(1, ocfg.anchor_eval_size // max(1, len(benchmarks)))
 
+                # max_new_tokens=1024 so chat-tuned models have room for
+                # "here's the solution…\n```python\n<full function>\n```\n"
+                # envelope. At 256 Qwen truncates mid-function → grader fails
+                # (observed 0/50 HumanEval; bumping to 1024 restored >80%).
                 def _anchor_model_fn(prompt: str) -> str:
                     return self.model_loader.generate(
-                        prompt, max_new_tokens=256, temperature=0.0, top_p=1.0
+                        prompt, max_new_tokens=1024, temperature=0.0, top_p=1.0
                     )
 
                 def _anchor_batch_fn(prompts: list[str]) -> list[str]:
-                    # One vLLM batched call across the full anchor set —
-                    # ~15x faster than serial generate() on a 100-item set.
                     return list(self.model_loader.generate_batch(
-                        prompts, max_new_tokens=256, temperature=0.0, top_p=1.0,
+                        prompts, max_new_tokens=1024, temperature=0.0, top_p=1.0,
                     ))
 
                 summary = run_anchor_eval(

@@ -179,7 +179,13 @@ def _try_load_from_datasets(benchmark: str) -> Optional[list[BenchmarkItem]]:
                     prompt=str(r.get("prompt", "")),
                     answer=str(r.get("canonical_solution", "")),
                     domain="code",
-                    meta={"test": r.get("test", "")},
+                    meta={
+                        "test": r.get("test", ""),
+                        # Without entry_point the grader short-circuits to
+                        # False — observed 0/50 pre-fix even with correct
+                        # completions. The HF row carries it; propagate it.
+                        "entry_point": r.get("entry_point", ""),
+                    },
                 )
                 for i, r in enumerate(ds)
             ]

@@ -62,6 +62,10 @@ def main():
                         help="After training, stay in HF mode instead of reloading vLLM. "
                              "Saves ~3-5 min per cycle at the cost of slower post-training "
                              "diagnostic + held-out eval. Net win for small domain subsets.")
+    parser.add_argument("--format-primer-adapter", default=None,
+                        help="Path to a pre-trained LoRA adapter (from "
+                             "scripts/train_format_primer.py) that teaches the proposer "
+                             "output schema. Reloaded before every cycle's propose phase.")
 
     # Generator
     parser.add_argument("--samples-per-weakness", type=int, default=None,
@@ -283,6 +287,8 @@ def main():
         config.generator.consistency_threshold = args.consistency_threshold
 
     # Trainer config
+    if args.format_primer_adapter:
+        config.trainer.format_primer_adapter_path = args.format_primer_adapter
     if args.lora_rank is not None:
         config.trainer.lora_rank = args.lora_rank
     if args.lora_alpha is not None:

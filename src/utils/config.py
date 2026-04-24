@@ -511,6 +511,13 @@ class TrainerConfig:
     # explicitly if running on <48GB VRAM or longer seq lengths.
     use_gradient_checkpointing: bool = True
 
+    # Format-primer adapter: path to a pre-trained LoRA adapter that teaches
+    # the proposer output schema (PROBLEM:/ENTRY:/REFERENCE:/TESTS:/...). When
+    # set, the orchestrator loads it before every cycle's propose phase so
+    # cycle-N proposals are schema-compliant even though phase-4 inject_lora
+    # strips it. Built by scripts/train_format_primer.py.
+    format_primer_adapter_path: str = ""
+
     def __post_init__(self):
         if self.lora_rank < 1:
             raise ValueError(f"lora_rank must be >= 1, got {self.lora_rank}")

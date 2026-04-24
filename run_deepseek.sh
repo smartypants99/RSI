@@ -22,6 +22,17 @@ if [ "$#" -ge 1 ]; then
     RESUME_ARG="$*"
 fi
 
+# Format-primer adapter: auto-pass when present on disk and caller did not
+# already specify one. Built by scripts/train_format_primer.py as a ~30-min
+# pre-RSI warmup that teaches R1 the PROBLEM:/ENTRY:/REFERENCE:/TESTS: schema.
+# Without it, cycle-1 proposers produce 100% parse-fail (observed on fresh
+# pods — the base model has no prior on our schema).
+PRIMER_ARG=""
+if [[ "${RESUME_ARG}" != *"--format-primer-adapter"* ]] \
+   && [ -f "outputs/format_primer_adapter/lora_weights.pt" ]; then
+    PRIMER_ARG="--format-primer-adapter outputs/format_primer_adapter"
+fi
+
 exec python main.py \
     --model unsloth/DeepSeek-R1-Distill-Qwen-32B-bnb-4bit \
     --load-in-4bit \
@@ -41,4 +52,5 @@ exec python main.py \
     --max-cycles 40 \
     --write-cycle-metrics \
     --write-cycle-samples \
+    ${PRIMER_ARG} \
     ${RESUME_ARG}

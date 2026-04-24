@@ -362,6 +362,27 @@ class ImprovementLoop:
         # canonical dispatcher (contains/math_equiv/code_executes/...).
         self.verifier.set_ground_truth_grader(self.diagnostics._check_answer)
         self.trainer = CustomLoRATrainer(config.trainer, self.model_loader)
+        # Format primer: path to a pre-trained LoRA adapter that teaches the
+        # proposer output schema. Reloaded each cycle before propose phase so
+        # 100% parse-fail cycles (observed on fresh pods with the base R1
+        # model ignoring the schema) are avoided. Phase-4 inject_lora strips
+        # it; _ensure_format_primer_loaded() re-applies it at cycle start.
+        self._format_primer_path = (
+            getattr(config.trainer, "format_primer_adapter_path", "") or ""
+        )
+        if self._format_primer_path:
+            try:
+                self.trainer.load_lora_weights(self._format_primer_path)
+                logger.info(
+                    f"Format primer adapter loaded at init: "
+                    f"{self._format_primer_path}"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Format primer load failed at init "
+                    f"({type(exc).__name__}: {exc}) — continuing without primer."
+                )
+                self._format_primer_path = ""
         # Task #9: install property-quorum reward_fn as the default for GRPO
         # rollouts. Without this the default reward returns 0.0 on code-domain
         # rollouts (no canonical answer) → zero advantage → no GRPO update.
@@ -1213,6 +1234,35 @@ class ImprovementLoop:
 
         return 1
 
+    def _ensure_format_primer_loaded(self, cycle: int) -> None:
+        """Load the format-primer LoRA before each cycle's propose phase.
+
+        No-op if no primer path was configured or the trainer already has
+        LoRA layers from a mid-run state we should not overwrite (e.g. a
+        resumed checkpoint from a later cycle). The primer is pure format
+        knowledge — if a higher-quality adapter is already resident, prefer it.
+        """
+        if not getattr(self, "_format_primer_path", ""):
+            return
+        # If a resume-path load already installed an adapter for cycle N>1,
+        # don't clobber it with the format primer. Primer is only meant to
+        # bootstrap cycle 1; beyond that, the RSI-trained adapter carries the
+        # format knowledge via the schema-compliant samples it was trained on.
+        if cycle > 1 and getattr(self.trainer, "_lora_layers", None):
+            return
+        try:
+            self.trainer.load_lora_weights(self._format_primer_path)
+            logger.info(
+                f"[Cycle {cycle}] Format primer re-applied: "
+                f"{self._format_primer_path}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[Cycle {cycle}] Format primer reload failed "
+                f"({type(exc).__name__}: {exc}) — propose phase will use "
+                f"whatever LoRA state is currently resident."
+            )
+
     def _run_cycle(self, cycle: int) -> CycleResult:
         """Execute one full improvement cycle."""
         result = CycleResult(cycle)
@@ -1231,6 +1281,12 @@ class ImprovementLoop:
 
         if torch.cuda.is_available():
             torch.cuda.reset_peak_memory_stats()
+
+        # Format primer: re-apply before every cycle's propose/diagnose phase
+        # so the proposer sees schema-compliant init weights. Phase-4 inject_lora
+        # strips whatever LoRA is currently active, so we re-load here each
+        # cycle. No-op when format_primer_adapter_path is unset.
+        self._ensure_format_primer_loaded(cycle)
 
         # 1. Diagnose
         logger.info(f"[Cycle {cycle}] Phase 1: DIAGNOSE")

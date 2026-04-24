@@ -1,0 +1,3 @@
+{"cycle": 1, "mean": 0.521072911314023, "variance": 0.0012628690451262916, "n_problems": 3, "n_collapsed": 0, "fraction_collapsed": 0.0, "mode_collapse_alarm": false, "embedding_backend": "hash-fallback", "timestamp": 1776953609.681173}
+{"cycle": 2, "mean": 0.30550063684831497, "variance": 0.03061385975269336, "n_problems": 9, "n_collapsed": 2, "fraction_collapsed": 0.2222222222222222, "mode_collapse_alarm": false, "embedding_backend": "hash-fallback", "timestamp": 1776955942.5255613}
+{"cycle": 3, "mean": 0.4479910306688751, "variance": 0.02499077202728213, "n_problems": 6, "n_collapsed": 0, "fraction_collapsed": 0.0, "mode_collapse_alarm": false, "embedding_backend": "hash-fallback", "timestamp": 1776958112.8671196}

@@ -1,0 +1,188 @@
+{
+  "cycle": 3,
+  "timestamp": 1776959087.1466334,
+  "scores": {
+    "pre_training": 0.44171779141104295,
+    "post_training": 0.44171779141104295,
+    "held_out_eval": 0.4843205574912892,
+    "improvement": 0.0,
+    "improvement_ema": 0.0,
+    "best_score": 0.0,
+    "best_checkpoint_cycle": null
+  },
+  "domain_scores": {
+    "pre": {
+      "code": 0.5396825396825397,
+      "math": 0.4027777777777778,
+      "logic": 0.32142857142857145
+    },
+    "post": {},
+    "eval": {
+      "code": 0.4222222222222222,
+      "math": 0.4793388429752066,
+      "logic": 0.512396694214876
+    }
+  },
+  "subdomain_scores": {
+    "pre": {
+      "code/bit_manipulation": 0.6923076923076923,
+      "code/implementation": 0.4074074074074074,
+      "code/prediction": 0.3333333333333333,
+      "code/debugging": 0.6666666666666666,
+      "code/computing": 1.0,
+      "math/word_problem": 0.5555555555555556,
+      "math/symbolic": 0.14285714285714285,
+      "math/algebra": 0.0,
+      "math/number_theory": 0.7,
+      "math/arithmetic": 1.0,
+      "math/math": 1.0,
+      "math/combinatorics": 0.0,
+      "math/probability": 0.3333333333333333,
+      "math/calculus": 0.75,
+      "logic/fallacies": 0.0,
+      "logic/syllogism": 0.15384615384615385,
+      "logic/propositional": 0.375,
+      "logic/reasoning": 1.0,
+      "logic/modal": 0.0
+    },
+    "post": {},
+    "eval": {
+      "code/computing": 1.0,
+      "code/implementation": 0.36585365853658536,
+      "math/symbolic": 0.23684210526315788,
+      "math/word_problem": 0.5813953488372093,
+      "math/math": 1.0,
+      "math/probability": 0.0,
+      "math/calculus": 0.0,
+      "math/combinatorics": 1.0,
+      "math/number_theory": 0.6923076923076923,
+      "math/percentage": 1.0,
+      "math/arithmetic": 1.0,
+      "logic/reasoning": 0.9411764705882353,
+      "logic/syllogism": 0.30952380952380953,
+      "logic/propositional": 1.0
+    }
+  },
+  "samples": {
+    "generated": 6,
+    "verified": 5,
+    "rejected": 1,
+    "pass_rate": 0.8333333333333334,
+    "diversity": {
+      "mean": 0.4479910306688751,
+      "variance": 0.02499077202728213,
+      "n_problems": 6,
+      "n_collapsed": 0,
+      "fraction_collapsed": 0.0,
+      "mode_collapse_alarm": false,
+      "embedding_backend": "hash-fallback"
+    }
+  },
+  "training": {
+    "avg_loss": 0.8987893462181091,
+    "final_loss": 0.8295454382896423,
+    "steps": 2,
+    "learning_rate": 7.28e-06,
+    "lora_layers": 448
+  },
+  "calibration": {
+    "ece": null,
+    "brier": null,
+    "samples": 0
+  },
+  "timing": {
+    "rsi_step0_diagnose": 621.4804835319519,
+    "rsi_step1_propose": 425.96521759033203,
+    "rsi_step2_admit": 0.00039839744567871094,
+    "rsi_step3_solve": 139.55653166770935,
+    "rsi_step4_verify": 1.8809049129486084,
+    "rsi_step7_calibration": 0.0003170967102050781,
+    "rsi_step8_train": 120.59938359260559,
+    "eval": 851.7243919372559
+  },
+  "escalations": {
+    "verification": false,
+    "diagnosis": false,
+    "generation": false
+  },
+  "degradation_count": 0,
+  "plateau_count": 2,
+  "errors": [],
+  "history_summary": [
+    {
+      "cycle": 1,
+      "pre": 0.5,
+      "post": 0.5,
+      "improvement": 0.0,
+      "eval": 0.49825783972125437,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 0.36585365853658536,
+        "math/symbolic": 0.21052631578947367,
+        "math/word_problem": 0.627906976744186,
+        "math/math": 1.0,
+        "math/probability": 0.0,
+        "math/calculus": 0.0,
+        "math/combinatorics": 1.0,
+        "math/number_theory": 0.7692307692307693,
+        "math/percentage": 1.0,
+        "math/arithmetic": 1.0,
+        "logic/reasoning": 1.0,
+        "logic/syllogism": 0.32142857142857145,
+        "logic/propositional": 1.0
+      },
+      "pass_rate": 0.3333333333333333,
+      "had_errors": false
+    },
+    {
+      "cycle": 2,
+      "pre": 0.46706586826347307,
+      "post": 0.46706586826347307,
+      "improvement": 0.0,
+      "eval": 0.5121951219512195,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 0.34146341463414637,
+        "math/symbolic": 0.23684210526315788,
+        "math/word_problem": 0.627906976744186,
+        "math/math": 1.0,
+        "math/probability": 0.0,
+        "math/calculus": 0.0,
+        "math/combinatorics": 1.0,
+        "math/number_theory": 0.7692307692307693,
+        "math/percentage": 1.0,
+        "math/arithmetic": 1.0,
+        "logic/reasoning": 0.9411764705882353,
+        "logic/syllogism": 0.38095238095238093,
+        "logic/propositional": 1.0
+      },
+      "pass_rate": 1.0,
+      "had_errors": false
+    },
+    {
+      "cycle": 3,
+      "pre": 0.44171779141104295,
+      "post": 0.44171779141104295,
+      "improvement": 0.0,
+      "eval": 0.4843205574912892,
+      "eval_subdomain": {
+        "code/computing": 1.0,
+        "code/implementation": 0.36585365853658536,
+        "math/symbolic": 0.23684210526315788,
+        "math/word_problem": 0.5813953488372093,
+        "math/math": 1.0,
+        "math/probability": 0.0,
+        "math/calculus": 0.0,
+        "math/combinatorics": 1.0,
+        "math/number_theory": 0.6923076923076923,
+        "math/percentage": 1.0,
+        "math/arithmetic": 1.0,
+        "logic/reasoning": 0.9411764705882353,
+        "logic/syllogism": 0.30952380952380953,
+        "logic/propositional": 1.0
+      },
+      "pass_rate": 0.8333333333333334,
+      "had_errors": false
+    }
+  ]
+}

@@ -16,6 +16,7 @@
 ## Verifier noise
 - Accepted samples: **15**
 - ...with `verdict_warnings` containing `any_fail`: **14** (93.33%)
+- ...with ≥2 non-PASS verdicts (real disagreement): **0** (0.00%)
 - Mean heldout Δ on domains touched by *warned* training samples: `N/A`
 - Mean heldout Δ on *clean-only* domains: `N/A`
 
@@ -38,4 +39,4 @@
 ## Bottom line — 3-bullet TL;DR
 1. Training-health signals missing — cannot attribute.
 2. Damage-probe signals missing.
-3. Verifier noisy: 93.3% of accepted samples carry `any_fail` warnings.
+3. Verifier noisy: 93.3% of accepted samples carry `any_fail` (above structural quorum floor ~66%).

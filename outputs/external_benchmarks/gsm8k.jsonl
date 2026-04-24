@@ -1,0 +1,12 @@
+{"benchmark": "gsm8k", "item_id": "GSM/0", "prompt": "If I have 0 apples and buy 0 more, how many apples do I have?", "answer": "0", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/1", "prompt": "If I have 1 apples and buy 1 more, how many apples do I have?", "answer": "2", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/2", "prompt": "If I have 2 apples and buy 2 more, how many apples do I have?", "answer": "4", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/3", "prompt": "If I have 3 apples and buy 3 more, how many apples do I have?", "answer": "6", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/4", "prompt": "If I have 4 apples and buy 4 more, how many apples do I have?", "answer": "8", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/5", "prompt": "If I have 5 apples and buy 5 more, how many apples do I have?", "answer": "10", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/6", "prompt": "If I have 6 apples and buy 6 more, how many apples do I have?", "answer": "12", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/7", "prompt": "If I have 7 apples and buy 7 more, how many apples do I have?", "answer": "14", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/8", "prompt": "If I have 8 apples and buy 8 more, how many apples do I have?", "answer": "16", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/9", "prompt": "If I have 9 apples and buy 9 more, how many apples do I have?", "answer": "18", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/10", "prompt": "If I have 10 apples and buy 10 more, how many apples do I have?", "answer": "20", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "gsm8k", "item_id": "GSM/11", "prompt": "If I have 11 apples and buy 11 more, how many apples do I have?", "answer": "22", "domain": "math", "meta": {"source": "offline_fixture"}}

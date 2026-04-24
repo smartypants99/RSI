@@ -1,0 +1,66 @@
+{
+  "cycle": 2,
+  "pre_score": 0.46706586826347307,
+  "post_score": 0.46706586826347307,
+  "improvement": 0.0,
+  "eval_score": 0.5121951219512195,
+  "eval_domain_scores": {
+    "code": 0.4,
+    "math": 0.5041322314049587,
+    "logic": 0.5619834710743802
+  },
+  "eval_subdomain_scores": {
+    "code/computing": 1.0,
+    "code/implementation": 0.34146341463414637,
+    "math/symbolic": 0.23684210526315788,
+    "math/word_problem": 0.627906976744186,
+    "math/math": 1.0,
+    "math/probability": 0.0,
+    "math/calculus": 0.0,
+    "math/combinatorics": 1.0,
+    "math/number_theory": 0.7692307692307693,
+    "math/percentage": 1.0,
+    "math/arithmetic": 1.0,
+    "logic/reasoning": 0.9411764705882353,
+    "logic/syllogism": 0.38095238095238093,
+    "logic/propositional": 1.0
+  },
+  "samples_generated": 9,
+  "samples_verified": 9,
+  "weaknesses_found": 12,
+  "had_diagnostics": true,
+  "escalation_events": [],
+  "post_diag_domain_scores": {},
+  "diversity_stats": {
+    "mean": 0.30550063684831497,
+    "variance": 0.03061385975269336,
+    "n_problems": 9,
+    "n_collapsed": 2,
+    "fraction_collapsed": 0.2222222222222222,
+    "mode_collapse_alarm": false,
+    "embedding_backend": "hash-fallback"
+  },
+  "phase_times": {
+    "rsi_step0_diagnose": 617.9096338748932,
+    "rsi_step1_propose": 425.5422737598419,
+    "rsi_step2_admit": 0.0005571842193603516,
+    "rsi_step3_solve": 155.68879795074463,
+    "rsi_step4_verify": 2.6546244621276855,
+    "rsi_step7_calibration": 0.00030994415283203125,
+    "rsi_step8_train": 129.1425142288208,
+    "eval": 851.4622511863708
+  },
+  "timestamp": 1776954743.3803265,
+  "duration_seconds": 1330.9432699680328,
+  "errors": [],
+  "training": {
+    "avg_loss": 0.9578909118970235,
+    "final_loss": 0.536697268486023,
+    "steps": 4,
+    "lora_layers": 448,
+    "avg_rank": 16.0,
+    "samples_used": 9,
+    "samples_rejected": 0,
+    "learning_rate": 5.6e-06
+  }
+}

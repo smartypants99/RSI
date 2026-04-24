@@ -1,0 +1,60 @@
+{
+  "cycle": 1,
+  "timestamp": 1776953191.7578921,
+  "duration_seconds": 697.4549465179443,
+  "scores": {
+    "pre": 0.5,
+    "post": 0.5,
+    "improvement": 0.0,
+    "eval_mean": 0.49825783972125437,
+    "eval_scores_all": [
+      0.49825783972125437
+    ],
+    "eval_spread": 0.0
+  },
+  "eval_per_rep_domain_scores": [
+    {
+      "code": 0.4222222222222222,
+      "math": 0.49586776859504134,
+      "logic": 0.5289256198347108
+    }
+  ],
+  "training_samples": [],
+  "training_loss_trajectory": [],
+  "star": {},
+  "questions": {
+    "pre_right_ids": [],
+    "pre_wrong_ids": [],
+    "post_right_ids": [],
+    "post_wrong_ids": [],
+    "moved_wrong_to_right": [],
+    "moved_right_to_wrong": []
+  },
+  "diversity_stats": {
+    "mean": 0.521072911314023,
+    "variance": 0.0012628690451262916,
+    "n_problems": 3,
+    "n_collapsed": 0,
+    "fraction_collapsed": 0.0,
+    "mode_collapse_alarm": false,
+    "embedding_backend": "hash-fallback"
+  },
+  "meta": {
+    "picked_lr": 8e-06,
+    "picked_rank": 16,
+    "picked_epochs": 3,
+    "picked_min_train_samples": 5,
+    "picked_grad_accum": 4
+  },
+  "phase_times": {
+    "rsi_step0_diagnose": 0.0002110004425048828,
+    "rsi_step1_propose": 286.17826652526855,
+    "rsi_step2_admit": 0.0002524852752685547,
+    "rsi_step3_solve": 131.73955965042114,
+    "rsi_step4_verify": 0.3559701442718506,
+    "rsi_step7_calibration": 0.0002453327178955078,
+    "rsi_step8_train": 279.17486357688904,
+    "eval": 854.0928966999054
+  },
+  "errors": []
+}

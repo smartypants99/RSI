@@ -1,0 +1,460 @@
+{
+  "cycles": [
+    {
+      "cycle": 1,
+      "pre_score": 0.5,
+      "post_score": 0.5,
+      "improvement": 0.0,
+      "eval_score": 0.49825783972125437,
+      "eval_domain_scores": {
+        "code": 0.4222222222222222,
+        "math": 0.49586776859504134,
+        "logic": 0.5289256198347108
+      },
+      "eval_subdomain_scores": {
+        "code/computing": 1.0,
+        "code/implementation": 0.36585365853658536,
+        "math/symbolic": 0.21052631578947367,
+        "math/word_problem": 0.627906976744186,
+        "math/math": 1.0,
+        "math/probability": 0.0,
+        "math/calculus": 0.0,
+        "math/combinatorics": 1.0,
+        "math/number_theory": 0.7692307692307693,
+        "math/percentage": 1.0,
+        "math/arithmetic": 1.0,
+        "logic/reasoning": 1.0,
+        "logic/syllogism": 0.32142857142857145,
+        "logic/propositional": 1.0
+      },
+      "samples_generated": 3,
+      "samples_verified": 1,
+      "weaknesses_found": 3,
+      "had_diagnostics": true,
+      "escalation_events": [],
+      "post_diag_domain_scores": {},
+      "diversity_stats": {
+        "mean": 0.521072911314023,
+        "variance": 0.0012628690451262916,
+        "n_problems": 3,
+        "n_collapsed": 0,
+        "fraction_collapsed": 0.0,
+        "mode_collapse_alarm": false,
+        "embedding_backend": "hash-fallback"
+      },
+      "phase_times": {
+        "rsi_step0_diagnose": 0.0002110004425048828,
+        "rsi_step1_propose": 286.17826652526855,
+        "rsi_step2_admit": 0.0002524852752685547,
+        "rsi_step3_solve": 131.73955965042114,
+        "rsi_step4_verify": 0.3559701442718506,
+        "rsi_step7_calibration": 0.0002453327178955078,
+        "rsi_step8_train": 279.17486357688904,
+        "eval": 854.0928966999054
+      },
+      "timestamp": 1776953191.7578921,
+      "duration_seconds": 697.4549465179443,
+      "errors": [],
+      "training": {
+        "avg_loss": 0.6772827779253324,
+        "final_loss": 0.5581395626068115,
+        "steps": 8,
+        "lora_layers": 448,
+        "avg_rank": 16.0,
+        "samples_used": 31,
+        "samples_rejected": 0,
+        "learning_rate": 8e-06
+      }
+    }
+  ],
+  "escalation_state": {
+    "verification": false,
+    "diagnosis": false,
+    "generation": false
+  },
+  "plateau_count": 0,
+  "consecutive_failures": 0,
+  "domain_score_history": {},
+  "last_deescalation_cycle": -10,
+  "custom_solution_template": null,
+  "model_generated_questions": {},
+  "pending_regressions": [],
+  "best_score": 0.0,
+  "best_checkpoint_cycle": null,
+  "degradation_count": 0,
+  "pending_best_score": 0.0,
+  "pending_best_cycle": null,
+  "pending_best_streak": 0,
+  "capture_alarm_consecutive": 0,
+  "improvement_ema": 0.0,
+  "meta_state": {
+    "records": [],
+    "lr_bandit": {
+      "arms": [
+        {
+          "value": 2e-06,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 4e-06,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 8e-06,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 1.6e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        },
+        {
+          "value": 3.2e-05,
+          "alpha": 1.0,
+          "beta": 1.0
+        }
+      ],
+      "last_pulled": null
+    },
+    "dimension_bandits": {
+      "lora_rank": {
+        "name": "lora_rank",
+        "values": [
+          8,
+          16,
+          24,
+          32,
+          40,
+          48,
+          56,
+          64
+        ],
+        "arms": [
+          {
+            "value": 8.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 16.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 24.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 32.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 40.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 48.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 56.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 64.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          }
+        ],
+        "history": [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "window_size": 10,
+        "last_pulled": null
+      },
+      "num_epochs": {
+        "name": "num_epochs",
+        "values": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "arms": [
+          {
+            "value": 1.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 2.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 3.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 4.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          }
+        ],
+        "history": [
+          [],
+          [],
+          [],
+          []
+        ],
+        "window_size": 10,
+        "last_pulled": null
+      },
+      "min_train_samples": {
+        "name": "min_train_samples",
+        "values": [
+          5,
+          10,
+          15,
+          20,
+          25,
+          30,
+          35,
+          40,
+          45,
+          50
+        ],
+        "arms": [
+          {
+            "value": 5.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 10.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 15.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 20.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 25.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 30.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 35.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 40.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 45.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 50.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          }
+        ],
+        "history": [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "window_size": 10,
+        "last_pulled": null
+      },
+      "gradient_accumulation_steps": {
+        "name": "gradient_accumulation_steps",
+        "values": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ],
+        "arms": [
+          {
+            "value": 1.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 2.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 3.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 4.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 5.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 6.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 7.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          },
+          {
+            "value": 8.0,
+            "alpha": 1.0,
+            "beta": 1.0
+          }
+        ],
+        "history": [
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          [],
+          []
+        ],
+        "window_size": 10,
+        "last_pulled": null
+      }
+    },
+    "prompt_variants": [],
+    "verifier_weights": {},
+    "cov": {},
+    "n_obs": 0,
+    "last_proposal": null,
+    "last_pre_revert_state": null
+  },
+  "curriculum": {
+    "active_classes": [
+      "math.linear_system",
+      "math.modular",
+      "math.gcd_chain",
+      "math.polynomial_eval",
+      "math.fraction_arith",
+      "math.combinatorics",
+      "reasoning.sequence",
+      "reasoning.logic_sat",
+      "reasoning.word_rates",
+      "code.predict_output",
+      "code.base_conversion"
+    ],
+    "retired_classes": [],
+    "class_meta": {
+      "math.linear_system": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.modular": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.gcd_chain": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.polynomial_eval": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.fraction_arith": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "math.combinatorics": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.sequence": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.logic_sat": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "reasoning.word_rates": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "code.predict_output": {
+        "ceiling": 10,
+        "generation": 0
+      },
+      "code.base_conversion": {
+        "ceiling": 10,
+        "generation": 0
+      }
+    },
+    "solve_rate": {
+      "math.linear_system": {},
+      "math.modular": {},
+      "math.gcd_chain": {},
+      "math.polynomial_eval": {},
+      "math.fraction_arith": {},
+      "math.combinatorics": {},
+      "reasoning.sequence": {},
+      "reasoning.logic_sat": {},
+      "reasoning.word_rates": {},
+      "code.predict_output": {},
+      "code.base_conversion": {}
+    }
+  }
+}

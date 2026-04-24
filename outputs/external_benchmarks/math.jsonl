@@ -1,0 +1,12 @@
+{"benchmark": "math", "item_id": "MATH/0", "prompt": "Compute 0 * 0.", "answer": "0", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/1", "prompt": "Compute 1 * 1.", "answer": "1", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/2", "prompt": "Compute 2 * 2.", "answer": "4", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/3", "prompt": "Compute 3 * 3.", "answer": "9", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/4", "prompt": "Compute 4 * 4.", "answer": "16", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/5", "prompt": "Compute 5 * 5.", "answer": "25", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/6", "prompt": "Compute 6 * 6.", "answer": "36", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/7", "prompt": "Compute 7 * 7.", "answer": "49", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/8", "prompt": "Compute 8 * 8.", "answer": "64", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/9", "prompt": "Compute 9 * 9.", "answer": "81", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/10", "prompt": "Compute 10 * 10.", "answer": "100", "domain": "math", "meta": {"source": "offline_fixture"}}
+{"benchmark": "math", "item_id": "MATH/11", "prompt": "Compute 11 * 11.", "answer": "121", "domain": "math", "meta": {"source": "offline_fixture"}}

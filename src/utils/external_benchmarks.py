@@ -373,10 +373,18 @@ def _grade_humaneval(item: BenchmarkItem, prediction: str) -> bool:
     if not test or not entry:
         return False
     pred_code = _extract_code(prediction)
-    # If prediction already contains a full `def entry(` we use it as-is,
-    # else we treat it as a body completion of the prompt signature.
+    # Always prepend the prompt's import/setup lines (everything before the
+    # first `def entry(`). Chat-tuned instruct models output a fresh function
+    # signature like `def foo(x: str) -> List[str]:` but usually drop the
+    # `from typing import List` that was in the prompt. Concatenating the
+    # prompt's preamble lines preserves those imports.
+    import re as _re
+    prompt_preamble = item.prompt
+    m = _re.search(rf"(?m)^\s*def\s+{_re.escape(entry)}\b", item.prompt)
+    if m:
+        prompt_preamble = item.prompt[: m.start()]
     if f"def {entry}" in pred_code:
-        program = pred_code
+        program = prompt_preamble + "\n" + pred_code
     else:
         program = item.prompt + pred_code
     source = program + "\n\n" + test + f"\n\ncheck({entry})\n"

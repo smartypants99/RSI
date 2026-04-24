@@ -145,7 +145,7 @@ class GeneratorConfig:
     # a no-op or (if a relaxed policy is re-enabled) an unwanted silent
     # gradient attenuation. At 1.0, relaxed-policy admits are trained at
     # full weight — consistent with opting into relaxation explicitly.
-    sample_quality_any_fail_weight: float = 1.0
+    sample_quality_any_fail_weight: float = 0.4
     # Continuous log-prob-of-gold score on non-code ground-truth items.
     # When True (default), DiagnosticsEngine._check_ground_truth_scored
     # blends the model's mean-per-token gold-prob into per_question['score']

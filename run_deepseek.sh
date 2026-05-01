@@ -51,7 +51,7 @@ exec python main.py \
     --consistency-samples 3 \
     --samples-per-weakness 100 \
     --consistency-threshold 0.34 \
-    --lora-rank 16 \
+    --lora-rank 32 \
     --learning-rate 8e-6 \
     --plateau-patience 8 \
     --heldout-repetitions 1 \

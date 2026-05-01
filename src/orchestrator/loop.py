@@ -1287,6 +1287,12 @@ class ImprovementLoop:
         before the fix); seeding ~10 real problems per cycle anchors the
         gradient on genuine code-distribution targets.
 
+        CRITICAL — anti-leakage: anchor eval picks the FIRST per_benchmark
+        items in stable_hash(ANCHOR_SEED:item_id) order. We take training
+        samples STRICTLY from the remainder (index >= anchor_per_bench), so
+        no item ever appears in both training and eval. Without this gate
+        we'd be training on the test set.
+
         Rotates a deterministic slice per cycle so the same N problems aren't
         seen every cycle (overfit risk).
 
@@ -1298,18 +1304,28 @@ class ImprovementLoop:
         ):
             return []
         try:
-            from ..utils.external_benchmarks import load_benchmark
+            from ..utils.external_benchmarks import (
+                load_benchmark, _stable_hash, ANCHOR_SEED,
+            )
             from ..generator.data_generator import TrainingSample
         except Exception:
             return []
+        # Per-bench anchor reserve = same N the anchor uses, computed from
+        # the orchestrator's anchor_eval_size split across the configured
+        # benchmarks. We take training items from index >= anchor_reserve.
+        ocfg = self.config.orchestrator
+        anchor_per_bench = max(
+            1,
+            int(getattr(ocfg, "anchor_eval_size", 200))
+            // max(1, len(getattr(ocfg, "anchor_eval_benchmarks", []) or ["humaneval"])),
+        )
         out: list = []
         for bench in ("humaneval", "mbpp"):
             try:
                 items = load_benchmark(
                     bench,
                     cache_dir=getattr(
-                        self.config.orchestrator,
-                        "anchor_eval_cache_dir",
+                        ocfg, "anchor_eval_cache_dir",
                         "outputs/external_benchmarks",
                     ),
                 )
@@ -1317,16 +1333,29 @@ class ImprovementLoop:
                 continue
             if not items:
                 continue
-            # Per-cycle pseudo-random sample: stable seeded shuffle so the
-            # same cycle on a re-run picks the same items, but consecutive
-            # cycles see disjoint random subsets rather than adjacent slices.
-            # Adjacent-slice rotation risked teaching the model a structural
-            # pattern of nearby task_ids; random sampling avoids that.
+            # Reproduce the EXACT hash order anchor uses so we can take the
+            # complement. Without this the train/anchor split could overlap.
+            sorted_items = sorted(
+                items,
+                key=lambda it: (
+                    _stable_hash(f"{ANCHOR_SEED}:{it.item_id}"), it.item_id,
+                ),
+            )
+            train_pool = sorted_items[anchor_per_bench:]
+            if not train_pool:
+                # Benchmark too small for split — skip rather than leak.
+                logger.warning(
+                    f"  real-bench mix: {bench} has only {len(items)} items, "
+                    f"anchor reserves {anchor_per_bench}; nothing left for "
+                    f"training, skipping this benchmark."
+                )
+                continue
+            # Per-cycle pseudo-random pick from the training-only partition.
             import random as _rng_mod
             rng = _rng_mod.Random(hash(("real_bench", bench, cycle)) & 0xFFFF_FFFF)
-            indices = list(range(len(items)))
+            indices = list(range(len(train_pool)))
             rng.shuffle(indices)
-            picks = [items[indices[k]] for k in range(min(n_per_bench, len(items)))]
+            picks = [train_pool[indices[k]] for k in range(min(n_per_bench, len(train_pool)))]
             for it in picks:
                 ans = (it.answer or "").strip()
                 prompt = it.prompt
@@ -1376,15 +1405,20 @@ class ImprovementLoop:
         best_cycle = getattr(self, "_best_checkpoint_cycle", None)
         if best_cycle is not None:
             cand = lw_root / f"lora_cycle_{int(best_cycle)}"
-            if (cand / "lora_weights.pt").exists():
+            if (cand / "lora_weights.pt").exists() and not (cand / ".reverted").exists():
                 return cand
-        # Fallback: highest-numbered cycle dir.
+        # Fallback: highest-numbered cycle dir that has weights AND was not
+        # marked .reverted (capture-alarm rejection). Walking high→low picks
+        # the latest GOOD adapter so cycles compound across non-confirmed
+        # promotions while still skipping known-bad weights.
         try:
             cycles = []
             for child in lw_root.iterdir():
                 if not child.is_dir() or not child.name.startswith("lora_cycle_"):
                     continue
                 if not (child / "lora_weights.pt").exists():
+                    continue
+                if (child / ".reverted").exists():
                     continue
                 try:
                     cycles.append((int(child.name.rsplit("_", 1)[-1]), child))
@@ -1397,10 +1431,34 @@ class ImprovementLoop:
             pass
         return None
 
+    def _budget_remaining(self) -> float:
+        """Seconds left in the configured per-cycle wall-clock budget.
+
+        Returns float('inf') when the budget knob is disabled. Negative
+        values mean the cycle has already overrun (callers should switch to
+        cheap-path code, e.g. quick anchor instead of full).
+        """
+        budget = float(getattr(
+            self.config.orchestrator, "cycle_wall_clock_budget_s", 0,
+        ) or 0)
+        if budget <= 0:
+            return float("inf")
+        start = getattr(self, "_cycle_clock_start", None)
+        if start is None:
+            return budget
+        import time as _t
+        return budget - (_t.time() - start)
+
     def _run_cycle(self, cycle: int) -> CycleResult:
         """Execute one full improvement cycle."""
         result = CycleResult(cycle)
         self._vllm_saved_this_cycle = None
+        # Wall-clock guardrail (task #25): every cycle aims to finish within
+        # `cycle_wall_clock_budget_s`. Doesn't hard-abort the cycle, but lets
+        # downstream phases query `_budget_remaining()` and elect cheap paths
+        # (quick anchor, fewer eval reps) when running long.
+        import time as _time_mod
+        self._cycle_clock_start = _time_mod.time()
 
         def _log_peak_memory(phase_name: str):
             if torch.cuda.is_available():
@@ -4000,7 +4058,35 @@ class ImprovementLoop:
                 )
                 ocfg = self.config.orchestrator
                 benchmarks = list(ocfg.anchor_eval_benchmarks)
-                per_bench = max(1, ocfg.anchor_eval_size // max(1, len(benchmarks)))
+                # Tiered anchor (task #22): the full 656-item run on bnb-4bit
+                # alone breaks the 20-min cycle ceiling. Quick anchor (default
+                # 80 items / 20 per bench) on every cycle; full anchor every
+                # `anchor_full_every_n_cycles` cycles to recalibrate. Quick
+                # gives statistical signal for the promotion gate without
+                # blowing the budget; full re-grounds the high-water mark.
+                _full_every = max(1, int(getattr(
+                    ocfg, "anchor_full_every_n_cycles", 5,
+                )))
+                _quick_size = max(1, int(getattr(
+                    ocfg, "anchor_quick_size", 80,
+                )))
+                _is_full_cycle = (cycle % _full_every == 0) or (cycle == 1)
+                # If the cycle is already running long, downgrade to quick
+                # anchor regardless of schedule. Threshold: 6 min remaining
+                # estimated cost of full anchor on bnb-4bit. Soft constraint.
+                _budget_left = self._budget_remaining()
+                if _budget_left < 360.0 and _is_full_cycle:
+                    logger.warning(
+                        f"  anchor: cycle has only {_budget_left:.0f}s of budget "
+                        f"left; downgrading from FULL to QUICK to keep cycle <20m"
+                    )
+                    _is_full_cycle = False
+                _eff_size = ocfg.anchor_eval_size if _is_full_cycle else _quick_size
+                per_bench = max(1, _eff_size // max(1, len(benchmarks)))
+                logger.info(
+                    f"  anchor eval mode: {'FULL' if _is_full_cycle else 'QUICK'} "
+                    f"({per_bench}/bench × {len(benchmarks)} = {per_bench * len(benchmarks)} items)"
+                )
 
                 # max_new_tokens=1024 so chat-tuned models have room for
                 # "here's the solution…\n```python\n<full function>\n```\n"
@@ -4227,6 +4313,22 @@ class ImprovementLoop:
                                 "  capture-alarm revert failed (%s): %s",
                                 type(_rexc).__name__, _rexc,
                             )
+                        # Mark this cycle's adapter as REVERTED so multi-cycle
+                        # persistence (_lora_resume_path) skips it on the next
+                        # cycle's training-init walk. Without this marker the
+                        # next cycle would happily resume from a known-bad
+                        # adapter and propagate the verifier-capture pattern.
+                        try:
+                            _adir = (
+                                self.config.orchestrator.output_dir
+                                / "lora_weights" / f"lora_cycle_{cycle}"
+                            )
+                            if _adir.exists():
+                                (_adir / ".reverted").write_text(
+                                    f"capture_alarm internal=+{delta:.4f}\n"
+                                )
+                        except Exception:
+                            pass
                         self._bank_admitted_as_adversarial(
                             cycle, result,
                             reason=(

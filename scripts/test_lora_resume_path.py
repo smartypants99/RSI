@@ -72,7 +72,24 @@ def main() -> None:
         assert loop._lora_resume_path() is None, \
             "expected None when persistence disabled"
 
-    print("PASS — _lora_resume_path: 5/5 cases")
+        # 6. .reverted marker on a cycle skips it (capture-alarm rejection)
+        (tmp / "lora_weights" / "lora_cycle_3" / ".reverted").write_text("alarmed")
+        loop = make_loop(tmp, best_cycle=None)
+        got = loop._lora_resume_path()
+        # cycle 3 has .reverted, cycle 4 has no .pt (case 4) → fallback cycle_2
+        assert got is not None and got.name == "lora_cycle_2", \
+            f"expected cycle_2 with cycle_3 reverted, got {got}"
+
+        # 7. .reverted on the BEST cycle is also skipped
+        (tmp / "lora_weights" / "lora_cycle_2" / ".reverted").write_text("alarmed")
+        loop = make_loop(tmp, best_cycle=2)
+        got = loop._lora_resume_path()
+        # cycle 2 (best) is .reverted; cycle 3 also reverted; cycle 4 has no
+        # .pt → cycle 1
+        assert got is not None and got.name == "lora_cycle_1", \
+            f"expected cycle_1 fallback when best is reverted, got {got}"
+
+    print("PASS — _lora_resume_path: 7/7 cases")
 
 
 if __name__ == "__main__":

@@ -827,7 +827,10 @@ class OrchestratorConfig:
     # and the final cycle, always run anchor. Default True (safe: identity
     # result is redundant information).
     anchor_skip_when_not_trained: bool = True
-    anchor_eval_size: int = 656  # 164 HumanEval + 50 each from mbpp/gsm8k/math
+    # 200 / 4 = 50 per bench. HumanEval has 164 total → 50 anchor + 114
+    # training-pool. Going higher (e.g. 656) would exhaust HumanEval and
+    # leave zero training-pool items, breaking the anti-leakage split.
+    anchor_eval_size: int = 200
     verifier_capture_alarm_threshold: float = 0.01
 
     # Mix real HumanEval+MBPP problems into the per-cycle training pool.
@@ -836,7 +839,11 @@ class OrchestratorConfig:
     # Anchor on real ground-truth solutions: ~10 real problems/cycle is small
     # vs ~12 verified synth, but with 100% clean signal vs ~70% noisy.
     mix_real_benchmarks_in_training: bool = True
-    real_benchmark_samples_per_cycle: int = 5  # per benchmark; 5 + 5 = 10 total
+    # 20 per benchmark × 2 = 40 real samples per cycle. Synth contributes
+    # ~12 verified (1-pass/1-fail noisy at 70%); real samples thus dominate
+    # 40:12 with 100% clean signal. Anti-leakage: pulled strictly from the
+    # train partition (index >= anchor_per_bench in stable hash order).
+    real_benchmark_samples_per_cycle: int = 20
     use_lora_adapter_persistence: bool = True  # multi-cycle compounding
 
     # Anchor co-primary promotion (task #14). Block promotion when ground-truth
@@ -845,6 +852,19 @@ class OrchestratorConfig:
     # internal pattern (cycle 2 +7.5% internal / -2% anchor) without requiring
     # the destructive capture-alarm revert.
     anchor_co_primary_promote: bool = True
+
+    # Tiered anchor schedule (task #22). Full 656-item anchor blew the
+    # 20-min cycle ceiling on bnb-4bit. Quick anchor (~80 items) on every
+    # cycle for the promotion gate; full anchor every N cycles to
+    # re-calibrate the high-water mark.
+    anchor_quick_size: int = 80
+    anchor_full_every_n_cycles: int = 5
+
+    # Wall-clock budget per cycle (task #25). 1200s = 20 min. Cycles that
+    # blow past this don't hard-abort (would lose training mid-step), but
+    # downstream phases consult `_budget_remaining()` and elect cheap paths
+    # (quick anchor instead of full, fewer eval reps). Set 0 to disable.
+    cycle_wall_clock_budget_s: int = 1200
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
         "humaneval", "mbpp", "gsm8k", "math",
     ])

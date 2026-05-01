@@ -505,13 +505,40 @@ class VLLMModelLoader:
         ):
             return prompt
         try:
+            messages = []
+            sys_msg = self._chat_system_prompt()
+            if sys_msg:
+                messages.append({"role": "system", "content": sys_msg})
+            messages.append({"role": "user", "content": prompt})
             return tok.apply_chat_template(
-                [{"role": "user", "content": prompt}],
-                tokenize=False,
-                add_generation_prompt=True,
+                messages, tokenize=False, add_generation_prompt=True,
             )
         except Exception:
             return prompt
+
+    def _chat_system_prompt(self) -> str:
+        """Concise system message biasing the model toward graded-output
+        format (single ```python``` fence, no preamble, no post-script).
+
+        Cuts anchor-eval throughput cost (less explanation tokens) and
+        increases grader pass rate (extractor finds the fence cleanly).
+        Configurable via VLLMConfig.chat_system_prompt; empty string
+        disables — falls back to plain user-only template.
+        """
+        try:
+            cfg_msg = getattr(self, "chat_system_prompt", None)
+            if cfg_msg is not None:
+                return str(cfg_msg)
+        except Exception:
+            pass
+        return (
+            "You are a precise Python expert. When asked to write code, "
+            "output ONLY the requested function inside a single ```python "
+            "...``` fenced block — no preamble, no commentary, no "
+            "post-explanation. When asked a math problem, show concise "
+            "step-by-step reasoning then give the final answer alone on the "
+            "last line, prefixed with `Answer: `."
+        )
 
     def _hf_generate_batch(self, prompts, max_new_tokens=2048, temperature=0.7, top_p=0.9):
         """HF generate_batch fallback."""

@@ -400,7 +400,12 @@ class TrainerConfig:
     # "loss=0.01 on 3 identical assert strings" failure modes.
     skip_if_initial_loss_below: float = 0.15
     warmup_ratio: float = 0.1
-    weight_decay: float = 0.01
+    # weight_decay=0.0 for LoRA-only fine-tuning (standard practice). Decay
+    # pulls A/B toward zero, which UNlearns the learned delta — the opposite
+    # of what we want when each cycle's LoRA encodes the gain we're trying
+    # to compound. 0.01 was fine for full fine-tuning but actively works
+    # against multi-cycle LoRA persistence.
+    weight_decay: float = 0.0
     # max_grad_norm tightened 1.0 → 0.3 after run-10. With the old value,
     # a single noisy batch could produce a >1.0 grad norm whose clipped-to-1.0
     # update still moved weights more than ~1% per step given LoRA+'s

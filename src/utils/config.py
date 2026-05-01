@@ -870,6 +870,13 @@ class OrchestratorConfig:
     # downstream phases consult `_budget_remaining()` and elect cheap paths
     # (quick anchor instead of full, fewer eval reps). Set 0 to disable.
     cycle_wall_clock_budget_s: int = 1200
+
+    # Foom-mode resume strategy: latest non-reverted cycle's adapter (every
+    # cycle compounds), else confirmed-best (only confirmed-best cycles
+    # contribute). Latest-good is faster compounding but relies on the
+    # capture-alarm `.reverted` marker + held-out regression-revert to keep
+    # drift in check. Default True for >1%/c foom contract.
+    use_latest_good_for_resume: bool = True
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
         "humaneval", "mbpp", "gsm8k", "math",
     ])

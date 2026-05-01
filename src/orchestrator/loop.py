@@ -1401,16 +1401,8 @@ class ImprovementLoop:
             return None
         if not lw_root.exists() or not lw_root.is_dir():
             return None
-        # Preferred: the confirmed-best cycle's adapter.
-        best_cycle = getattr(self, "_best_checkpoint_cycle", None)
-        if best_cycle is not None:
-            cand = lw_root / f"lora_cycle_{int(best_cycle)}"
-            if (cand / "lora_weights.pt").exists() and not (cand / ".reverted").exists():
-                return cand
-        # Fallback: highest-numbered cycle dir that has weights AND was not
-        # marked .reverted (capture-alarm rejection). Walking high→low picks
-        # the latest GOOD adapter so cycles compound across non-confirmed
-        # promotions while still skipping known-bad weights.
+        # Walk all cycle dirs; collect those with weights AND no `.reverted`
+        # marker (capture-alarm did not flag them).
         try:
             cycles = []
             for child in lw_root.iterdir():
@@ -1424,12 +1416,31 @@ class ImprovementLoop:
                     cycles.append((int(child.name.rsplit("_", 1)[-1]), child))
                 except ValueError:
                     continue
-            if cycles:
-                cycles.sort(key=lambda t: t[0])
-                return cycles[-1][1]
         except OSError:
-            pass
-        return None
+            cycles = []
+        if not cycles:
+            return None
+        cycles.sort(key=lambda t: t[0])
+        # Foom-mode default: prefer the LATEST non-reverted adapter so each
+        # cycle's training compounds onto the previous, not just at
+        # confirmed-best boundaries (gains every cycle, not every Nth). The
+        # confirmed-best is still the EVAL reference (held_out_high_water,
+        # anchor co-primary gate), so drift gets caught — capture-alarm or
+        # regression-revert will mark a bad cycle's adapter `.reverted` and
+        # subsequent cycles will skip it on the walk above. Set
+        # use_latest_good_for_resume=False to fall back to confirmed-best-first
+        # behavior (stable but slower compounding).
+        if bool(getattr(
+            self.config.orchestrator, "use_latest_good_for_resume", True,
+        )):
+            return cycles[-1][1]
+        # Confirmed-best-first fallback: prefer the best, else latest good.
+        best_cycle = getattr(self, "_best_checkpoint_cycle", None)
+        if best_cycle is not None:
+            for cyc_num, cand in cycles:
+                if cyc_num == int(best_cycle):
+                    return cand
+        return cycles[-1][1]
 
     def _budget_remaining(self) -> float:
         """Seconds left in the configured per-cycle wall-clock budget.

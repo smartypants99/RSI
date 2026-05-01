@@ -17,16 +17,18 @@ from src.orchestrator.loop import ImprovementLoop  # noqa: E402
 
 
 class _Stub:
-    def __init__(self, output_dir, use_persistence=True):
+    def __init__(self, output_dir, use_persistence=True, latest_good=True):
         self.orchestrator = type("O", (), {
             "output_dir": output_dir,
             "use_lora_adapter_persistence": use_persistence,
+            "use_latest_good_for_resume": latest_good,
         })()
 
 
-def make_loop(tmpdir: pathlib.Path, *, persistence=True, best_cycle=None):
+def make_loop(tmpdir: pathlib.Path, *, persistence=True, best_cycle=None,
+              latest_good=True):
     loop = ImprovementLoop.__new__(ImprovementLoop)
-    loop.config = _Stub(tmpdir, use_persistence=persistence)
+    loop.config = _Stub(tmpdir, use_persistence=persistence, latest_good=latest_good)
     loop._best_checkpoint_cycle = best_cycle
     return loop
 
@@ -46,24 +48,32 @@ def main() -> None:
         loop = make_loop(tmp)
         assert loop._lora_resume_path() is None, "expected None on empty dir"
 
-        # 2. Best cycle present
+        # 2. With latest-good-for-resume=True (foom default), takes the
+        #    highest cycle dir regardless of best_checkpoint setting.
         make_adapter(tmp, 1)
         make_adapter(tmp, 2)
         make_adapter(tmp, 3)
         loop = make_loop(tmp, best_cycle=2)
         got = loop._lora_resume_path()
-        assert got is not None and got.name == "lora_cycle_2", f"expected cycle_2, got {got}"
+        assert got is not None and got.name == "lora_cycle_3", \
+            f"expected cycle_3 (latest-good), got {got}"
 
-        # 3. No best → highest-numbered fallback
+        # 2b. With latest-good=False (legacy), picks confirmed-best.
+        loop = make_loop(tmp, best_cycle=2, latest_good=False)
+        got = loop._lora_resume_path()
+        assert got is not None and got.name == "lora_cycle_2", \
+            f"expected cycle_2 (confirmed-best legacy), got {got}"
+
+        # 3. No best → highest-numbered fallback (same in both modes)
         loop = make_loop(tmp, best_cycle=None)
         got = loop._lora_resume_path()
         assert got is not None and got.name == "lora_cycle_3", f"expected cycle_3, got {got}"
 
-        # 4. Skip dirs without lora_weights.pt
+        # 4. Skip dirs without lora_weights.pt — cycle_4 has no pt
         make_adapter(tmp, 4, with_pt=False)
         loop = make_loop(tmp, best_cycle=4)
         got = loop._lora_resume_path()
-        # cycle 4 has no .pt → falls back to highest valid (cycle_3)
+        # cycle 4 has no .pt; latest-good walks down to cycle_3
         assert got is not None and got.name == "lora_cycle_3", \
             f"expected cycle_3 fallback, got {got}"
 
@@ -76,20 +86,18 @@ def main() -> None:
         (tmp / "lora_weights" / "lora_cycle_3" / ".reverted").write_text("alarmed")
         loop = make_loop(tmp, best_cycle=None)
         got = loop._lora_resume_path()
-        # cycle 3 has .reverted, cycle 4 has no .pt (case 4) → fallback cycle_2
+        # cycle 3 has .reverted, cycle 4 has no .pt → fallback cycle_2
         assert got is not None and got.name == "lora_cycle_2", \
             f"expected cycle_2 with cycle_3 reverted, got {got}"
 
-        # 7. .reverted on the BEST cycle is also skipped
+        # 7. All non-reverted cycles run dry → None
         (tmp / "lora_weights" / "lora_cycle_2" / ".reverted").write_text("alarmed")
+        (tmp / "lora_weights" / "lora_cycle_1" / ".reverted").write_text("alarmed")
         loop = make_loop(tmp, best_cycle=2)
         got = loop._lora_resume_path()
-        # cycle 2 (best) is .reverted; cycle 3 also reverted; cycle 4 has no
-        # .pt → cycle 1
-        assert got is not None and got.name == "lora_cycle_1", \
-            f"expected cycle_1 fallback when best is reverted, got {got}"
+        assert got is None, f"expected None when all reverted, got {got}"
 
-    print("PASS — _lora_resume_path: 7/7 cases")
+    print("PASS — _lora_resume_path: 8/8 cases")
 
 
 if __name__ == "__main__":

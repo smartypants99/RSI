@@ -1247,6 +1247,31 @@ class TaskSynthesizer:
         """
         self._frontier_skill = str(skill_pair or "")
 
+    def add_failure_inspirations(self, prompts: list[str]) -> None:
+        """Extend the failure-seeded inspiration bank used by
+        propose_batch_code. Auto-curriculum hook: orchestrator calls this
+        with the prompts of items the model just failed on the anchor
+        partition, so the proposer generates new synth tasks similar in
+        spirit (without copying the items themselves — we're reading the
+        prompt text only, not the canonical solutions). Bounded to 32 to
+        keep proposer prompts under model context.
+        """
+        if not prompts:
+            return
+        seen = set(self._failed_diag_questions)
+        added = 0
+        for p in prompts:
+            if not p or p in seen:
+                continue
+            self._failed_diag_questions.append(p)
+            seen.add(p)
+            added += 1
+            if len(self._failed_diag_questions) >= 32:
+                break
+        # Trim to most-recent 32 (FIFO: drop oldest if we exceeded).
+        if len(self._failed_diag_questions) > 32:
+            self._failed_diag_questions = self._failed_diag_questions[-32:]
+
     def set_difficulty_floor(self, floor: Optional[float]) -> None:
         """Override the minimum self-reported DIFFICULTY: a proposal must
         declare. None restores the module-default floor.

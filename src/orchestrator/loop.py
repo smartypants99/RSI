@@ -1278,6 +1278,26 @@ class ImprovementLoop:
                 break
         return None
 
+    def _rolling_anchor(self, k: int = 3) -> float | None:
+        """Mean anchor score of the last `k` cycles whose anchor_score is set
+        AND whose cycle didn't fire capture-alarm. Returns None if fewer than
+        2 valid anchors. Used by the rolling-K promotion gate to suppress
+        single-cycle noise (quick-anchor 80-item N has ~5% per-item noise).
+        """
+        scores: list[float] = []
+        for r in reversed(self.history):
+            if getattr(r, "verifier_capture_alarm", False):
+                continue
+            a = getattr(r, "anchor_score", None)
+            if a is None:
+                continue
+            scores.append(float(a))
+            if len(scores) >= k:
+                break
+        if len(scores) < 2:
+            return None
+        return sum(scores) / len(scores)
+
     def _load_real_benchmark_training_samples(
         self, cycle: int, n_per_bench: int = 5,
     ) -> list:
@@ -1342,6 +1362,7 @@ class ImprovementLoop:
                 ),
             )
             train_pool = sorted_items[anchor_per_bench:]
+            anchor_pool = sorted_items[:anchor_per_bench]
             if not train_pool:
                 # Benchmark too small for split — skip rather than leak.
                 logger.warning(
@@ -1351,11 +1372,20 @@ class ImprovementLoop:
                 )
                 continue
             # Per-cycle pseudo-random pick from the training-only partition.
+            # Auto-curriculum signal flows via _failed_diag_questions (used
+            # by the failure-seeded proposer prompt) — populated by
+            # `_propagate_anchor_failures_to_proposer` after each anchor
+            # eval. We do NOT inject anchor pool items into training here:
+            # that would be test-set memorization (the model learns the
+            # exact answer to item X, then anchor's grader trivially passes
+            # X next cycle — fake +%). Train pool stays strictly disjoint
+            # from anchor pool.
             import random as _rng_mod
             rng = _rng_mod.Random(hash(("real_bench", bench, cycle)) & 0xFFFF_FFFF)
             indices = list(range(len(train_pool)))
             rng.shuffle(indices)
             picks = [train_pool[indices[k]] for k in range(min(n_per_bench, len(train_pool)))]
+            del anchor_pool  # used only for the leakage-guard split above
             for it in picks:
                 ans = (it.answer or "").strip()
                 prompt = it.prompt
@@ -4128,6 +4158,73 @@ class ImprovementLoop:
                     summary.get("per_benchmark_distinct", {}),
                     summary.get("per_benchmark_offline", {}),
                 )
+                # Auto-curriculum signal (#27, #31): persist per-item pass/
+                # fail so the next cycle's proposer can use failed-item
+                # PROMPTS as failure-seed inspiration for new synth tasks.
+                # NOT used as direct training data on the failed items
+                # themselves — that would memorize the test set.
+                try:
+                    _afile = (
+                        self.config.orchestrator.output_dir / "anchor_failures.jsonl"
+                    )
+                    _afile.parent.mkdir(parents=True, exist_ok=True)
+                    with _afile.open("a") as _fh:
+                        for r in (summary.get("per_item_results") or []):
+                            _fh.write(json.dumps({
+                                "cycle": cycle,
+                                "benchmark": r.get("benchmark"),
+                                "item_id": r.get("item_id"),
+                                "passed": bool(r.get("passed")),
+                                "ts": int(time.time()),
+                            }) + "\n")
+                except Exception as _exc:
+                    logger.debug(
+                        "anchor per-item log failed (%s): %s",
+                        type(_exc).__name__, _exc,
+                    )
+                # Feed failed-item PROMPTS into the proposer's failure-
+                # seeded inspiration bank so cycle N+1's proposer generates
+                # synth tasks targeting the model's just-revealed weak
+                # spots. Pure inspiration — the proposer creates DIFFERENT
+                # problems in the same spirit. No leakage of canonical
+                # solutions or item ids into training.
+                try:
+                    from ..utils.external_benchmarks import load_benchmark as _load_bench
+                    _failed_prompts: list[str] = []
+                    _bench_cache: dict[str, list] = {}
+                    for r in (summary.get("per_item_results") or []):
+                        if r.get("passed"):
+                            continue
+                        # Look up the original prompt by (benchmark, item_id)
+                        # — load_benchmark caches on disk; we cache per-call
+                        # in a dict so each benchmark fetches once total.
+                        b = r.get("benchmark", "")
+                        if b not in _bench_cache:
+                            try:
+                                _bench_cache[b] = _load_bench(
+                                    b, cache_dir=ocfg.anchor_eval_cache_dir,
+                                )
+                            except Exception:
+                                _bench_cache[b] = []
+                        _from_cache = _bench_cache[b]
+                        for it in _from_cache:
+                            if it.item_id == r["item_id"]:
+                                if it.prompt:
+                                    _failed_prompts.append(it.prompt)
+                                break
+                    if _failed_prompts and hasattr(
+                        self.generator, "add_failure_inspirations"
+                    ):
+                        self.generator.add_failure_inspirations(_failed_prompts)
+                        logger.info(
+                            f"  auto-curriculum: seeded proposer with "
+                            f"{len(_failed_prompts)} failed-anchor prompts"
+                        )
+                except Exception as _exc:
+                    logger.debug(
+                        "auto-curriculum seed failed (%s): %s",
+                        type(_exc).__name__, _exc,
+                    )
                 # Task #9: per-benchmark suspicious-clean alarms (degenerate
                 # predictions or offline-fixture-only score). Logged as WARN
                 # inside run_anchor_eval; surface here so cycle_metrics JSON
@@ -4889,7 +4986,18 @@ class ImprovementLoop:
         anchor_tol = 2.0 * float(getattr(
             self.config.orchestrator, "verifier_capture_alarm_threshold", 0.01,
         ))
-        cur_anchor = getattr(result, "anchor_score", None)
+        # Use rolling-3 anchor average when available (smooths quick-anchor
+        # noise: 80-item N has per-cycle σ ~5%, but rolling-3 σ ~3%). Falls
+        # back to instant single-cycle anchor when rolling not yet possible.
+        rolling_k = int(getattr(
+            self.config.orchestrator, "anchor_rolling_window", 3,
+        ) or 1)
+        cur_rolling_anchor = self._rolling_anchor(k=rolling_k)
+        cur_anchor = (
+            cur_rolling_anchor
+            if cur_rolling_anchor is not None
+            else getattr(result, "anchor_score", None)
+        )
         best_anchor = self._best_confirmed_anchor()
         anchor_not_regressed = True
         anchor_block_reason = ""
@@ -4901,7 +5009,7 @@ class ImprovementLoop:
         ):
             anchor_not_regressed = False
             anchor_block_reason = (
-                f"anchor regressed: {cur_anchor:.4f} < "
+                f"anchor regressed (rolling-{rolling_k}): {cur_anchor:.4f} < "
                 f"{best_anchor:.4f} - {anchor_tol:.4f}"
             )
 

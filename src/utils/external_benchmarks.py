@@ -556,12 +556,18 @@ def run_anchor_eval(
                 logger.debug("model_fn raised on item %s: %s", it.item_id, e)
                 preds.append("")
 
+    per_item_results: list[dict] = []
     for it, pred in zip(sample, preds):
         ok = bool(grade(it, pred))
         per_bench_total[it.benchmark] = per_bench_total.get(it.benchmark, 0) + 1
         if ok:
             correct += 1
             per_bench_correct[it.benchmark] = per_bench_correct.get(it.benchmark, 0) + 1
+        per_item_results.append({
+            "benchmark": it.benchmark,
+            "item_id": it.item_id,
+            "passed": ok,
+        })
     n = len(sample)
     anchor_score = (correct / n) if n else 0.0
     per_bench = {
@@ -635,6 +641,7 @@ def run_anchor_eval(
         "per_benchmark_distinct": per_bench_distinct,
         "per_benchmark_offline": per_bench_offline,
         "per_benchmark_suspect": per_bench_suspect,
+        "per_item_results": per_item_results,
         "n": n,
         "timestamp": time.time(),
     }

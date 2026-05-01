@@ -877,6 +877,12 @@ class OrchestratorConfig:
     # capture-alarm `.reverted` marker + held-out regression-revert to keep
     # drift in check. Default True for >1%/c foom contract.
     use_latest_good_for_resume: bool = True
+
+    # Rolling-K anchor average for the promotion gate (#33). Single-cycle
+    # quick anchor (80 items) has ~5% per-item noise → unreliable for
+    # detecting <1% improvements. K=3 averages last 3 valid cycles, σ ~3%,
+    # which catches real >1%/c trends while suppressing flip-flop on noise.
+    anchor_rolling_window: int = 3
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
         "humaneval", "mbpp", "gsm8k", "math",
     ])

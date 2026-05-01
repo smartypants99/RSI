@@ -3051,6 +3051,16 @@ Now produce ONE DIFFERENT problem in the same format. Rules:
   fail on your reference, either rewrite the reference or rewrite the
   test. A reference that doesn't pass its own tests is useless and will
   be rejected by the property verifier.
+- DOUBLE-CHECK PROTOCOL (mandatory before emitting):
+    1. Read your reference. Run each TEST mentally — input → output.
+    2. If ANY test result doesn't match your reference's output, REWRITE
+       (don't silence). The verifier independently runs reference vs each
+       test. Empirical: ~70% of past proposals had reference-disagrees-
+       with-own-tests, polluting training. We reject those now.
+    3. Check edge cases: empty input, single-element input, max bound,
+       integer overflow boundaries — does the reference handle them?
+    4. Check return TYPE matches each test's expected: if test asserts
+       `solve(...) == [1,2,3]` your reference must return `list`, not tuple.
 - Prefer writing SIMPLE, CONCRETE test cases where you can compute the
   expected output by hand in 10 seconds. Do NOT write tests where you're
   unsure what the reference returns. "solve([1,2,3]) == 4" must be a

@@ -191,17 +191,31 @@ def _try_load_from_datasets(benchmark: str) -> Optional[list[BenchmarkItem]]:
             ]
         if benchmark == "mbpp":
             ds = load_dataset("mbpp", split="test")
-            return [
-                BenchmarkItem(
+            out_items = []
+            for i, r in enumerate(ds):
+                text = str(r.get("text", ""))
+                test_list = list(r.get("test_list", []) or [])
+                test_setup = str(r.get("test_setup_code", "") or "")
+                # Standard MBPP eval prompt format includes the first test so
+                # the model can infer the canonical function name. Without it
+                # the model improvises a name → assert fails. This is the
+                # documented HF/lm-eval-harness format.
+                prompt_parts = [text, "Your code should pass these tests:"]
+                if test_list:
+                    prompt_parts.append("\n".join(test_list))
+                full_prompt = "\n".join(prompt_parts).strip()
+                out_items.append(BenchmarkItem(
                     benchmark="mbpp",
                     item_id=str(r.get("task_id", i)),
-                    prompt=str(r.get("text", "")),
+                    prompt=full_prompt,
                     answer=str(r.get("code", "")),
                     domain="code",
-                    meta={"test_list": r.get("test_list", [])},
-                )
-                for i, r in enumerate(ds)
-            ]
+                    meta={
+                        "test_list": test_list,
+                        "test_setup_code": test_setup,
+                    },
+                ))
+            return out_items
         if benchmark == "gsm8k":
             ds = load_dataset("gsm8k", "main", split="test")
             return [
@@ -215,18 +229,58 @@ def _try_load_from_datasets(benchmark: str) -> Optional[list[BenchmarkItem]]:
                 for i, r in enumerate(ds)
             ]
         if benchmark == "math":
-            ds = load_dataset("hendrycks/competition_math", split="test")
-            return [
-                BenchmarkItem(
+            # `hendrycks/competition_math` was removed from the Hub. Try
+            # known mirrors in priority order; first one that loads wins.
+            _math_repos = (
+                ("HuggingFaceH4/MATH-500", "test", "problem", "solution",
+                 "answer"),
+                ("lighteval/MATH", "test", "problem", "solution", None),
+                ("EleutherAI/hendrycks_math", None, "problem", "solution",
+                 None),
+            )
+            ds = None
+            chosen_keys: tuple[str, str, str | None] = ("problem", "solution", None)
+            for repo_id, split, prob_k, sol_k, ans_k in _math_repos:
+                try:
+                    if split:
+                        ds = load_dataset(repo_id, split=split)
+                    else:
+                        ds = load_dataset(repo_id)
+                        ds = ds.get("test") or ds.get("train") or next(iter(ds.values()))
+                    chosen_keys = (prob_k, sol_k, ans_k)
+                    logger.info("MATH benchmark loaded from %s", repo_id)
+                    break
+                except Exception as e:
+                    logger.debug("MATH load %s failed: %s", repo_id, e)
+                    ds = None
+            if ds is None:
+                return None
+            prob_key, sol_key, ans_key = chosen_keys
+            out = []
+            for i, r in enumerate(ds):
+                prob = str(r.get(prob_key, "") or "")
+                sol = str(r.get(sol_key, "") or "")
+                # Some mirrors (MATH-500) ship a separate clean `answer` field;
+                # prefer it when present so the grader gets a parseable target
+                # instead of a multi-paragraph LaTeX solution.
+                if ans_key and r.get(ans_key):
+                    ans = str(r.get(ans_key))
+                else:
+                    ans = sol
+                if not prob:
+                    continue
+                out.append(BenchmarkItem(
                     benchmark="math",
                     item_id=f"math/{i}",
-                    prompt=str(r.get("problem", "")),
-                    answer=str(r.get("solution", "")),
+                    prompt=prob,
+                    answer=ans,
                     domain="math",
-                    meta={"level": r.get("level", ""), "type": r.get("type", "")},
-                )
-                for i, r in enumerate(ds)
-            ]
+                    meta={
+                        "level": r.get("level", ""),
+                        "type": r.get("type", r.get("subject", "")),
+                    },
+                ))
+            return out
     except Exception as e:
         logger.warning("datasets load failed for %s (%s); falling back to offline fixture", benchmark, e)
         return None
@@ -404,15 +458,24 @@ def _grade_humaneval(item: BenchmarkItem, prediction: str) -> bool:
 
 
 def _grade_mbpp(item: BenchmarkItem, prediction: str) -> bool:
-    """MBPP grader: execute prediction's code, then run each assert in test_list."""
+    """MBPP grader: execute prediction's code, then run each assert in test_list.
+
+    Includes test_setup_code (imports the assert lines depend on) so that e.g.
+    `assert math.isclose(foo(...), ...)` doesn't NameError on `math`.
+    """
     tests = item.meta.get("test_list") or []
     if not tests:
         return False
     pred_code = _extract_code(prediction)
     if "def " not in pred_code:
         return False
+    setup = item.meta.get("test_setup_code") or ""
     asserts = "\n".join(tests)
-    source = pred_code + "\n\n" + asserts + "\n"
+    parts = [pred_code]
+    if setup.strip():
+        parts.append(setup)
+    parts.append(asserts)
+    source = "\n\n".join(parts) + "\n"
     try:
         from .sandbox import run_python_sandboxed
         ok, _tail = run_python_sandboxed(source, timeout_s=5, memory_mb=256)

@@ -49,7 +49,7 @@ exec python main.py \
     --synthesis-tasks-per-cycle 20 \
     --property-consensus-threshold 0.7 \
     --consistency-samples 3 \
-    --samples-per-weakness 60 \
+    --samples-per-weakness 100 \
     --consistency-threshold 0.34 \
     --lora-rank 16 \
     --learning-rate 8e-6 \

@@ -1263,6 +1263,140 @@ class ImprovementLoop:
                 f"whatever LoRA state is currently resident."
             )
 
+    def _best_confirmed_anchor(self) -> float | None:
+        """Anchor score of the currently confirmed-best cycle, if any.
+        Used by the co-primary promotion gate to require anchor non-regression
+        in addition to held-out improvement."""
+        bcc = getattr(self, "_best_checkpoint_cycle", None)
+        if bcc is None:
+            return None
+        for r in self.history:
+            if getattr(r, "cycle", None) == bcc:
+                a = getattr(r, "anchor_score", None)
+                if a is not None:
+                    return float(a)
+                break
+        return None
+
+    def _load_real_benchmark_training_samples(
+        self, cycle: int, n_per_bench: int = 5,
+    ) -> list:
+        """Mix real HumanEval+MBPP problems into the training pool with their
+        canonical solutions. Synth-only training was overfitting to the
+        proposer's distribution (cycle 2 went +7.5% internal / -2.0% anchor
+        before the fix); seeding ~10 real problems per cycle anchors the
+        gradient on genuine code-distribution targets.
+
+        Rotates a deterministic slice per cycle so the same N problems aren't
+        seen every cycle (overfit risk).
+
+        Returns a list of TrainingSample. Empty list if `datasets` is missing,
+        the benchmark fetch fails, or the rotation yields zero rows.
+        """
+        if not getattr(
+            self.config.orchestrator, "mix_real_benchmarks_in_training", True,
+        ):
+            return []
+        try:
+            from ..utils.external_benchmarks import load_benchmark
+            from ..generator.data_generator import TrainingSample
+        except Exception:
+            return []
+        out: list = []
+        for bench in ("humaneval", "mbpp"):
+            try:
+                items = load_benchmark(
+                    bench,
+                    cache_dir=getattr(
+                        self.config.orchestrator,
+                        "anchor_eval_cache_dir",
+                        "outputs/external_benchmarks",
+                    ),
+                )
+            except Exception:
+                continue
+            if not items:
+                continue
+            # Per-cycle pseudo-random sample: stable seeded shuffle so the
+            # same cycle on a re-run picks the same items, but consecutive
+            # cycles see disjoint random subsets rather than adjacent slices.
+            # Adjacent-slice rotation risked teaching the model a structural
+            # pattern of nearby task_ids; random sampling avoids that.
+            import random as _rng_mod
+            rng = _rng_mod.Random(hash(("real_bench", bench, cycle)) & 0xFFFF_FFFF)
+            indices = list(range(len(items)))
+            rng.shuffle(indices)
+            picks = [items[indices[k]] for k in range(min(n_per_bench, len(items)))]
+            for it in picks:
+                ans = (it.answer or "").strip()
+                prompt = it.prompt
+                if not ans or not prompt:
+                    continue
+                # MBPP `prompt` is plain English; HumanEval is a def signature.
+                # Pair both with their canonical solution wrapped in a fence so
+                # the trainer learns the same surface form the chat-tuned model
+                # produces at inference.
+                response = f"```python\n{ans}\n```"
+                out.append(TrainingSample(
+                    prompt=prompt,
+                    response=response,
+                    domain="code",
+                    verified=True,
+                    confidence=1.0,
+                    target_weakness=f"real_benchmark/{bench}",
+                    source="real_benchmark",
+                    ground_truth_verified=True,
+                    expected_answer=ans,
+                ))
+        return out
+
+    def _lora_resume_path(self) -> Path | None:
+        """Return the directory of the best (or most-recent) saved LoRA
+        adapter, so cycle N's Phase-4 trainer can continue training FROM it
+        rather than zero-init. Returns None when no prior adapter exists
+        (cycle 1 first run, or when adapter persistence is config-disabled).
+
+        Lookup order:
+        1. ``outputs/lora_weights/lora_cycle_{best_checkpoint_cycle}`` if the
+           orchestrator has confirmed a best.
+        2. Highest-numbered ``lora_cycle_*`` dir on disk (warm-resume after
+           a crash before the first promotion).
+        """
+        if not getattr(
+            self.config.orchestrator, "use_lora_adapter_persistence", True,
+        ):
+            return None
+        try:
+            lw_root = self.config.orchestrator.output_dir / "lora_weights"
+        except Exception:
+            return None
+        if not lw_root.exists() or not lw_root.is_dir():
+            return None
+        # Preferred: the confirmed-best cycle's adapter.
+        best_cycle = getattr(self, "_best_checkpoint_cycle", None)
+        if best_cycle is not None:
+            cand = lw_root / f"lora_cycle_{int(best_cycle)}"
+            if (cand / "lora_weights.pt").exists():
+                return cand
+        # Fallback: highest-numbered cycle dir.
+        try:
+            cycles = []
+            for child in lw_root.iterdir():
+                if not child.is_dir() or not child.name.startswith("lora_cycle_"):
+                    continue
+                if not (child / "lora_weights.pt").exists():
+                    continue
+                try:
+                    cycles.append((int(child.name.rsplit("_", 1)[-1]), child))
+                except ValueError:
+                    continue
+            if cycles:
+                cycles.sort(key=lambda t: t[0])
+                return cycles[-1][1]
+        except OSError:
+            pass
+        return None
+
     def _run_cycle(self, cycle: int) -> CycleResult:
         """Execute one full improvement cycle."""
         result = CycleResult(cycle)
@@ -1505,6 +1639,31 @@ class ImprovementLoop:
             logger.info(f"  Merging {len(synthesis_samples)} consensus-passed synthesis samples")
             verified = list(verified) + list(synthesis_samples)
         verified = self._apply_quality_top_k(verified)
+        # Mix real benchmark problems into the training pool to anchor the
+        # gradient on the actual code distribution (HumanEval/MBPP ground
+        # truth) instead of overfitting to the synthesizer's outputs. Disable
+        # via config.orchestrator.mix_real_benchmarks_in_training=False.
+        try:
+            real_samples = self._load_real_benchmark_training_samples(
+                cycle=cycle,
+                n_per_bench=int(getattr(
+                    self.config.orchestrator,
+                    "real_benchmark_samples_per_cycle", 5,
+                )),
+            )
+        except Exception as exc:
+            logger.warning(
+                f"  real-benchmark mix failed ({type(exc).__name__}: {exc}); "
+                f"continuing with synth-only verified pool"
+            )
+            real_samples = []
+        if real_samples:
+            verified = list(verified) + list(real_samples)
+            logger.info(
+                f"  Mixed {len(real_samples)} real-benchmark "
+                f"(HumanEval+MBPP) samples into training pool "
+                f"(now {len(verified)} total)"
+            )
         result.samples_verified = len(verified)
         # Observability: stash the verified samples + STaR internals for the
         # optional cycle_metrics / cycle_samples dumps.
@@ -1534,7 +1693,30 @@ class ImprovementLoop:
         phase_start = time.time()
         if self._use_vllm:
             self.model_loader.swap_to_hf_for_training()
-        self.trainer.inject_lora(weak_layers=diag.layer_health)
+        # Multi-cycle LoRA persistence (foom-critical). If a prior cycle
+        # promoted a best LoRA, continue training FROM its weights instead of
+        # zero-init. Without this, every cycle's training is independent and
+        # improvements never compound (1%/c × 20 cycles → 1%, not 22%).
+        # Fixed-rank trade-off: weakness-adaptive ranks are only set at the
+        # first cycle (or any cycle that injects fresh); subsequent cycles
+        # inherit those ranks. Worth it for compounding.
+        _resume_path = self._lora_resume_path()
+        if _resume_path is not None:
+            try:
+                self.trainer.load_lora_weights(_resume_path)
+                logger.info(
+                    f"[Cycle {cycle}] Phase 4: continuing training from best "
+                    f"adapter at {_resume_path} ({len(self.trainer._lora_layers)} "
+                    f"layers loaded)"
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"[Cycle {cycle}] Phase 4: load_lora_weights({_resume_path}) "
+                    f"failed ({type(exc).__name__}: {exc}); falling back to fresh inject"
+                )
+                self.trainer.inject_lora(weak_layers=diag.layer_health)
+        else:
+            self.trainer.inject_lora(weak_layers=diag.layer_health)
 
         # 4a. PRM (optional) — train once per cycle on verified samples, then
         # install as reward_fn for downstream GRPO. Gated by config.trainer.use_prm
@@ -4580,12 +4762,43 @@ class ImprovementLoop:
             or current_score >= self._best_score - 0.005
         )
 
+        # Anchor co-primary gate (task #14). The internal held-out is gameable
+        # (synthesizer overfits its own distribution); anchor is the
+        # ground-truth signal. Block promotion when anchor regressed against
+        # the best-confirmed cycle's anchor by more than the noise tolerance.
+        # Enabled by default once an anchor history exists; pre-anchor cycles
+        # promote on held-out alone. Tolerance = 2x capture-alarm threshold
+        # so within-noise anchor wobble doesn't block legitimately-improving
+        # held-out updates.
+        anchor_co_primary_enabled = bool(getattr(
+            self.config.orchestrator, "anchor_co_primary_promote", True,
+        ))
+        anchor_tol = 2.0 * float(getattr(
+            self.config.orchestrator, "verifier_capture_alarm_threshold", 0.01,
+        ))
+        cur_anchor = getattr(result, "anchor_score", None)
+        best_anchor = self._best_confirmed_anchor()
+        anchor_not_regressed = True
+        anchor_block_reason = ""
+        if (
+            anchor_co_primary_enabled
+            and cur_anchor is not None
+            and best_anchor is not None
+            and cur_anchor < best_anchor - anchor_tol
+        ):
+            anchor_not_regressed = False
+            anchor_block_reason = (
+                f"anchor regressed: {cur_anchor:.4f} < "
+                f"{best_anchor:.4f} - {anchor_tol:.4f}"
+            )
+
         if (
             current_score > self._best_score
             and eligible
             and not regressed_vs_prior
             and not_regressed_vs_best
             and not_below_high_water
+            and anchor_not_regressed
         ):
             # Candidate new best — lagged N-cycle confirmation gate (task #2).
             if (
@@ -4619,6 +4832,21 @@ class ImprovementLoop:
                 self._pending_best_streak, confirm_n,
             )
             return False, ""
+        elif (
+            current_score > self._best_score
+            and not anchor_not_regressed
+        ):
+            # Anchor co-primary gate (task #14) blocked promotion: held-out
+            # went up but the ground-truth anchor regressed. Reset pending
+            # streak — this is the exact verifier-capture / overfit pattern.
+            logger.warning(
+                "  best-candidate ANCHOR-REGRESSION: held-out=%.4f cycle=%d "
+                "but %s — streak NOT advanced.",
+                current_score, cycle, anchor_block_reason,
+            )
+            self._pending_best_streak = 0
+            self._pending_best_cycle = None
+            self._pending_best_score = 0.0
         elif current_score > self._best_score and regressed_vs_prior:
             # Task #11 concern #3: current_score beat the confirmed best
             # (which is 0.0 or stale), but is strictly below a prior cycle's

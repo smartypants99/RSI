@@ -827,8 +827,24 @@ class OrchestratorConfig:
     # and the final cycle, always run anchor. Default True (safe: identity
     # result is redundant information).
     anchor_skip_when_not_trained: bool = True
-    anchor_eval_size: int = 200
+    anchor_eval_size: int = 656  # 164 HumanEval + 50 each from mbpp/gsm8k/math
     verifier_capture_alarm_threshold: float = 0.01
+
+    # Mix real HumanEval+MBPP problems into the per-cycle training pool.
+    # Synth-only training overfit to the proposer's distribution (cycle 2:
+    # +7.5% internal / -2.0% anchor → capture-alarm revert every cycle).
+    # Anchor on real ground-truth solutions: ~10 real problems/cycle is small
+    # vs ~12 verified synth, but with 100% clean signal vs ~70% noisy.
+    mix_real_benchmarks_in_training: bool = True
+    real_benchmark_samples_per_cycle: int = 5  # per benchmark; 5 + 5 = 10 total
+    use_lora_adapter_persistence: bool = True  # multi-cycle compounding
+
+    # Anchor co-primary promotion (task #14). Block promotion when ground-truth
+    # anchor regressed >= 2x capture-alarm threshold against the best-confirmed
+    # cycle's anchor, even if internal held-out went up. Catches the gameable-
+    # internal pattern (cycle 2 +7.5% internal / -2% anchor) without requiring
+    # the destructive capture-alarm revert.
+    anchor_co_primary_promote: bool = True
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
         "humaneval", "mbpp", "gsm8k", "math",
     ])

@@ -951,6 +951,14 @@ class OrchestratorConfig:
     # Disable to pin to one mode (config.trainer.training_mode).
     alternate_sft_grpo: bool = True
 
+    # Adversarial proposer (#48). When the model is "too good" at the
+    # current synth distribution (pass rate ≥ enable_thresh), proposer
+    # flips to design-problems-this-model-fails mode. Hysteresis prevents
+    # flapping. Anti-saturation: keeps gradient on the frontier even when
+    # the model has internalized the easy synth space.
+    adversarial_enable_pass_rate: float = 0.8
+    adversarial_disable_pass_rate: float = 0.4
+
     # Anti-saturation: graduated benchmark ladder (#46). When current anchor
     # set's max rolling-3 score >= threshold, add next benchmark from the
     # ladder. Prevents "stuck at 95% HumanEval forever" — saturated

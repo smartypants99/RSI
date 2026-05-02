@@ -1247,6 +1247,15 @@ class TaskSynthesizer:
         """
         self._frontier_skill = str(skill_pair or "")
 
+    def set_adversarial_mode(self, enabled: bool) -> None:
+        """Toggle adversarial proposer mode (#48). When True, propose_batch_code
+        biases prompts toward the adversarial template — explicitly demands
+        the model design problems IT would fail. Orchestrator flips this
+        when the most recent synth-cycle's pass rate climbs above
+        adversarial_pass_rate_threshold (default 0.8).
+        """
+        self._adversarial_proposer = bool(enabled)
+
     def add_failure_inspirations(self, prompts: list[str]) -> None:
         """Extend the failure-seeded inspiration bank used by
         propose_batch_code. Auto-curriculum hook: orchestrator calls this
@@ -1526,9 +1535,20 @@ class TaskSynthesizer:
         if strategy_prefix:
             library_prefix = strategy_prefix + library_prefix
 
+        # Adversarial mode (#48): when the orchestrator has flipped
+        # `_adversarial_proposer` (because synth pass-rate >80% — model is
+        # crushing the easy distribution), use the adversarial prompt
+        # builder for at least adversarial_share fraction of the batch.
+        # Bias the rest toward failure-seeded too. Anti-saturation: keeps
+        # gradient on frontier difficulties as model improves.
+        adversarial_on = bool(getattr(self, "_adversarial_proposer", False))
+        adv_share = float(getattr(self.config, "adversarial_share", 0.7))
+        n_adv = int(round(max(0, n) * adv_share)) if adversarial_on else 0
         prompts: list[str] = []
         for i in range(max(0, n)):
-            if failed_questions:
+            if i < n_adv:
+                base = _build_adversarial_prompt(failed_questions)
+            elif failed_questions:
                 seed = rng.choice(failed_questions)
                 base = _build_failure_seeded_prompt(seed)
             else:
@@ -3119,6 +3139,54 @@ def _build_failure_seeded_prompt(failed_question: str) -> str:
     if idx == -1:
         return base + insertion
     return base[:idx] + insertion + "\n" + base[idx:]
+
+
+def _build_adversarial_prompt(failed_questions: list[str]) -> str:
+    """Adversarial proposer prompt (#48): explicitly instructs the model to
+    design problems the CURRENT MODEL would fail. Used when synth pass-rate
+    is high (model crushing its own proposals) — the loop inverts the
+    proposer's incentive: stop generating tractable problems, start
+    generating frontier ones.
+
+    Anti-saturation mechanism. Without this, once the model is "good
+    enough" at the synth distribution, every new proposal is too easy and
+    training stagnates. Adversarial mode keeps the gradient on the
+    frontier indefinitely.
+    """
+    base = CODE_PROPOSAL_TEMPLATE
+    inspiration = ""
+    if failed_questions:
+        bullets = "\n".join(
+            f"  - {q.strip()[:200]}" for q in failed_questions[:8]
+        )
+        inspiration = (
+            "\nRECENT FAILURES — problems YOU got wrong on the held-out\n"
+            "evaluation. The pattern in these is your current weakness:\n"
+            f"{bullets}\n"
+        )
+    adversarial = (
+        "\nADVERSARIAL MODE — the synth pipeline has detected that you\n"
+        "are crushing easy proposals (>80% pass rate on your last batch).\n"
+        "Your job changes: design a problem THIS MODEL would FAIL on. The\n"
+        "problem must be:\n"
+        "  1. Solvable in 3-30 lines of correct Python.\n"
+        "  2. Use a non-obvious algorithmic insight (segment trees,\n"
+        "     monotonic stacks, suffix arrays, bitmask DP, persistent data\n"
+        "     structures, articulation-point graph algorithms, hidden\n"
+        "     mathematical invariants).\n"
+        "  3. Have a tricky edge case that an obvious-but-wrong implementation\n"
+        "     misses (off-by-one, integer overflow, pathological inputs,\n"
+        "     symmetric vs asymmetric, empty/single-element).\n"
+        "  4. Have a DIFFICULTY in [0.55, 0.9] reflecting your honest\n"
+        "     estimate of failing on first attempt. < 0.55 will be rejected.\n"
+        "  5. Critically: your REFERENCE must STILL pass all your own\n"
+        "     TESTS. A hard problem with a wrong reference is worthless.\n"
+    )
+    marker = "YOUR OUTPUT:"
+    idx = base.rfind(marker)
+    if idx == -1:
+        return base + inspiration + adversarial
+    return base[:idx] + inspiration + adversarial + "\n" + base[idx:]
 
 
 def _prepend_library_prefix(base: str, library_prefix: str) -> str:

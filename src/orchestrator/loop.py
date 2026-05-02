@@ -2323,6 +2323,39 @@ class ImprovementLoop:
                 f"(HumanEval+MBPP) samples into training pool "
                 f"(now {len(verified)} total)"
             )
+        # Adversarial proposer toggle (#48): flip ON when synth pass-rate
+        # climbs above threshold — the model is too good at easy synth and
+        # adversarial mode forces harder proposals. Flip OFF when synth is
+        # struggling. Hysteresis: 0.8 enables, 0.4 disables.
+        if not skip_synth and samples:
+            try:
+                _synth_pass_rate = (
+                    len([s for s in verified if getattr(s, "source", "") != "real_benchmark"])
+                    / float(len(samples))
+                )
+                _adv_enable_thresh = float(getattr(
+                    self.config.orchestrator, "adversarial_enable_pass_rate", 0.8,
+                ))
+                _adv_disable_thresh = float(getattr(
+                    self.config.orchestrator, "adversarial_disable_pass_rate", 0.4,
+                ))
+                cur_adv = bool(getattr(self.generator, "_adversarial_proposer", False))
+                if cur_adv and _synth_pass_rate < _adv_disable_thresh:
+                    if hasattr(self.generator, "set_adversarial_mode"):
+                        self.generator.set_adversarial_mode(False)
+                        logger.info(
+                            f"  adversarial proposer OFF (synth pass-rate "
+                            f"{_synth_pass_rate:.2f} < {_adv_disable_thresh:.2f})"
+                        )
+                elif not cur_adv and _synth_pass_rate >= _adv_enable_thresh:
+                    if hasattr(self.generator, "set_adversarial_mode"):
+                        self.generator.set_adversarial_mode(True)
+                        logger.info(
+                            f"  adversarial proposer ON (synth pass-rate "
+                            f"{_synth_pass_rate:.2f} ≥ {_adv_enable_thresh:.2f})"
+                        )
+            except Exception:
+                pass
         result.samples_verified = len(verified)
         # Observability: stash the verified samples + STaR internals for the
         # optional cycle_metrics / cycle_samples dumps.

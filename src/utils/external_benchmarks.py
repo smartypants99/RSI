@@ -39,7 +39,13 @@ from typing import Any, Callable, Iterable, Optional
 logger = logging.getLogger(__name__)
 
 
-SUPPORTED_BENCHMARKS = ("humaneval", "mbpp", "gsm8k", "math")
+SUPPORTED_BENCHMARKS = (
+    "humaneval", "mbpp", "gsm8k", "math",
+    # Extended benchmark family for foom training pool (#38). Anchor still
+    # uses the canonical four; these benchmarks contribute training-pool
+    # rotation diversity (real-bench mix samples from all of them).
+    "ds1000", "livecodebench",
+)
 
 
 @dataclass
@@ -284,6 +290,62 @@ def _try_load_from_datasets(benchmark: str) -> Optional[list[BenchmarkItem]]:
     except Exception as e:
         logger.warning("datasets load failed for %s (%s); falling back to offline fixture", benchmark, e)
         return None
+        if benchmark == "ds1000":
+            # DS-1000 (Lai et al. 2023): 1000 data-science problems with
+            # canonical solutions. Used as TRAINING-POOL augmentation only
+            # (not in default anchor set), so anti-leakage split applies but
+            # the items never appear on the eval bar.
+            try:
+                ds = load_dataset("xlangai/DS-1000", split="test")
+            except Exception as e:
+                logger.debug("ds1000 load failed: %s", e)
+                return None
+            out = []
+            for i, r in enumerate(ds):
+                prob = str(r.get("prompt", r.get("problem", "")) or "")
+                sol = str(r.get("reference_code", r.get("solution", "")) or "")
+                if not prob or not sol:
+                    continue
+                out.append(BenchmarkItem(
+                    benchmark="ds1000",
+                    item_id=str(r.get("metadata", {}).get("problem_id", i)) or f"ds1000/{i}",
+                    prompt=prob,
+                    answer=sol,
+                    domain="code",
+                ))
+            return out
+        if benchmark == "livecodebench":
+            # LiveCodeBench (Jain et al. 2024): post-cutoff problems, low
+            # contamination. Uses release_v5 if available.
+            for repo in ("livecodebench/code_generation_lite", "livecodebench/code_generation"):
+                try:
+                    ds = load_dataset(repo, split="test", trust_remote_code=True)
+                    break
+                except Exception as e:
+                    logger.debug("livecodebench %s load failed: %s", repo, e)
+                    ds = None
+            if ds is None:
+                return None
+            out = []
+            for i, r in enumerate(ds):
+                prob = str(r.get("question_content", r.get("prompt", "")) or "")
+                # LCB ships starter_code + canonical solutions in metadata.
+                sol = str(
+                    r.get("starter_code", "")
+                    or r.get("canonical_solution", "")
+                    or r.get("solution", "")
+                    or ""
+                )
+                if not prob or not sol:
+                    continue
+                out.append(BenchmarkItem(
+                    benchmark="livecodebench",
+                    item_id=str(r.get("question_id", f"lcb/{i}")),
+                    prompt=prob,
+                    answer=sol,
+                    domain="code",
+                ))
+            return out
     return None
 
 

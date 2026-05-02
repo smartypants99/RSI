@@ -711,6 +711,23 @@ class ImprovementLoop:
                     self._recover_after_cycle_failure()
                     self._consecutive_failures += 1
                 result.duration = time.time() - cycle_start
+                # Cycle-budget observability (#42). Single structured line so
+                # tail-monitor scripts can grep for it. Exposes which phase
+                # is the bottleneck — drives manual + auto retuning of the
+                # 20-min budget knobs.
+                try:
+                    _pt = dict(result.phase_times or {})
+                    _pt_str = " ".join(
+                        f"{k}={v:.1f}s" for k, v in sorted(
+                            _pt.items(), key=lambda kv: -kv[1],
+                        )[:8]
+                    )
+                    logger.info(
+                        f"  [cycle {cycle}] WALL-CLOCK total={result.duration:.1f}s "
+                        f"{_pt_str}"
+                    )
+                except Exception:
+                    pass
 
                 # Held-out eval — isolated so eval failure doesn't lose the cycle.
                 # Classic mode: always run (the LR bandit needs eval_deltas even
@@ -1278,6 +1295,124 @@ class ImprovementLoop:
                 break
         return None
 
+    def _detect_and_handle_plateau(self, cycle: int, result: CycleResult) -> None:
+        """Plateau auto-response (#37). When rolling-K anchor delta has been
+        below `plateau_min_delta` for `plateau_consec_cycles` cycles in a
+        row, escalate the loop strategy:
+
+        - Bump LoRA rank by `plateau_rank_step` (next cycle's inject_lora
+          uses the increased rank, giving more learning capacity).
+        - Force the next cycle to run a FULL anchor (re-ground the
+          high-water mark instead of trusting drifting quick anchor).
+        - Bump real_benchmark_samples_per_cycle by 1.5x (more clean
+          gradient per cycle).
+
+        Self-RSI of the loop itself: when one strategy's gain saturates,
+        auto-switch to a more aggressive one without human intervention.
+        """
+        if not getattr(
+            self.config.orchestrator, "plateau_auto_response", True,
+        ):
+            return
+        min_delta = float(getattr(
+            self.config.orchestrator, "plateau_min_delta", 0.005,
+        ))
+        consec_needed = int(getattr(
+            self.config.orchestrator, "plateau_consec_cycles", 3,
+        ))
+        if not hasattr(self, "_plateau_streak"):
+            self._plateau_streak = 0
+        # Compare this cycle's anchor against rolling-3 reference
+        rolling = self._rolling_anchor(k=3)
+        cur = getattr(result, "anchor_score", None)
+        if rolling is None or cur is None:
+            return
+        delta = cur - rolling
+        if delta < min_delta:
+            self._plateau_streak += 1
+        else:
+            if self._plateau_streak > 0:
+                logger.info(
+                    f"  plateau cleared (cycle {cycle} delta=+{delta:.4f} "
+                    f"≥ {min_delta:.4f})"
+                )
+            self._plateau_streak = 0
+        if self._plateau_streak < consec_needed:
+            return
+        # Plateau confirmed. Escalate.
+        rank_step = int(getattr(
+            self.config.orchestrator, "plateau_rank_step", 8,
+        ))
+        rank_ceiling = int(getattr(
+            self.config.orchestrator, "plateau_rank_ceiling", 64,
+        ))
+        old_rank = int(self.config.trainer.lora_rank)
+        new_rank = min(rank_ceiling, old_rank + rank_step)
+        old_real = int(getattr(
+            self.config.orchestrator, "real_benchmark_samples_per_cycle", 20,
+        ))
+        new_real = min(60, max(old_real + 5, int(old_real * 1.5)))
+        self.config.trainer.lora_rank = new_rank
+        self.config.orchestrator.real_benchmark_samples_per_cycle = new_real
+        self._force_full_anchor_next = True
+        # Temporarily re-enable synth on plateau: auto-curriculum signal
+        # (anchor-failed prompts seeded into proposer inspiration bank) is
+        # dormant when synth is skipped. Re-running synth uses that signal
+        # to attack the model's current weak spots from a fresh angle.
+        self._force_synth_next = True
+        logger.warning(
+            f"  PLATEAU ESCALATION (streak={self._plateau_streak}): "
+            f"LoRA rank {old_rank} → {new_rank}, real-bench/cycle "
+            f"{old_real} → {new_real}, force full anchor + synth next cycle"
+        )
+        # Reset streak so we don't escalate every cycle thereafter.
+        self._plateau_streak = 0
+
+    def _adapt_lr(self, *, promoted: bool = False, reverted: bool = False) -> None:
+        """Cycle-quality bandit (#36): scale the trainer LR up on promoted
+        cycles, down on reverts. Auto-tunes the gradient step size to the
+        current trajectory — bigger steps when the loop is winning, gentler
+        steps when it's overshooting. Bounded to [floor, ceiling].
+
+        Defaults: 1.2x on promote, 0.7x on revert. Floor 1e-6 (still moves
+        weights), ceiling 5e-5 (above this the LoRA+ B-side LR multiplier
+        × rsLoRA scale × bnb-quant noise tends to break things on 32B).
+        """
+        if not getattr(self.config.orchestrator, "auto_lr_adapt", True):
+            return
+        try:
+            tcfg = self.config.trainer
+        except Exception:
+            return
+        cur = float(getattr(tcfg, "learning_rate", 0.0) or 0.0)
+        if cur <= 0.0:
+            return
+        floor = float(getattr(
+            self.config.orchestrator, "auto_lr_floor", 1e-6,
+        ))
+        ceiling = float(getattr(
+            self.config.orchestrator, "auto_lr_ceiling", 5e-5,
+        ))
+        promote_mul = float(getattr(
+            self.config.orchestrator, "auto_lr_promote_mul", 1.2,
+        ))
+        revert_mul = float(getattr(
+            self.config.orchestrator, "auto_lr_revert_mul", 0.7,
+        ))
+        if promoted:
+            new_lr = min(ceiling, cur * promote_mul)
+        elif reverted:
+            new_lr = max(floor, cur * revert_mul)
+        else:
+            return
+        if abs(new_lr - cur) / max(cur, 1e-12) < 0.01:
+            return  # too small a change to bother logging
+        tcfg.learning_rate = new_lr
+        logger.info(
+            f"  auto-LR adapt: {'PROMOTE' if promoted else 'REVERT'} "
+            f"→ LR {cur:.2e} → {new_lr:.2e}"
+        )
+
     def _rolling_anchor(self, k: int = 3) -> float | None:
         """Mean anchor score of the last `k` cycles whose anchor_score is set
         AND whose cycle didn't fire capture-alarm. Returns None if fewer than
@@ -1330,17 +1465,28 @@ class ImprovementLoop:
             from ..generator.data_generator import TrainingSample
         except Exception:
             return []
-        # Per-bench anchor reserve = same N the anchor uses, computed from
-        # the orchestrator's anchor_eval_size split across the configured
-        # benchmarks. We take training items from index >= anchor_reserve.
+        # Per-bench anchor reserve — only benches in the actual anchor
+        # eval set need a reserve; training-only benches (DS-1000,
+        # LiveCodeBench) reserve 0 and use the entire pool for training.
         ocfg = self.config.orchestrator
-        anchor_per_bench = max(
+        _anchor_benches = set(getattr(ocfg, "anchor_eval_benchmarks", []) or [])
+        _full_anchor_per_bench = max(
             1,
-            int(getattr(ocfg, "anchor_eval_size", 200))
-            // max(1, len(getattr(ocfg, "anchor_eval_benchmarks", []) or ["humaneval"])),
+            int(getattr(ocfg, "anchor_eval_size", 120))
+            // max(1, len(_anchor_benches) if _anchor_benches else 1),
         )
         out: list = []
-        for bench in ("humaneval", "mbpp"):
+        # Foom training pool draws from all available code benchmarks
+        # (#38), not just the canonical anchor four. ds1000 + livecodebench
+        # add ~1500 more clean problems if their HF repos are reachable;
+        # they fail silently to the offline-fixture-or-skip path otherwise.
+        # Anchor leakage is bounded to anchor_eval_benchmarks (the four
+        # canonical) — the extra benchmarks are training-only.
+        _train_benches = list(getattr(
+            ocfg, "real_benchmark_training_sources",
+            ("humaneval", "mbpp", "ds1000", "livecodebench"),
+        ))
+        for bench in _train_benches:
             try:
                 items = load_benchmark(
                     bench,
@@ -1353,6 +1499,13 @@ class ImprovementLoop:
                 continue
             if not items:
                 continue
+            # Reserve N items only when this benchmark is actually in the
+            # anchor eval set. Training-only benches (DS-1000, LiveCodeBench)
+            # use the entire pool — no leakage possible since they never
+            # appear on the anchor bar.
+            anchor_per_bench = (
+                _full_anchor_per_bench if bench in _anchor_benches else 0
+            )
             # Reproduce the EXACT hash order anchor uses so we can take the
             # complement. Without this the train/anchor split could overlap.
             sorted_items = sorted(
@@ -1702,27 +1855,58 @@ class ImprovementLoop:
             result.phase_times["synthesis"] = time.time() - phase_start
 
         # 2. Generate training data
-        logger.info(f"[Cycle {cycle}] Phase 2: GENERATE ({len(diag.weaknesses)} weaknesses)")
-        phase_start = time.time()
-        try:
-            # STaR (Zelikman et al. 2022): train on rationales that reach
-            # known-correct canonical answers on REAL diagnostic problems.
-            # Falls back internally to legacy self-synthesis if no failed
-            # diagnostic items are available.
-            samples = self.generator.generate_from_diagnostic_result(diag)
-        except Exception as e:
-            logger.error(f"  Generation failed ({type(e).__name__}): {e}")
-            torch.cuda.empty_cache()
-            self._pending_regression_weaknesses.extend(injected_regressions)
-            result.post_score = result.pre_score
-            return result
-        result.phase_times["generate"] = time.time() - phase_start
-        _log_peak_memory("generate")
-        result.samples_generated = len(samples)
-        result.diversity_stats = self.generator.get_diversity_stats()
-        logger.info(f"  Generated {len(samples)} training samples")
+        # Foom mode (#41): skip synth phases when real-bench is configured
+        # to dominate training (>=20 per cycle by default). Synth at 70%
+        # 1-pass/1-fail noise rate is net-negative gradient compared to 60+
+        # canonical-solution real samples; skipping saves 3-5 min/cycle.
+        # Plateau auto-response (#37) re-enables synth via the bandit if
+        # rolling-3 anchor flatlines.
+        skip_synth_threshold = int(getattr(
+            self.config.orchestrator,
+            "skip_synth_real_bench_threshold", 20,
+        ))
+        # Plateau auto-response can force-enable synth via _force_synth_next
+        # (one-shot flag); consume here.
+        _force_synth = bool(getattr(self, "_force_synth_next", False))
+        if _force_synth:
+            self._force_synth_next = False
+        skip_synth = (not _force_synth) and bool(getattr(
+            self.config.orchestrator, "allow_skip_synth_phase", True,
+        )) and (
+            int(getattr(
+                self.config.orchestrator,
+                "real_benchmark_samples_per_cycle", 0,
+            )) >= skip_synth_threshold
+        )
+        if skip_synth:
+            logger.info(
+                f"[Cycle {cycle}] Phase 2: GENERATE SKIPPED (real-bench "
+                f"dominates training; saved ~3-5 min/cycle)"
+            )
+            samples = []
+            result.phase_times["generate"] = 0.0
+            result.samples_generated = 0
+        else:
+            logger.info(f"[Cycle {cycle}] Phase 2: GENERATE ({len(diag.weaknesses)} weaknesses)")
+            phase_start = time.time()
+            try:
+                samples = self.generator.generate_from_diagnostic_result(diag)
+            except Exception as e:
+                logger.error(f"  Generation failed ({type(e).__name__}): {e}")
+                torch.cuda.empty_cache()
+                self._pending_regression_weaknesses.extend(injected_regressions)
+                result.post_score = result.pre_score
+                return result
+            result.phase_times["generate"] = time.time() - phase_start
+            _log_peak_memory("generate")
+            result.samples_generated = len(samples)
+            result.diversity_stats = self.generator.get_diversity_stats()
+            logger.info(f"  Generated {len(samples)} training samples")
 
-        if not samples and not synthesis_samples:
+        # When skip_synth is on, real-bench provides the training signal
+        # directly (mixed in below at Phase 3). The "no samples" check
+        # is bypassed because we expect samples=[] at this stage.
+        if not samples and not synthesis_samples and not skip_synth:
             logger.warning(f"  No samples generated — model couldn't produce valid problems")
             self._pending_regression_weaknesses.extend(injected_regressions)
             result.post_score = result.pre_score
@@ -4111,7 +4295,13 @@ class ImprovementLoop:
                 _quick_size = max(1, int(getattr(
                     ocfg, "anchor_quick_size", 80,
                 )))
-                _is_full_cycle = (cycle % _full_every == 0) or (cycle == 1)
+                _is_full_cycle = (
+                    (cycle % _full_every == 0)
+                    or (cycle == 1)
+                    or bool(getattr(self, "_force_full_anchor_next", False))
+                )
+                # Consume the one-shot flag set by plateau auto-response.
+                self._force_full_anchor_next = False
                 # If the cycle is already running long, downgrade to quick
                 # anchor regardless of schedule. Threshold: 6 min remaining
                 # estimated cost of full anchor on bnb-4bit. Soft constraint.
@@ -4158,6 +4348,16 @@ class ImprovementLoop:
                     summary.get("per_benchmark_distinct", {}),
                     summary.get("per_benchmark_offline", {}),
                 )
+                # Plateau auto-response (#37): detect flat rolling-3 anchor
+                # and escalate strategy if so. Runs every cycle but only
+                # fires on `plateau_consec_cycles` of below-threshold deltas.
+                try:
+                    self._detect_and_handle_plateau(cycle, result)
+                except Exception as _exc:
+                    logger.debug(
+                        "plateau detection failed (%s): %s",
+                        type(_exc).__name__, _exc,
+                    )
                 # Auto-curriculum signal (#27, #31): persist per-item pass/
                 # fail so the next cycle's proposer can use failed-item
                 # PROMPTS as failure-seed inspiration for new synth tasks.
@@ -4391,6 +4591,7 @@ class ImprovementLoop:
                                         "vLLM from cycle %d",
                                         best_cycle,
                                     )
+                                    self._adapt_lr(reverted=True)
                                     self.model_loader.swap_to_vllm_after_training(
                                         str(best_ckpt)
                                     )
@@ -4411,6 +4612,7 @@ class ImprovementLoop:
                                     "  capture-alarm revert: no confirmed-"
                                     "best checkpoint yet; reverting to base.",
                                 )
+                                self._adapt_lr(reverted=True)
                                 self.model_loader.swap_to_vllm_after_training(
                                     str(getattr(
                                         self.model_loader, "model_path", None,
@@ -5045,6 +5247,7 @@ class ImprovementLoop:
                     "confirmed after %d consecutive eligible cycles)",
                     self._best_score, self._best_checkpoint_cycle, confirm_n,
                 )
+                self._adapt_lr(promoted=True)
                 return False, ""
             logger.info(
                 "  best-candidate: held-out=%.4f (cycle %d) streak=%d/%d — "

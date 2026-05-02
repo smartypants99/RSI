@@ -703,7 +703,11 @@ class OrchestratorConfig:
     # cycle wall-clock impact is small because chunked SPRT (futility_z=0.5,
     # K=4 OBF) stops at chunk 1 on flat cycles; positive-signal cycles pay
     # the full 2× but that's where we want the extra resolution.
-    heldout_quick_subsample_n: int = 192
+    # 96-item internal held-out subsample. With margin scoring (continuous,
+    # σ_d ≈ 0.025 typical), MDE ~0.7% which is below the 1% capture-alarm
+    # threshold and well within the rolling-3 anchor's ~5% noise band.
+    # Halving from 192 saves ~1.5 min/cycle without compromising the gate.
+    heldout_quick_subsample_n: int = 96
     # Diff-analysis cycle 3 vs cycle 5 (both within MDE_80≈5.6%, opposite
     # signs): the quick-vs-full cadence swap at cycle%5==0 silently
     # re-weights the held-out domain mix — QUICK stratifies 1/N per domain
@@ -832,10 +836,13 @@ class OrchestratorConfig:
     # and the final cycle, always run anchor. Default True (safe: identity
     # result is redundant information).
     anchor_skip_when_not_trained: bool = True
-    # 200 / 4 = 50 per bench. HumanEval has 164 total → 50 anchor + 114
-    # training-pool. Going higher (e.g. 656) would exhaust HumanEval and
-    # leave zero training-pool items, breaking the anti-leakage split.
-    anchor_eval_size: int = 200
+    # 120 / 4 = 30 per bench. HumanEval has 164 total → 30 anchor + 134
+    # training-pool. Tighter than 200/50/114 to fit the 10-min cycle target
+    # (full anchor: 120 items × ~1024 tokens at ~30 tok/s ≈ 7 min on
+    # bnb-4bit, vs 12 min for 200). Per-bench σ goes from 7%→9% which
+    # rolling-3 (anchor_rolling_window) brings down to ~5%; still detects
+    # >2% gains reliably.
+    anchor_eval_size: int = 120
     verifier_capture_alarm_threshold: float = 0.01
 
     # Mix real HumanEval+MBPP problems into the per-cycle training pool.
@@ -844,11 +851,26 @@ class OrchestratorConfig:
     # Anchor on real ground-truth solutions: ~10 real problems/cycle is small
     # vs ~12 verified synth, but with 100% clean signal vs ~70% noisy.
     mix_real_benchmarks_in_training: bool = True
-    # 20 per benchmark × 2 = 40 real samples per cycle. Synth contributes
+    # 30 per benchmark × 2 = 60 real samples per cycle. Synth contributes
     # ~12 verified (1-pass/1-fail noisy at 70%); real samples thus dominate
-    # 40:12 with 100% clean signal. Anti-leakage: pulled strictly from the
+    # 60:12 with 100% clean signal. Anti-leakage: pulled strictly from the
     # train partition (index >= anchor_per_bench in stable hash order).
-    real_benchmark_samples_per_cycle: int = 20
+    # Plateau auto-response (#37) bumps this 1.5x when rolling-3 anchor
+    # flatlines, climbing toward 60-90 real samples / cycle.
+    real_benchmark_samples_per_cycle: int = 30
+    # Training-pool sources: HumanEval+MBPP (anchor canonical four) plus
+    # DS-1000 (1k data-science problems) and LiveCodeBench (~500 post-
+    # cutoff problems, low contamination). Extra two are training-only —
+    # never enter anchor eval, so adding them is pure clean-gradient
+    # without leakage risk. Empty repos fail silently and don't block.
+    real_benchmark_training_sources: tuple = (
+        "humaneval", "mbpp", "ds1000", "livecodebench",
+    )
+    # Skip synth propose+verify phases when real-bench-per-cycle >= this
+    # threshold. Synth at 70% noise vs real-bench at 100% clean → synth is
+    # net-negative when real dominates. Saves ~3-5 min/cycle.
+    allow_skip_synth_phase: bool = True
+    skip_synth_real_bench_threshold: int = 20
     use_lora_adapter_persistence: bool = True  # multi-cycle compounding
 
     # Anchor co-primary promotion (task #14). Block promotion when ground-truth
@@ -862,7 +884,10 @@ class OrchestratorConfig:
     # 20-min cycle ceiling on bnb-4bit. Quick anchor (~80 items) on every
     # cycle for the promotion gate; full anchor every N cycles to
     # re-calibrate the high-water mark.
-    anchor_quick_size: int = 80
+    # Quick anchor 40 items (~2-3 min on bnb-4bit). Single-cycle σ ~10%
+    # which sounds bad in isolation but rolling-3 brings it to ~6%, still
+    # catches a real >2%/c trajectory. Full anchor every 5th cycle re-grounds.
+    anchor_quick_size: int = 40
     anchor_full_every_n_cycles: int = 5
 
     # Wall-clock budget per cycle (task #25). 1200s = 20 min. Cycles that
@@ -883,6 +908,27 @@ class OrchestratorConfig:
     # detecting <1% improvements. K=3 averages last 3 valid cycles, σ ~3%,
     # which catches real >1%/c trends while suppressing flip-flop on noise.
     anchor_rolling_window: int = 3
+
+    # Auto-LR adaptation (#36, cycle-quality bandit). Scale trainer LR up
+    # on promotion (loop is winning, can take bigger steps), down on revert
+    # (overshoot or noise; gentler steps). Floor + ceiling guard against
+    # runaway. Disable with auto_lr_adapt=False to pin LR at config value.
+    auto_lr_adapt: bool = True
+    auto_lr_promote_mul: float = 1.2
+    auto_lr_revert_mul: float = 0.7
+    auto_lr_floor: float = 1e-6
+    auto_lr_ceiling: float = 5e-5
+
+    # Plateau auto-response (#37). When rolling-3 anchor delta has been
+    # < `plateau_min_delta` for `plateau_consec_cycles` consecutive cycles,
+    # escalate: bump LoRA rank by `plateau_rank_step` (capacity), bump
+    # real-bench-per-cycle by 1.5x (gradient strength), force one full
+    # anchor on next cycle (re-ground the high-water).
+    plateau_auto_response: bool = True
+    plateau_min_delta: float = 0.005  # 0.5% rolling-3 anchor delta
+    plateau_consec_cycles: int = 3
+    plateau_rank_step: int = 8
+    plateau_rank_ceiling: int = 64
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
         "humaneval", "mbpp", "gsm8k", "math",
     ])

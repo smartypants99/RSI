@@ -967,6 +967,16 @@ class OrchestratorConfig:
     # 160 real-bench samples.
     procedural_samples_per_cycle: int = 30
 
+    # Capability-tier metric (#61). UNBOUNDED measurement of model
+    # capability via procedural difficulty ladder. Probe the model at
+    # current tier and frontier tiers; advance _current_tier when frontier
+    # pass-rate ≥ tier_advance_threshold. tier_score = tier + frontier_rate
+    # is the multiplicative-compounding-friendly metric (no [0,1] cap).
+    capability_tier_enabled: bool = True
+    capability_tier_every_n: int = 3   # probe every N cycles (extra eval cost)
+    capability_tier_probe_n: int = 8   # samples per tier on each probe
+    tier_advance_threshold: float = 0.5
+
     # Anti-saturation: graduated benchmark ladder (#46). When current anchor
     # set's max rolling-3 score >= threshold, add next benchmark from the
     # ladder. Prevents "stuck at 95% HumanEval forever" — saturated

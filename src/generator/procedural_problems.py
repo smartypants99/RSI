@@ -54,15 +54,35 @@ def _format_tests(call_strs: list[str]) -> list[str]:
 # Generators
 # ──────────────────────────────────────────────────────────────────────
 
-def gen_array_basic(seed: int) -> dict:
-    """Sort/sum/find operations on integer arrays."""
+# ──────────────────────────────────────────────────────────────────────
+# Tier scaling (#61): difficulty_tier ∈ [1, ∞). Each tier roughly doubles
+# the size/complexity dimension that's hardest for the model. tier=1
+# matches the original fixed-difficulty problems; tier=10 has 1024-element
+# arrays, fib(>1000), graphs with 100s of nodes, etc.
+# Capability-tier anchor metric (also #61) computes "highest tier model
+# passes ≥80% of N=20 sampled at" — UNBOUNDED, doesn't saturate.
+# ──────────────────────────────────────────────────────────────────────
+
+def _tier_scale(tier: int, base: int = 8, growth: float = 1.6) -> int:
+    """Convert tier to a size dimension. tier=1 ≈ base; tier=10 ≈ base*100."""
+    if tier <= 1:
+        return base
+    return int(base * (growth ** (tier - 1)))
+
+
+def gen_array_basic(seed: int, tier: int = 1) -> dict:
+    """Sort/sum/find operations on integer arrays. Difficulty scales with
+    array size — tier=1 ≈ 5-12 elements, tier=10 ≈ 800+ elements."""
     rng = _r(seed)
     op = rng.choice([
         "max_element", "second_max", "sum_positive", "count_distinct",
         "reverse_sort", "median",
     ])
-    n = rng.randint(5, 12)
-    arr = [rng.randint(-50, 50) for _ in range(n)]
+    n_min = max(2, _tier_scale(tier, base=5))
+    n_max = max(n_min + 1, _tier_scale(tier, base=12))
+    n = rng.randint(n_min, n_max)
+    val_range = max(50, _tier_scale(tier, base=50, growth=1.4))
+    arr = [rng.randint(-val_range, val_range) for _ in range(n)]
     if op == "max_element":
         prompt = f"Given a list of integers `nums`, return the maximum element. Assume `nums` is non-empty."
         entry = "solve"
@@ -120,10 +140,12 @@ def gen_array_basic(seed: int) -> dict:
     }
 
 
-def gen_string_basic(seed: int) -> dict:
+def gen_string_basic(seed: int, tier: int = 1) -> dict:
     rng = _r(seed)
+    s_min = max(8, _tier_scale(tier, base=8))
+    s_max = max(s_min + 1, _tier_scale(tier, base=20))
     op = rng.choice(["reverse", "is_palindrome", "count_vowels", "longest_word"])
-    s = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz ") for _ in range(rng.randint(8, 20))).strip()
+    s = "".join(rng.choice("abcdefghijklmnopqrstuvwxyz ") for _ in range(rng.randint(s_min, s_max))).strip()
     s = s if s else "hello world"
     if op == "reverse":
         prompt = "Given a string `s`, return s reversed."
@@ -166,18 +188,19 @@ def gen_string_basic(seed: int) -> dict:
     }
 
 
-def gen_number_theory(seed: int) -> dict:
+def gen_number_theory(seed: int, tier: int = 1) -> dict:
     rng = _r(seed)
     op = rng.choice(["gcd", "is_prime", "count_divisors", "digit_sum"])
+    n_max = max(200, _tier_scale(tier, base=200, growth=2.5))
     if op == "gcd":
-        a, b = rng.randint(2, 200), rng.randint(2, 200)
+        a, b = rng.randint(2, n_max), rng.randint(2, n_max)
         from math import gcd as _g
         prompt = "Given two non-negative integers `a` and `b`, return their greatest common divisor."
         entry = "solve"
         code = "def solve(a, b):\n    while b:\n        a, b = b, a % b\n    return a"
         tests = [f"solve({a}, {b}) == {_g(a, b)}", "solve(0, 5) == 5", "solve(48, 18) == 6"]
     elif op == "is_prime":
-        n = rng.randint(2, 1000)
+        n = rng.randint(2, max(1000, n_max * 5))
         def _isprime(x):
             if x < 2: return False
             if x < 4: return True
@@ -203,7 +226,7 @@ def gen_number_theory(seed: int) -> dict:
         )
         tests = [f"solve({n}) == {ans}", "solve(2) == True", "solve(9) == False", "solve(0) == False"]
     elif op == "count_divisors":
-        n = rng.randint(2, 500)
+        n = rng.randint(2, max(500, n_max * 2))
         cnt = sum(1 for d in range(1, n + 1) if n % d == 0)
         prompt = "Given a positive integer `n`, return the count of its positive divisors."
         entry = "solve"
@@ -219,7 +242,7 @@ def gen_number_theory(seed: int) -> dict:
         )
         tests = [f"solve({n}) == {cnt}", "solve(1) == 1", "solve(12) == 6"]
     else:  # digit_sum
-        n = rng.randint(0, 1_000_000)
+        n = rng.randint(0, max(1_000_000, n_max * 100_000))
         ans = sum(int(d) for d in str(n))
         prompt = "Given a non-negative integer `n`, return the sum of its decimal digits."
         entry = "solve"
@@ -231,11 +254,13 @@ def gen_number_theory(seed: int) -> dict:
     }
 
 
-def gen_sequence_dp(seed: int) -> dict:
+def gen_sequence_dp(seed: int, tier: int = 1) -> dict:
     rng = _r(seed)
     op = rng.choice(["fib", "stair_climb", "longest_increasing"])
+    fib_max = max(30, _tier_scale(tier, base=30, growth=1.5))
+    arr_max = max(10, _tier_scale(tier, base=10))
     if op == "fib":
-        n = rng.randint(2, 30)
+        n = rng.randint(2, fib_max)
         a, b = 0, 1
         for _ in range(n):
             a, b = b, a + b
@@ -250,7 +275,7 @@ def gen_sequence_dp(seed: int) -> dict:
         )
         tests = [f"solve({n}) == {a}", "solve(0) == 0", "solve(1) == 1", "solve(10) == 55"]
     elif op == "stair_climb":
-        n = rng.randint(1, 20)
+        n = rng.randint(1, max(20, _tier_scale(tier, base=20, growth=1.5)))
         a, b = 1, 1
         for _ in range(n):
             a, b = b, a + b
@@ -267,8 +292,9 @@ def gen_sequence_dp(seed: int) -> dict:
         )
         tests = [f"solve({n}) == {ways}", "solve(1) == 1", "solve(2) == 2", "solve(5) == 8"]
     else:  # longest_increasing
-        n = rng.randint(4, 10)
-        arr = [rng.randint(-20, 20) for _ in range(n)]
+        n = rng.randint(4, arr_max)
+        arr_range = max(20, _tier_scale(tier, base=20, growth=1.4))
+        arr = [rng.randint(-arr_range, arr_range) for _ in range(n)]
         # Compute LIS length (O(n^2) reference)
         lis = [1] * n
         for i in range(1, n):
@@ -296,11 +322,12 @@ def gen_sequence_dp(seed: int) -> dict:
     }
 
 
-def gen_bitwise(seed: int) -> dict:
+def gen_bitwise(seed: int, tier: int = 1) -> dict:
     rng = _r(seed)
+    n_range = max(1_000_000, _tier_scale(tier, base=1_000_000, growth=2.0))
     op = rng.choice(["popcount", "is_power_of_two", "single_number"])
     if op == "popcount":
-        n = rng.randint(0, 1_000_000)
+        n = rng.randint(0, n_range)
         ans = bin(n).count("1")
         prompt = "Given a non-negative integer `n`, return the number of 1-bits in its binary representation."
         entry = "solve"
@@ -332,9 +359,11 @@ def gen_bitwise(seed: int) -> dict:
     }
 
 
-def gen_array_window(seed: int) -> dict:
+def gen_array_window(seed: int, tier: int = 1) -> dict:
     rng = _r(seed)
-    n = rng.randint(6, 14)
+    n_min = max(6, _tier_scale(tier, base=6))
+    n_max = max(n_min + 2, _tier_scale(tier, base=14))
+    n = rng.randint(n_min, n_max)
     k = rng.randint(2, max(2, n // 2))
     arr = [rng.randint(-20, 20) for _ in range(n)]
     op = rng.choice(["max_in_window", "sum_in_window"])
@@ -366,7 +395,7 @@ def gen_array_window(seed: int) -> dict:
 # Registry + sampler
 # ──────────────────────────────────────────────────────────────────────
 
-_GENERATORS: dict[str, Callable[[int], dict]] = {
+_GENERATORS: dict[str, Callable[[int, int], dict]] = {
     "array_basic": gen_array_basic,
     "string_basic": gen_string_basic,
     "number_theory": gen_number_theory,
@@ -376,9 +405,11 @@ _GENERATORS: dict[str, Callable[[int], dict]] = {
 }
 
 
-def sample_problems(n: int, seed: int) -> list[dict]:
-    """Return n procedurally-generated problems. Categories cycled round-
-    robin, seeds derived from `seed` so the same (n, seed) → same set."""
+def sample_problems(n: int, seed: int, tier: int = 1) -> list[dict]:
+    """Return n procedurally-generated problems at the given difficulty
+    tier. Categories cycled round-robin, seeds derived from `seed` so
+    same (n, seed, tier) → same set. Tier ≥ 1; higher = harder.
+    """
     if n <= 0:
         return []
     cats = sorted(_GENERATORS.keys())
@@ -388,10 +419,58 @@ def sample_problems(n: int, seed: int) -> list[dict]:
         cat = cats[i % len(cats)]
         sub_seed = rng.randint(0, 2**31 - 1)
         try:
-            out.append(_GENERATORS[cat](sub_seed))
+            problem = _GENERATORS[cat](sub_seed, tier)
+            problem["tier"] = tier
+            out.append(problem)
         except Exception:
             continue
     return out
+
+
+# Capability-tier anchor metric (#61): unbounded measurement of model
+# capability. Returns the highest tier at which the model passes ≥ pass_thresh
+# fraction of N=samples_per_tier procedural problems. Probes tier 1,
+# tier 2, ... until pass-rate drops below threshold. Genuinely unbounded
+# — there's no benchmark saturation cap because procedural difficulty
+# scales arbitrarily.
+def capability_tier(
+    grade_fn: Callable[[dict], bool],
+    *,
+    samples_per_tier: int = 20,
+    pass_thresh: float = 0.8,
+    max_tier: int = 100,
+    seed: int = 0xCAFE,
+) -> int:
+    """Probe tiers ascending; return highest tier where grade_fn passes
+    ≥ pass_thresh of samples_per_tier problems.
+
+    grade_fn(problem) -> bool. Caller is responsible for invoking the
+    model on problem["prompt"] and checking the response against
+    problem["tests"] / problem["canonical_code"].
+    """
+    last_passing = 0
+    for tier in range(1, max_tier + 1):
+        probs = sample_problems(
+            n=samples_per_tier, seed=seed + tier, tier=tier,
+        )
+        if not probs:
+            break
+        passes = 0
+        for p in probs:
+            try:
+                if grade_fn(p):
+                    passes += 1
+            except Exception:
+                continue
+        rate = passes / max(1, len(probs))
+        if rate >= pass_thresh:
+            last_passing = tier
+        else:
+            # Two-strikes: if the previous tier also failed, we're past
+            # the model's frontier — return the last passing.
+            if tier - last_passing >= 2:
+                return last_passing
+    return last_passing
 
 
 # Quick self-test invocable manually: ensures every canonical_code passes
@@ -399,21 +478,23 @@ def sample_problems(n: int, seed: int) -> list[dict]:
 def _selftest() -> None:
     import sys
     failures = 0
-    for cat, gen in _GENERATORS.items():
-        for s in range(5):
-            p = gen(s + cat.__hash__() % 1000)
-            ns = {}
-            try:
-                exec(p["canonical_code"], ns)
-                for t in p["tests"]:
-                    exec(t, ns)
-            except Exception as e:
-                print(f"FAIL {cat}/seed={s}: {e}")
-                failures += 1
+    for tier in (1, 3, 5):
+        for cat, gen in _GENERATORS.items():
+            for s in range(3):
+                p = gen(s + cat.__hash__() % 1000, tier)
+                ns = {}
+                try:
+                    exec(p["canonical_code"], ns)
+                    for t in p["tests"]:
+                        exec(t, ns)
+                except Exception as e:
+                    print(f"FAIL tier={tier} {cat}/seed={s}: {e}")
+                    failures += 1
     if failures:
         print(f"{failures} failures")
         sys.exit(1)
-    print(f"PASS — {sum(1 for _ in _GENERATORS) * 5} problems across {len(_GENERATORS)} categories")
+    n_total = 3 * len(_GENERATORS) * 3  # 3 tiers × 6 cats × 3 seeds
+    print(f"PASS — {n_total} problems across {len(_GENERATORS)} categories × 3 tiers (1, 3, 5)")
 
 
 if __name__ == "__main__":

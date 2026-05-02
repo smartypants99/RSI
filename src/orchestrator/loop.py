@@ -1750,27 +1750,143 @@ class ImprovementLoop:
             return None
         return sum(scores) / len(scores)
 
+    def _measure_capability_tier(self, cycle: int) -> None:
+        """Capability-tier measurement (#61). Probe model on procedural
+        problems at the current tier and the next 2 frontier tiers; if the
+        model passes ≥ tier_advance_threshold of frontier-tier-1 samples,
+        advance _current_tier by 1. Records to result.capability_tier and
+        an unbounded "tier_score" = float(tier) + frontier_pass_rate.
+
+        This is the user's "no S-curve" metric. It is genuinely unbounded:
+        tier 50 problems are dramatically harder than tier 49 forever (the
+        size dimension scales geometrically). 1%/cycle on tier_score is
+        true multiplicative compounding.
+        """
+        if not getattr(
+            self.config.orchestrator, "capability_tier_enabled", True,
+        ):
+            return
+        # Run only every N cycles since it's an extra eval cost.
+        every = int(getattr(
+            self.config.orchestrator, "capability_tier_every_n", 3,
+        ))
+        if cycle % every != 0 and cycle != 1:
+            return
+        try:
+            from ..generator.procedural_problems import sample_problems
+        except Exception:
+            return
+        if not hasattr(self, "_current_tier"):
+            self._current_tier = 1
+        cur = self._current_tier
+        # Probe tiers cur, cur+1, cur+2.
+        n_per = int(getattr(
+            self.config.orchestrator, "capability_tier_probe_n", 8,
+        ))
+        rates: dict[int, float] = {}
+        for t in (cur, cur + 1, cur + 2):
+            probs = sample_problems(n=n_per, seed=cycle + t * 7919, tier=t)
+            if not probs:
+                rates[t] = 0.0
+                continue
+            passed = 0
+            for p in probs:
+                # Generate solution; grade by exec'ing canonical tests.
+                try:
+                    raw = self.model_loader.generate(
+                        p["prompt"], max_new_tokens=512, temperature=0.0,
+                        top_p=1.0,
+                    )
+                except Exception:
+                    continue
+                try:
+                    from ..utils.external_benchmarks import _extract_code
+                    code = _extract_code(raw)
+                    if not code or "def " not in code:
+                        continue
+                    ns: dict = {}
+                    exec(code, ns)
+                    ok = True
+                    for tcode in p["tests"]:
+                        try:
+                            exec(tcode, ns)
+                        except Exception:
+                            ok = False
+                            break
+                    if ok:
+                        passed += 1
+                except Exception:
+                    continue
+            rates[t] = passed / max(1, len(probs))
+        thresh = float(getattr(
+            self.config.orchestrator, "tier_advance_threshold", 0.5,
+        ))
+        # Advance if frontier (cur+1) passes threshold.
+        frontier_rate = rates.get(cur + 1, 0.0)
+        master_rate = rates.get(cur, 0.0)
+        tier_score = float(cur) + frontier_rate
+        # Always store on the most recent CycleResult (last in history).
+        if self.history:
+            r = self.history[-1]
+            r.capability_tier = cur
+            r.capability_tier_score = tier_score
+            r.capability_tier_rates = dict(rates)
+        if frontier_rate >= thresh:
+            self._current_tier = cur + 1
+            logger.warning(
+                f"  CAPABILITY TIER ADVANCE (cycle {cycle}): tier {cur} → "
+                f"{cur+1} (frontier rate {frontier_rate:.2f} ≥ {thresh}). "
+                f"Master rate at old tier: {master_rate:.2f}. "
+                f"tier_score = {tier_score:.3f} (UNBOUNDED metric)"
+            )
+        else:
+            logger.info(
+                f"  capability tier (cycle {cycle}): cur={cur} "
+                f"(rate={master_rate:.2f}), frontier={cur+1} "
+                f"(rate={frontier_rate:.2f}), super={cur+2} "
+                f"(rate={rates.get(cur+2, 0.0):.2f}), "
+                f"tier_score={tier_score:.3f}"
+            )
+
     def _load_procedural_training_samples(self, cycle: int, n: int) -> list:
-        """Procedural problem generator (#58): infinite supply of novel
-        coding problems with verified canonical solutions. Used as fallback
-        when external benchmarks don't yield enough training items, AND as
-        unconditional anti-saturation supplement (mixed in alongside real-
-        bench every cycle). Each call with the same (cycle, n) returns the
-        same problems for reproducibility.
+        """Procedural problem generator (#58, #61): infinite supply of novel
+        coding problems with verified canonical solutions, with difficulty
+        scaling unboundedly via the tier ladder.
+
+        Tier-spread: each call mixes problems across the model's CURRENT
+        capability tier (`_current_tier`) plus the next 2 tiers above (the
+        frontier). Most samples come from the frontier so training pushes
+        the model into new tiers. Without tier mixing, the model would
+        only ever train at its mastered tier and never advance.
         """
         if n <= 0:
             return []
         try:
-            from .procedural_problems import sample_problems
+            from ..generator.procedural_problems import sample_problems
             from ..generator.data_generator import TrainingSample
         except Exception:
             return []
+        cur_tier = max(1, int(getattr(self, "_current_tier", 1)))
+        # 30% at mastered tier (regression check), 70% at frontier tiers
+        # cur+1 and cur+2 (push the boundary forward).
+        n_master = max(1, int(n * 0.3))
+        n_frontier_a = max(1, int(n * 0.4))
+        n_frontier_b = max(0, n - n_master - n_frontier_a)
         try:
-            problems = sample_problems(n=n, seed=cycle * 1000 + 7)
+            probs = []
+            probs += sample_problems(
+                n=n_master, seed=cycle * 1000 + 7, tier=cur_tier,
+            )
+            probs += sample_problems(
+                n=n_frontier_a, seed=cycle * 1000 + 11, tier=cur_tier + 1,
+            )
+            probs += sample_problems(
+                n=n_frontier_b, seed=cycle * 1000 + 13, tier=cur_tier + 2,
+            )
         except Exception:
             return []
         out: list = []
-        for p in problems:
+        for p in probs:
             prompt = p["prompt"]
             ans = p["canonical_code"]
             response = f"```python\n{ans}\n```"
@@ -1780,7 +1896,7 @@ class ImprovementLoop:
                 domain="code",
                 verified=True,
                 confidence=1.0,
-                target_weakness=f"procedural/{p.get('category', 'unknown')}",
+                target_weakness=f"procedural/t{p.get('tier', '?')}/{p.get('category', 'unknown')}",
                 source="procedural",
                 ground_truth_verified=True,
                 expected_answer=ans,
@@ -4345,6 +4461,13 @@ class ImprovementLoop:
                 ),
                 "rolling_anchor_3": _nan_to_none(self._rolling_anchor(k=3)),
                 "plateau_streak": int(getattr(self, "_plateau_streak", 0)),
+                # Unbounded capability metric (#61) — the right ruler for
+                # multiplicative compounding. tier_score = tier +
+                # frontier_pass_rate. 1%/cycle on this is genuine compound.
+                "capability_tier": int(getattr(result, "capability_tier", 0)),
+                "capability_tier_score": _nan_to_none(
+                    getattr(result, "capability_tier_score", None)
+                ),
             }
             _emit_structured_log("cycle_summary", row, ocfg)
         except Exception as _e:  # pragma: no cover
@@ -4857,6 +4980,20 @@ class ImprovementLoop:
                     summary.get("per_benchmark_distinct", {}),
                     summary.get("per_benchmark_offline", {}),
                 )
+                # Capability-tier measurement (#61): UNBOUNDED ruler. Probe
+                # the model on procedural problems at increasing tiers; the
+                # highest tier passing ≥80% is the model's current capability
+                # frontier. Drives _current_tier which the procedural sampler
+                # uses to set training difficulty. As tier climbs, training
+                # difficulty climbs, and 1%/cycle on this metric is genuine
+                # multiplicative compounding (no saturation cap).
+                try:
+                    self._measure_capability_tier(cycle)
+                except Exception as _exc:
+                    logger.debug(
+                        "capability_tier measurement failed (%s): %s",
+                        type(_exc).__name__, _exc,
+                    )
                 # Per-benchmark anchor scores stashed for ladder graduation
                 # detection (#46). Captures the per_bench dict from the
                 # anchor summary so _graduate_benchmark_ladder can compute

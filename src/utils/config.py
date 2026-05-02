@@ -931,10 +931,17 @@ class OrchestratorConfig:
     # real-bench-per-cycle by 1.5x (gradient strength), force one full
     # anchor on next cycle (re-ground the high-water).
     plateau_auto_response: bool = True
-    plateau_min_delta: float = 0.005  # 0.5% rolling-3 anchor delta
-    plateau_consec_cycles: int = 3
+    plateau_min_delta: float = 0.005  # legacy: kept for back-compat
+    plateau_consec_cycles: int = 3    # legacy: kept for back-compat
     plateau_rank_step: int = 8
     plateau_rank_ceiling: int = 64
+
+    # Hard floor: per-cycle minimum rolling-K anchor delta (#52). When a
+    # SINGLE cycle drops below this, the floor enforcer fires immediately
+    # — no patience. Six escalation tiers cycled through; each fires once
+    # before any repeats, then rotation resets. Default 1% per cycle =
+    # the user's foom contract floor. Set 0.0 to disable hard-floor mode.
+    floor_min_delta: float = 0.01
 
     # Anti-saturation: graduated benchmark ladder (#46). When current anchor
     # set's max rolling-3 score >= threshold, add next benchmark from the

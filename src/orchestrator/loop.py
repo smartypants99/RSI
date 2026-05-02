@@ -1547,77 +1547,143 @@ class ImprovementLoop:
         return True
 
     def _detect_and_handle_plateau(self, cycle: int, result: CycleResult) -> None:
-        """Plateau auto-response (#37). When rolling-K anchor delta has been
-        below `plateau_min_delta` for `plateau_consec_cycles` cycles in a
-        row, escalate the loop strategy:
+        """Hard floor enforcer (#52): NEVER let rolling-K anchor delta drop
+        below the floor. Triggers on EVERY cycle below floor (no patience
+        of 3) and cascades through 6 escalation tiers — each tier is a
+        different intervention, none repeated until all others tried, then
+        the cycle restarts. Combined with #46 (ladder), #47 (filter), #50
+        (replay), #51 (meta-opt), the loop has no S-curve plateau because
+        SOMETHING always escalates when gains slow.
 
-        - Bump LoRA rank by `plateau_rank_step` (next cycle's inject_lora
-          uses the increased rank, giving more learning capacity).
-        - Force the next cycle to run a FULL anchor (re-ground the
-          high-water mark instead of trusting drifting quick anchor).
-        - Bump real_benchmark_samples_per_cycle by 1.5x (more clean
-          gradient per cycle).
-
-        Self-RSI of the loop itself: when one strategy's gain saturates,
-        auto-switch to a more aggressive one without human intervention.
+        Tiers (rotated through, never repeated until cycled):
+            1. LoRA rank +8 (more capacity)
+            2. real_bench +50% (more clean gradient)
+            3. force benchmark graduation (harder bench)
+            4. force adversarial synth + full anchor + LR warmup reset
+            5. fresh hard-failure replay sweep (replay_share → 0.6)
+            6. fresh-LoRA restart (drop adapter, re-init from base; the
+               warm-LoRA's memorized patterns get re-distilled into a
+               cleaner LoRA on next cycle's training)
         """
         if not getattr(
             self.config.orchestrator, "plateau_auto_response", True,
         ):
             return
-        min_delta = float(getattr(
-            self.config.orchestrator, "plateau_min_delta", 0.005,
+        floor = float(getattr(
+            self.config.orchestrator, "floor_min_delta", 0.01,
+        ))  # 1% per cycle, the user's hard contract
+        rolling_window = int(getattr(
+            self.config.orchestrator, "anchor_rolling_window", 3,
         ))
-        consec_needed = int(getattr(
-            self.config.orchestrator, "plateau_consec_cycles", 3,
-        ))
-        if not hasattr(self, "_plateau_streak"):
-            self._plateau_streak = 0
-        # Compare this cycle's anchor against rolling-3 reference
-        rolling = self._rolling_anchor(k=3)
+        rolling = self._rolling_anchor(k=rolling_window)
         cur = getattr(result, "anchor_score", None)
         if rolling is None or cur is None:
             return
         delta = cur - rolling
-        if delta < min_delta:
-            self._plateau_streak += 1
-        else:
-            if self._plateau_streak > 0:
+        if delta >= floor:
+            # Above floor — clear any tier rotation history. Loop is healthy.
+            if getattr(self, "_floor_tiers_used", None):
                 logger.info(
-                    f"  plateau cleared (cycle {cycle} delta=+{delta:.4f} "
-                    f"≥ {min_delta:.4f})"
+                    f"  floor RESPECTED (cycle {cycle} Δ=+{delta:.4f} "
+                    f"≥ {floor:.4f}) — clearing tier rotation"
                 )
-            self._plateau_streak = 0
-        if self._plateau_streak < consec_needed:
+                self._floor_tiers_used = set()
             return
-        # Plateau confirmed. Escalate.
-        rank_step = int(getattr(
-            self.config.orchestrator, "plateau_rank_step", 8,
-        ))
-        rank_ceiling = int(getattr(
-            self.config.orchestrator, "plateau_rank_ceiling", 64,
-        ))
-        old_rank = int(self.config.trainer.lora_rank)
-        new_rank = min(rank_ceiling, old_rank + rank_step)
-        old_real = int(getattr(
-            self.config.orchestrator, "real_benchmark_samples_per_cycle", 20,
-        ))
-        new_real = min(60, max(old_real + 5, int(old_real * 1.5)))
-        self.config.trainer.lora_rank = new_rank
-        self.config.orchestrator.real_benchmark_samples_per_cycle = new_real
-        self._force_full_anchor_next = True
-        # Temporarily re-enable synth on plateau: auto-curriculum signal
-        # (anchor-failed prompts seeded into proposer inspiration bank) is
-        # dormant when synth is skipped. Re-running synth uses that signal
-        # to attack the model's current weak spots from a fresh angle.
-        self._force_synth_next = True
-        logger.warning(
-            f"  PLATEAU ESCALATION (streak={self._plateau_streak}): "
-            f"LoRA rank {old_rank} → {new_rank}, real-bench/cycle "
-            f"{old_real} → {new_real}, force full anchor + synth next cycle"
+        # Below floor on THIS single cycle — fire an escalation immediately.
+        if not hasattr(self, "_floor_tiers_used"):
+            self._floor_tiers_used = set()
+        # All 6 tiers in priority order; first not-yet-used wins.
+        tiers_in_order = [1, 2, 3, 4, 5, 6]
+        next_tier = next(
+            (t for t in tiers_in_order if t not in self._floor_tiers_used),
+            None,
         )
-        # Reset streak so we don't escalate every cycle thereafter.
-        self._plateau_streak = 0
+        if next_tier is None:
+            # All tiers exhausted — reset rotation, start over with tier 1.
+            logger.warning(
+                f"  FLOOR enforcer: all 6 tiers cycled, resetting rotation"
+            )
+            self._floor_tiers_used = set()
+            next_tier = 1
+        self._floor_tiers_used.add(next_tier)
+
+        if next_tier == 1:
+            old_rank = int(self.config.trainer.lora_rank)
+            ceiling = int(getattr(
+                self.config.orchestrator, "plateau_rank_ceiling", 64,
+            ))
+            step = int(getattr(
+                self.config.orchestrator, "plateau_rank_step", 8,
+            ))
+            new_rank = min(ceiling, old_rank + step)
+            self.config.trainer.lora_rank = new_rank
+            logger.warning(
+                f"  FLOOR TIER 1 (cycle {cycle} Δ={delta:+.4f} < {floor:.4f}): "
+                f"LoRA rank {old_rank} → {new_rank}"
+            )
+            return
+        if next_tier == 2:
+            old_real = int(getattr(
+                self.config.orchestrator, "real_benchmark_samples_per_cycle", 20,
+            ))
+            new_real = min(80, max(old_real + 8, int(old_real * 1.5)))
+            self.config.orchestrator.real_benchmark_samples_per_cycle = new_real
+            logger.warning(
+                f"  FLOOR TIER 2 (cycle {cycle} Δ={delta:+.4f}): "
+                f"real-bench/cycle {old_real} → {new_real}"
+            )
+            return
+        if next_tier == 3:
+            # Force graduation: lower saturation threshold to current
+            # rolling-3 anchor − 1%, so the ladder advances even if not at
+            # 95% yet. Re-runs ladder check immediately on next cycle.
+            cur_anchor_avg = self._rolling_anchor(k=3) or 0.0
+            forced_thresh = max(0.50, cur_anchor_avg - 0.01)
+            self.config.orchestrator.benchmark_saturation_threshold = forced_thresh
+            self._force_full_anchor_next = True
+            logger.warning(
+                f"  FLOOR TIER 3 (cycle {cycle} Δ={delta:+.4f}): "
+                f"force benchmark graduation by lowering threshold to "
+                f"{forced_thresh:.3f} (was rolling-3={cur_anchor_avg:.3f})"
+            )
+            return
+        if next_tier == 4:
+            # Force synth + full anchor + tiny LR warmup reset (gentler step
+            # to dig out of a local minimum the higher LR overshot).
+            self._force_synth_next = True
+            self._force_full_anchor_next = True
+            old_lr = float(self.config.trainer.learning_rate)
+            warmup_lr = max(1e-6, old_lr * 0.5)
+            self.config.trainer.learning_rate = warmup_lr
+            logger.warning(
+                f"  FLOOR TIER 4 (cycle {cycle} Δ={delta:+.4f}): "
+                f"force synth+full-anchor, LR warmup-reset {old_lr:.2e} → "
+                f"{warmup_lr:.2e}"
+            )
+            return
+        if next_tier == 5:
+            old_share = float(getattr(
+                self.config.orchestrator, "hard_failure_replay_share", 0.3,
+            ))
+            new_share = min(0.7, old_share + 0.2)
+            self.config.orchestrator.hard_failure_replay_share = new_share
+            logger.warning(
+                f"  FLOOR TIER 5 (cycle {cycle} Δ={delta:+.4f}): "
+                f"hard-failure replay share {old_share:.2f} → {new_share:.2f}"
+            )
+            return
+        if next_tier == 6:
+            # Last resort: drop the LoRA persistence pointer so cycle N+1
+            # starts from base + fresh inject_lora. The current accumulated
+            # patterns (which are stuck) get re-derived from training data
+            # at the new rank/setting. Kind of like a Boltzmann reset.
+            self._force_fresh_lora_next = True
+            logger.warning(
+                f"  FLOOR TIER 6 (cycle {cycle} Δ={delta:+.4f}): "
+                f"FRESH-LoRA RESTART next cycle (drop accumulated adapter, "
+                f"re-derive from training data at current settings)"
+            )
+            return
 
     def _adapt_lr(self, *, promoted: bool = False, reverted: bool = False) -> None:
         """Cycle-quality bandit (#36): scale the trainer LR up on promoted
@@ -1877,6 +1943,16 @@ class ImprovementLoop:
         if not getattr(
             self.config.orchestrator, "use_lora_adapter_persistence", True,
         ):
+            return None
+        # Floor-enforcer tier 6 one-shot: forces a fresh-LoRA restart next
+        # cycle to dig out of a stuck minimum. Consumed here so it only
+        # affects exactly one cycle; subsequent cycles resume normally.
+        if getattr(self, "_force_fresh_lora_next", False):
+            self._force_fresh_lora_next = False
+            logger.info(
+                "  _lora_resume_path: skipping resume (TIER 6 fresh-LoRA "
+                "restart fired this cycle)"
+            )
             return None
         try:
             lw_root = self.config.orchestrator.output_dir / "lora_weights"

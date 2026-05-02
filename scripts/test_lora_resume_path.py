@@ -26,10 +26,11 @@ class _Stub:
 
 
 def make_loop(tmpdir: pathlib.Path, *, persistence=True, best_cycle=None,
-              latest_good=True):
+              latest_good=True, force_fresh=False):
     loop = ImprovementLoop.__new__(ImprovementLoop)
     loop.config = _Stub(tmpdir, use_persistence=persistence, latest_good=latest_good)
     loop._best_checkpoint_cycle = best_cycle
+    loop._force_fresh_lora_next = force_fresh
     return loop
 
 
@@ -97,7 +98,19 @@ def main() -> None:
         got = loop._lora_resume_path()
         assert got is None, f"expected None when all reverted, got {got}"
 
-    print("PASS — _lora_resume_path: 8/8 cases")
+        # 8. Floor-enforcer TIER 6 forces fresh-LoRA: even with valid adapters,
+        # _force_fresh_lora_next short-circuits to None for one cycle.
+        (tmp / "lora_weights" / "lora_cycle_5").mkdir(exist_ok=True)
+        (tmp / "lora_weights" / "lora_cycle_5" / "lora_weights.pt").write_text("stub")
+        loop = make_loop(tmp, force_fresh=True)
+        got = loop._lora_resume_path()
+        assert got is None, "expected None with force_fresh=True"
+        # And the flag is consumed: next call resumes normally.
+        got2 = loop._lora_resume_path()
+        assert got2 is not None and got2.name == "lora_cycle_5", \
+            f"expected cycle_5 after fresh-flag consumed, got {got2}"
+
+    print("PASS — _lora_resume_path: 9/9 cases")
 
 
 if __name__ == "__main__":

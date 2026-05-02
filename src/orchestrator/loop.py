@@ -1750,6 +1750,43 @@ class ImprovementLoop:
             return None
         return sum(scores) / len(scores)
 
+    def _load_procedural_training_samples(self, cycle: int, n: int) -> list:
+        """Procedural problem generator (#58): infinite supply of novel
+        coding problems with verified canonical solutions. Used as fallback
+        when external benchmarks don't yield enough training items, AND as
+        unconditional anti-saturation supplement (mixed in alongside real-
+        bench every cycle). Each call with the same (cycle, n) returns the
+        same problems for reproducibility.
+        """
+        if n <= 0:
+            return []
+        try:
+            from .procedural_problems import sample_problems
+            from ..generator.data_generator import TrainingSample
+        except Exception:
+            return []
+        try:
+            problems = sample_problems(n=n, seed=cycle * 1000 + 7)
+        except Exception:
+            return []
+        out: list = []
+        for p in problems:
+            prompt = p["prompt"]
+            ans = p["canonical_code"]
+            response = f"```python\n{ans}\n```"
+            out.append(TrainingSample(
+                prompt=prompt,
+                response=response,
+                domain="code",
+                verified=True,
+                confidence=1.0,
+                target_weakness=f"procedural/{p.get('category', 'unknown')}",
+                source="procedural",
+                ground_truth_verified=True,
+                expected_answer=ans,
+            ))
+        return out
+
     def _load_real_benchmark_training_samples(
         self, cycle: int, n_per_bench: int = 5,
     ) -> list:
@@ -2322,6 +2359,32 @@ class ImprovementLoop:
                 f"  Mixed {len(real_samples)} real-benchmark "
                 f"(HumanEval+MBPP) samples into training pool "
                 f"(now {len(verified)} total)"
+            )
+        # Procedural problem generator (#58) — infinite anti-saturation
+        # supply. Mix in alongside real-bench every cycle. When external
+        # benchmarks saturate, procedural keeps producing genuinely-novel
+        # problems with verified canonical solutions, so the floor enforcer
+        # always has fresh ground-truth gradient to escalate into.
+        try:
+            proc_n = int(getattr(
+                self.config.orchestrator,
+                "procedural_samples_per_cycle", 30,
+            ))
+            proc_samples = self._load_procedural_training_samples(
+                cycle=cycle, n=proc_n,
+            ) if proc_n > 0 else []
+        except Exception as exc:
+            logger.warning(
+                f"  procedural mix failed ({type(exc).__name__}: {exc}); "
+                f"continuing without procedural supplement"
+            )
+            proc_samples = []
+        if proc_samples:
+            verified = list(verified) + list(proc_samples)
+            logger.info(
+                f"  Mixed {len(proc_samples)} PROCEDURAL samples "
+                f"(infinite ground-truth supply, anti-saturation) into "
+                f"training pool (now {len(verified)} total)"
             )
         # Adversarial proposer toggle (#48): flip ON when synth pass-rate
         # climbs above threshold — the model is too good at easy synth and

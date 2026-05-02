@@ -959,6 +959,14 @@ class OrchestratorConfig:
     adversarial_enable_pass_rate: float = 0.8
     adversarial_disable_pass_rate: float = 0.4
 
+    # Procedural problem generator (#58). Infinite supply of novel coding
+    # problems with verified canonical solutions, mixed in EVERY cycle as
+    # anti-saturation supplement. When external benchmarks saturate, this
+    # keeps producing fresh ground-truth gradient so the floor enforcer
+    # always has somewhere to escalate. Default 30/cycle on top of the
+    # 160 real-bench samples.
+    procedural_samples_per_cycle: int = 30
+
     # Anti-saturation: graduated benchmark ladder (#46). When current anchor
     # set's max rolling-3 score >= threshold, add next benchmark from the
     # ladder. Prevents "stuck at 95% HumanEval forever" — saturated

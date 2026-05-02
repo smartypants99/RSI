@@ -302,7 +302,13 @@ class TrainerConfig:
     # count sanity: samples=10, grad_accum=4, batch=2 → ceil(10*3/8) = 4
     # steps; samples=20 → 8 steps. Still far under the 25-step memorization
     # failure from cycle 3. max_steps_per_cycle=8 remains the backstop.
-    num_epochs: int = 3
+    # 2 epochs: with multi-cycle LoRA persistence each cycle CONTINUES
+    # training the prior cycle's weights. 3 epochs of "fresh" training
+    # was right when every cycle started at zero-init; on warm weights
+    # it's mild overfitting per cycle. 2 epochs cuts train time ~33%
+    # spread across more cycles → faster ratchet without losing total
+    # gradient. Plateau auto-response can ramp back if needed.
+    num_epochs: int = 2
     batch_size: int = 2
     gradient_accumulation_steps: int = 4
     # Warmup-cycle epoch cap (task #14). Early cycles have the least-

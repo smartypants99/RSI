@@ -3836,6 +3836,27 @@ class ImprovementLoop:
                 "improvement": _nan_to_none(
                     getattr(result, "improvement", None)
                 ),
+                # Foom analytics (#44): config knobs in effect this cycle.
+                # Lets offline regression of (config → gain) drive smarter
+                # plateau / knob-bandit decisions across runs.
+                "lr": float(getattr(self.config.trainer, "learning_rate", 0.0) or 0.0),
+                "lora_rank": int(getattr(self.config.trainer, "lora_rank", 0) or 0),
+                "num_epochs": int(getattr(self.config.trainer, "num_epochs", 0) or 0),
+                "real_bench_per_cycle": int(getattr(
+                    ocfg, "real_benchmark_samples_per_cycle", 0,
+                ) or 0),
+                "synth_skipped": bool(
+                    getattr(result, "samples_generated", -1) == 0
+                    and bool(getattr(ocfg, "allow_skip_synth_phase", False))
+                ),
+                "anchor_eval_size_used": (
+                    ocfg.anchor_eval_size
+                    if (cycle % max(1, getattr(ocfg, "anchor_full_every_n_cycles", 5)) == 0)
+                    or cycle == 1
+                    else getattr(ocfg, "anchor_quick_size", 80)
+                ),
+                "rolling_anchor_3": _nan_to_none(self._rolling_anchor(k=3)),
+                "plateau_streak": int(getattr(self, "_plateau_streak", 0)),
             }
             _emit_structured_log("cycle_summary", row, ocfg)
         except Exception as _e:  # pragma: no cover

@@ -1295,6 +1295,112 @@ class ImprovementLoop:
                 break
         return None
 
+    def _meta_optimize_knobs(self, cycle: int) -> None:
+        """Meta-RSI seed (#51): every `meta_optimize_every_n` cycles, read
+        cycle_summary.jsonl, group by (lr, lora_rank, num_epochs,
+        real_bench_per_cycle, synth_skipped), compute median rolling-3
+        anchor delta per combo, and migrate config toward the combo that
+        beat the current settings by >= meta_min_improvement.
+
+        This is the manual version of what the model itself will do in
+        Phase 2 (rewrite its own RSI loop). For now: simple grouped
+        median, but the cycle_summary schema captures everything a more
+        sophisticated regression would need.
+        """
+        if not getattr(
+            self.config.orchestrator, "meta_optimize_enabled", True,
+        ):
+            return
+        every = int(getattr(
+            self.config.orchestrator, "meta_optimize_every_n", 10,
+        ))
+        if every <= 0 or cycle % every != 0 or cycle < every:
+            return
+        try:
+            log = self.config.orchestrator.output_dir / "cycle_summary.jsonl"
+        except Exception:
+            return
+        if not log.exists():
+            return
+        try:
+            with log.open("r") as fh:
+                rows = [json.loads(ln) for ln in fh if ln.strip()]
+        except Exception:
+            return
+        if len(rows) < every:
+            return
+        # Group rows by knob combo, compute median anchor delta vs prior.
+        from collections import defaultdict as _dd
+        per_combo: dict[tuple, list[float]] = _dd(list)
+        prev_anchor = None
+        for r in rows:
+            anc = r.get("anchor_score")
+            if anc is None:
+                prev_anchor = None
+                continue
+            if prev_anchor is not None:
+                key = (
+                    round(float(r.get("lr", 0.0) or 0.0), 7),
+                    int(r.get("lora_rank", 0) or 0),
+                    int(r.get("num_epochs", 0) or 0),
+                    int(r.get("real_bench_per_cycle", 0) or 0),
+                    bool(r.get("synth_skipped", False)),
+                )
+                per_combo[key].append(float(anc) - prev_anchor)
+            prev_anchor = float(anc)
+        if not per_combo:
+            return
+
+        def _median(xs: list[float]) -> float:
+            if not xs:
+                return 0.0
+            s = sorted(xs)
+            n = len(s)
+            return s[n // 2] if n % 2 else 0.5 * (s[n // 2 - 1] + s[n // 2])
+
+        # Current combo signature
+        cur_key = (
+            round(float(self.config.trainer.learning_rate), 7),
+            int(self.config.trainer.lora_rank),
+            int(self.config.trainer.num_epochs),
+            int(self.config.orchestrator.real_benchmark_samples_per_cycle),
+            False,  # synth_skipped — filled by skip-synth gate; unknown here
+        )
+        cur_med = _median(per_combo.get(cur_key, []))
+        # Best combo with N >= 2 samples to avoid one-shot outliers.
+        candidates = [
+            (k, _median(v))
+            for k, v in per_combo.items()
+            if len(v) >= 2 and k != cur_key
+        ]
+        if not candidates:
+            return
+        candidates.sort(key=lambda kv: -kv[1])
+        best_key, best_med = candidates[0]
+        min_improve = float(getattr(
+            self.config.orchestrator, "meta_min_improvement", 0.005,
+        ))
+        if best_med - cur_med < min_improve:
+            return
+        # Migrate to best combo.
+        new_lr, new_rank, new_epochs, new_real, _ = best_key
+        old_lr = self.config.trainer.learning_rate
+        old_rank = self.config.trainer.lora_rank
+        old_epochs = self.config.trainer.num_epochs
+        old_real = self.config.orchestrator.real_benchmark_samples_per_cycle
+        self.config.trainer.learning_rate = new_lr
+        self.config.trainer.lora_rank = new_rank
+        self.config.trainer.num_epochs = new_epochs
+        self.config.orchestrator.real_benchmark_samples_per_cycle = new_real
+        logger.warning(
+            f"  META-OPTIMIZE (cycle {cycle}): combo "
+            f"(lr={new_lr:.2e}, rank={new_rank}, epochs={new_epochs}, "
+            f"real={new_real}) median Δanchor={best_med:.4f} beats current "
+            f"(lr={old_lr:.2e}, rank={old_rank}, epochs={old_epochs}, "
+            f"real={old_real}) median Δanchor={cur_med:.4f} by "
+            f"{best_med - cur_med:.4f} ≥ {min_improve:.4f} — adopting."
+        )
+
     def _items_ever_failed(self, look_back_cycles: int = 50) -> set[str]:
         """Hard-failure replay buffer (#50): item_ids the model has ever
         failed in the last N cycles. Sampler can mix some of these into
@@ -4592,6 +4698,18 @@ class ImprovementLoop:
                 except Exception as _exc:
                     logger.debug(
                         "plateau detection failed (%s): %s",
+                        type(_exc).__name__, _exc,
+                    )
+                # Meta-optimizer (#51): every meta_optimize_every_n cycles,
+                # read cycle_summary.jsonl, find the best (lr,rank,epochs,
+                # real_bench) combo from history, migrate config toward it
+                # if median Δanchor beats current by meta_min_improvement.
+                # Bootstrap of meta-RSI: system learns from its own history.
+                try:
+                    self._meta_optimize_knobs(cycle)
+                except Exception as _exc:
+                    logger.debug(
+                        "meta-optimize failed (%s): %s",
                         type(_exc).__name__, _exc,
                     )
                 # Auto-curriculum signal (#27, #31): persist per-item pass/

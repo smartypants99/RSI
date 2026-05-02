@@ -957,6 +957,16 @@ class OrchestratorConfig:
     # Anti-forgetting: previously-conquered-then-degraded items get extra
     # reps. Set 0 to disable.
     hard_failure_replay_share: float = 0.3
+
+    # Meta-optimizer (#51, Phase-2 seed). Every meta_optimize_every_n
+    # cycles, system regresses cycle_summary.jsonl: groups by (lr, rank,
+    # epochs, real_bench) combo, computes median Δanchor per combo, and
+    # migrates config to the combo that beats current by ≥
+    # meta_min_improvement. The bootstrap of self-improvement of the
+    # improvement loop itself.
+    meta_optimize_enabled: bool = True
+    meta_optimize_every_n: int = 10
+    meta_min_improvement: float = 0.005  # 0.5% Δanchor threshold to switch
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
         "humaneval", "mbpp", "gsm8k", "math",
     ])

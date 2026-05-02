@@ -1295,6 +1295,151 @@ class ImprovementLoop:
                 break
         return None
 
+    def _items_ever_failed(self, look_back_cycles: int = 50) -> set[str]:
+        """Hard-failure replay buffer (#50): item_ids the model has ever
+        failed in the last N cycles. Sampler can mix some of these into
+        the training pool every cycle to prevent catastrophic forgetting
+        when the loop graduates to harder benchmarks.
+        """
+        try:
+            log = self.config.orchestrator.output_dir / "anchor_failures.jsonl"
+        except Exception:
+            return set()
+        if not log.exists():
+            return set()
+        try:
+            with log.open("r") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return set()
+        ever_failed: set[str] = set()
+        cycles_seen: set[int] = set()
+        for ln in reversed(lines):
+            try:
+                rec = json.loads(ln)
+            except Exception:
+                continue
+            cycles_seen.add(int(rec.get("cycle", -1)))
+            if len(cycles_seen) > look_back_cycles:
+                break
+            if not rec.get("passed", True):
+                iid = str(rec.get("item_id", ""))
+                if iid:
+                    ever_failed.add(iid)
+        return ever_failed
+
+    def _items_mastered(self, look_back_cycles: int = 3) -> set[str]:
+        """Read anchor_failures.jsonl, return set of item_ids the model has
+        passed in the last `look_back_cycles` consecutive cycles. These items
+        are mastered — training on them is wasted gradient. Real-bench
+        sampler filters these out.
+        """
+        try:
+            log = self.config.orchestrator.output_dir / "anchor_failures.jsonl"
+        except Exception:
+            return set()
+        if not log.exists():
+            return set()
+        # Read last 5 cycles' worth of records (overshoot to be safe).
+        per_item: dict[str, list[bool]] = {}
+        try:
+            with log.open("r") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return set()
+        # Last 8 cycles of anchor records, parse cycle and per-item pass.
+        cycles_seen: set[int] = set()
+        recent_lines: list[str] = []
+        for ln in reversed(lines):
+            try:
+                rec = json.loads(ln)
+            except Exception:
+                continue
+            cycles_seen.add(int(rec.get("cycle", -1)))
+            if len(cycles_seen) > look_back_cycles + 2:
+                break
+            recent_lines.append(ln)
+        for ln in recent_lines:
+            try:
+                rec = json.loads(ln)
+            except Exception:
+                continue
+            iid = str(rec.get("item_id", ""))
+            if not iid:
+                continue
+            per_item.setdefault(iid, []).append(bool(rec.get("passed", False)))
+        # Mastered = passed in EVERY cycle it was tested in look-back.
+        mastered = set()
+        for iid, results in per_item.items():
+            recent = results[:look_back_cycles]  # most recent first (we reversed)
+            if len(recent) >= look_back_cycles and all(recent):
+                mastered.add(iid)
+        return mastered
+
+    def _graduate_benchmark_ladder(self, cycle: int, result: CycleResult) -> bool:
+        """Anti-saturation: when current anchor benchmarks saturate (rolling-3
+        anchor >= saturation_threshold), graduate the next harder benchmark
+        into the anchor set. Ladder (easy → hard):
+            humaneval → mbpp → ds1000 → livecodebench → bigcodebench → swebench
+        Math/logic ladder runs in parallel.
+
+        Returns True if a new benchmark was graduated this cycle (caller can
+        force a full anchor next cycle to re-baseline). Saturation here is
+        per-benchmark not aggregate — gates on rolling-3 of THIS benchmark
+        only so saturation in code doesn't gate on slow-moving math etc.
+        """
+        if not getattr(
+            self.config.orchestrator, "auto_graduate_benchmarks", True,
+        ):
+            return False
+        sat_thresh = float(getattr(
+            self.config.orchestrator, "benchmark_saturation_threshold", 0.95,
+        ))
+        ladder = list(getattr(
+            self.config.orchestrator, "benchmark_graduation_ladder",
+            ("humaneval", "mbpp", "ds1000", "livecodebench",
+             "bigcodebench", "swebench"),
+        ))
+        active = list(getattr(
+            self.config.orchestrator, "anchor_eval_benchmarks", []
+        ) or [])
+        # Find next benchmark to graduate (first one in ladder NOT yet active).
+        candidate = next((b for b in ladder if b not in active), None)
+        if candidate is None:
+            return False
+        # Per-bench rolling-3: average bench scores from last 3 valid cycles.
+        scores: list[float] = []
+        for r in reversed(self.history):
+            if getattr(r, "verifier_capture_alarm", False):
+                continue
+            pb = getattr(r, "anchor_per_benchmark", None) or {}
+            for ab in active:
+                v = pb.get(ab) if isinstance(pb, dict) else None
+                if isinstance(v, (int, float)):
+                    scores.append(float(v))
+            if len(scores) >= 3 * len(active):
+                break
+        if len(scores) < 2 * len(active):
+            return False
+        max_active_avg = (
+            max(
+                sum(s for s in scores[i::len(active)]) / max(1, len(scores) // len(active))
+                for i in range(len(active))
+            ) if active else 0.0
+        )
+        if max_active_avg < sat_thresh:
+            return False
+        # Saturation confirmed — graduate.
+        new_active = list(active) + [candidate]
+        self.config.orchestrator.anchor_eval_benchmarks = new_active
+        self._force_full_anchor_next = True
+        logger.warning(
+            f"  BENCHMARK GRADUATION (cycle {cycle}): max-active rolling avg "
+            f"{max_active_avg:.3f} ≥ {sat_thresh:.2f} → adding '{candidate}' "
+            f"to anchor set; new set: {new_active}"
+        )
+        return True
+
     def _detect_and_handle_plateau(self, cycle: int, result: CycleResult) -> None:
         """Plateau auto-response (#37). When rolling-K anchor delta has been
         below `plateau_min_delta` for `plateau_consec_cycles` cycles in a
@@ -1476,6 +1621,23 @@ class ImprovementLoop:
             // max(1, len(_anchor_benches) if _anchor_benches else 1),
         )
         out: list = []
+        # Per-item difficulty filter (#47): skip items the model has
+        # mastered (passed in last 3/3 cycles). Training on items already
+        # at 100% is wasted gradient — forces sampler toward frontier.
+        # Items that flip back to fail will be re-eligible automatically.
+        mastered_ids = (
+            self._items_mastered(look_back_cycles=3)
+            if getattr(ocfg, "skip_mastered_items_in_training", True)
+            else set()
+        )
+        # Hard-failure replay buffer (#50): items the model has EVER failed
+        # in the last 50 cycles. Sampler biases picks toward these so
+        # frequently-failed problems get extra training reps.
+        ever_failed_ids = (
+            self._items_ever_failed(look_back_cycles=50)
+            if getattr(ocfg, "hard_failure_replay_share", 0.3) > 0
+            else set()
+        )
         # Foom training pool draws from all available code benchmarks
         # (#38), not just the canonical anchor four. ds1000 + livecodebench
         # add ~1500 more clean problems if their HF repos are reachable;
@@ -1516,6 +1678,20 @@ class ImprovementLoop:
             )
             train_pool = sorted_items[anchor_per_bench:]
             anchor_pool = sorted_items[:anchor_per_bench]
+            # Filter mastered items out of train pool (#47). Items the model
+            # has crushed for 3 cycles straight don't need to be trained on
+            # again. Frees up sampling slots for frontier items.
+            if mastered_ids:
+                _before = len(train_pool)
+                train_pool = [
+                    it for it in train_pool if it.item_id not in mastered_ids
+                ]
+                _filtered = _before - len(train_pool)
+                if _filtered > 0:
+                    logger.info(
+                        f"  difficulty filter: dropped {_filtered} mastered "
+                        f"{bench} items from train pool ({len(train_pool)} left)"
+                    )
             if not train_pool:
                 # Benchmark too small for split — skip rather than leak.
                 logger.warning(
@@ -1538,6 +1714,24 @@ class ImprovementLoop:
             indices = list(range(len(train_pool)))
             rng.shuffle(indices)
             picks = [train_pool[indices[k]] for k in range(min(n_per_bench, len(train_pool)))]
+            # Hard-failure replay (#50): bias picks toward items the model
+            # has ever failed (in the train_pool partition only — anti-
+            # leakage maintained). Replaces a fraction of random picks
+            # with replayed-failures so frequently-failed problems get
+            # extra reps. Default 30% replay share when failures known.
+            replay_share = float(getattr(
+                ocfg, "hard_failure_replay_share", 0.3,
+            ))
+            if replay_share > 0 and ever_failed_ids:
+                replay_pool = [it for it in train_pool if it.item_id in ever_failed_ids]
+                if replay_pool:
+                    n_replay = max(1, int(round(len(picks) * replay_share)))
+                    rng3 = _rng_mod.Random(
+                        hash(("replay", bench, cycle)) & 0xFFFF_FFFF,
+                    )
+                    rng3.shuffle(replay_pool)
+                    replay_picks = replay_pool[:n_replay]
+                    picks = picks[:-n_replay] + replay_picks
             del anchor_pool  # used only for the leakage-guard split above
             for it in picks:
                 ans = (it.answer or "").strip()
@@ -4369,6 +4563,27 @@ class ImprovementLoop:
                     summary.get("per_benchmark_distinct", {}),
                     summary.get("per_benchmark_offline", {}),
                 )
+                # Per-benchmark anchor scores stashed for ladder graduation
+                # detection (#46). Captures the per_bench dict from the
+                # anchor summary so _graduate_benchmark_ladder can compute
+                # rolling per-bench means.
+                try:
+                    result.anchor_per_benchmark = dict(
+                        summary.get("per_benchmark", {}) or {}
+                    )
+                except Exception:
+                    pass
+                # Auto-graduate next harder benchmark when current set
+                # saturates (#46). Runs BEFORE plateau detection so the
+                # graduated benchmark's signal is part of next cycle's
+                # rolling-3 immediately.
+                try:
+                    self._graduate_benchmark_ladder(cycle, result)
+                except Exception as _exc:
+                    logger.debug(
+                        "benchmark graduation check failed (%s): %s",
+                        type(_exc).__name__, _exc,
+                    )
                 # Plateau auto-response (#37): detect flat rolling-3 anchor
                 # and escalate strategy if so. Runs every cycle but only
                 # fires on `plateau_consec_cycles` of below-threshold deltas.

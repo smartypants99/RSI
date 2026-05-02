@@ -935,6 +935,28 @@ class OrchestratorConfig:
     plateau_consec_cycles: int = 3
     plateau_rank_step: int = 8
     plateau_rank_ceiling: int = 64
+
+    # Anti-saturation: graduated benchmark ladder (#46). When current anchor
+    # set's max rolling-3 score >= threshold, add next benchmark from the
+    # ladder. Prevents "stuck at 95% HumanEval forever" — saturated
+    # benchmarks become part of the regression-check pool while the new
+    # bench drives the gradient. Runs through code-domain ladder; multi-
+    # domain rotation (#49) handles cross-domain expansion.
+    auto_graduate_benchmarks: bool = True
+    benchmark_saturation_threshold: float = 0.95
+    benchmark_graduation_ladder: tuple = (
+        "humaneval", "mbpp", "ds1000", "livecodebench",
+        "bigcodebench", "swebench",
+    )
+    # Per-item difficulty filter (#47). Skip training-pool items the model
+    # has passed in the last 3/3 cycles — wasted gradient. Frees slots for
+    # frontier items. Items that flip pass→fail re-enter automatically.
+    skip_mastered_items_in_training: bool = True
+    # Hard-failure replay (#50). Fraction of real-bench training picks
+    # replaced by items the model has ever failed in the last 50 cycles.
+    # Anti-forgetting: previously-conquered-then-degraded items get extra
+    # reps. Set 0 to disable.
+    hard_failure_replay_share: float = 0.3
     anchor_eval_benchmarks: list[str] = field(default_factory=lambda: [
         "humaneval", "mbpp", "gsm8k", "math",
     ])

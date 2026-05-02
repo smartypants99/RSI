@@ -38,25 +38,53 @@ fi
 # trained later.
 PRIMER_ARG=""
 
-exec python main.py \
-    --model unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit \
-    --load-in-4bit \
-    --use-vllm \
-    --gpu-memory-utilization 0.75 \
-    --domains code,math,logic \
-    --mode rsi \
-    --enable-task-synthesis \
-    --synthesis-tasks-per-cycle 20 \
-    --property-consensus-threshold 0.7 \
-    --consistency-samples 3 \
-    --samples-per-weakness 100 \
-    --consistency-threshold 0.34 \
-    --lora-rank 32 \
-    --learning-rate 8e-6 \
-    --plateau-patience 8 \
-    --heldout-repetitions 1 \
-    --max-cycles 40 \
-    --write-cycle-metrics \
-    --write-cycle-samples \
-    ${PRIMER_ARG} \
-    ${RESUME_ARG}
+# Foom resilience: auto-restart main.py up to AUTORESTART_MAX times on
+# crash (transient OOM, vLLM engine died, network blip downloading HF
+# datasets, etc.). With multi-cycle LoRA persistence + .reverted markers
+# + adapter dirs on disk, restarted runs RESUME from the last good cycle
+# automatically via _lora_resume_path. Disable by setting
+# AUTORESTART_MAX=0 in the env.
+AUTORESTART_MAX="${AUTORESTART_MAX:-5}"
+_attempt=0
+while true; do
+    python main.py \
+        --model unsloth/Qwen2.5-Coder-32B-Instruct-bnb-4bit \
+        --load-in-4bit \
+        --use-vllm \
+        --gpu-memory-utilization 0.75 \
+        --domains code,math,logic \
+        --mode rsi \
+        --enable-task-synthesis \
+        --synthesis-tasks-per-cycle 20 \
+        --property-consensus-threshold 0.7 \
+        --consistency-samples 3 \
+        --samples-per-weakness 100 \
+        --consistency-threshold 0.34 \
+        --lora-rank 32 \
+        --learning-rate 8e-6 \
+        --plateau-patience 8 \
+        --heldout-repetitions 1 \
+        --max-cycles 200 \
+        --write-cycle-metrics \
+        --write-cycle-samples \
+        ${PRIMER_ARG} \
+        ${RESUME_ARG}
+    _rc=$?
+    # Clean exit (max-cycles reached, user Ctrl-C, or graceful end) → stop.
+    if [ "$_rc" = "0" ]; then
+        echo "[run_deepseek] main.py exited cleanly (rc=0); stopping."
+        break
+    fi
+    _attempt=$((_attempt + 1))
+    if [ "$_attempt" -ge "$AUTORESTART_MAX" ]; then
+        echo "[run_deepseek] main.py failed $_attempt times; exhausted AUTORESTART_MAX=$AUTORESTART_MAX, giving up."
+        exit "$_rc"
+    fi
+    # Kill any orphan vLLM/EngineCore that pinned VRAM, then re-launch.
+    for _proc in $(pgrep -f 'VLLM::EngineCore|multiprocessing.resource_tracker' 2>/dev/null); do
+        kill -9 "$_proc" 2>/dev/null || true
+    done
+    _wait=$((10 * _attempt))
+    echo "[run_deepseek] main.py crashed (rc=$_rc); restart $_attempt/$AUTORESTART_MAX in ${_wait}s — _lora_resume_path picks up from latest non-reverted adapter."
+    sleep "$_wait"
+done

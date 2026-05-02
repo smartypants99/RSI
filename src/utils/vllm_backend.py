@@ -50,7 +50,8 @@ class VLLMModelLoader:
                  log_throughput_stats: bool = False,
                  quantization_scheme: str = "auto",
                  speculative_draft_model: str | None = None,
-                 num_speculative_tokens: int = 0):
+                 num_speculative_tokens: int = 0,
+                 kv_cache_dtype: str = "fp8"):
         self.model_path = model_path
         self.dtype = dtype
         self.max_model_len = max_model_len
@@ -126,6 +127,7 @@ class VLLMModelLoader:
                 self.dtype = "float16"
         self.speculative_draft_model = speculative_draft_model or None
         self.num_speculative_tokens = int(num_speculative_tokens or 0)
+        self.kv_cache_dtype = str(kv_cache_dtype or "auto")
         if self.coresident_training_enabled:
             # Override the effective VRAM fraction and force eager mode.
             self.gpu_memory_utilization = self.coresident_vllm_mem_frac
@@ -206,6 +208,14 @@ class VLLMModelLoader:
             # set it explicitly so the optimization survives version drift.
             enable_prefix_caching=True,
         )
+        # Ceiling-break #4 / #56: fp8 KV cache. Halves KV memory at ~1%
+        # quality cost on Ampere+. On 48GB A6000 with 32B-bnb-4bit, the
+        # default fp16 KV is ~14GB; fp8 frees ~7GB → bigger LoRA rank,
+        # larger batch, or longer context. Configurable; falls back to
+        # auto if vLLM rejects (older versions).
+        kv_dtype = str(getattr(self, "kv_cache_dtype", "fp8") or "auto")
+        if kv_dtype and kv_dtype != "auto":
+            llm_kwargs["kv_cache_dtype"] = kv_dtype
         # Task #23 wedge 4: use heldout_max_num_seqs when the caller has
         # flipped _heldout_mode and provided a positive value. Otherwise
         # fall back to the general max_num_seqs. vLLM cannot change
@@ -279,6 +289,7 @@ class VLLMModelLoader:
                 "max_num_seqs", "enforce_eager", "enable_sleep_mode",
                 "enable_chunked_prefill",
                 "speculative_model", "num_speculative_tokens",
+                "kv_cache_dtype",
             ):
                 if kw in msg and kw in llm_kwargs:
                     logger.warning(f"vLLM LLM() rejected {kw} — retrying without it")

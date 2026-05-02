@@ -857,13 +857,14 @@ class OrchestratorConfig:
     # Anchor on real ground-truth solutions: ~10 real problems/cycle is small
     # vs ~12 verified synth, but with 100% clean signal vs ~70% noisy.
     mix_real_benchmarks_in_training: bool = True
-    # 30 per benchmark × 2 = 60 real samples per cycle. Synth contributes
-    # ~12 verified (1-pass/1-fail noisy at 70%); real samples thus dominate
-    # 60:12 with 100% clean signal. Anti-leakage: pulled strictly from the
-    # train partition (index >= anchor_per_bench in stable hash order).
-    # Plateau auto-response (#37) bumps this 1.5x when rolling-3 anchor
-    # flatlines, climbing toward 60-90 real samples / cycle.
-    real_benchmark_samples_per_cycle: int = 30
+    # 80 per benchmark × 2 = 160 real samples per cycle. Synth contributes
+    # ~12 verified noisy at 70% — real-bench dominates 160:12 with 100%
+    # clean signal. Anti-leakage: pulled strictly from train partition.
+    # Plateau auto-response bumps further; floor enforcer to 100+/bench
+    # capped at 200 max. With LoRA rank 128 trainable params and 160
+    # real samples / 2 epochs / batch=2 = ~80 optimizer steps per cycle —
+    # roughly double the gradient signal of the rank-32 / 60-sample setup.
+    real_benchmark_samples_per_cycle: int = 80
     # Training-pool sources: HumanEval+MBPP (anchor canonical four) plus
     # DS-1000 (1k data-science problems) and LiveCodeBench (~500 post-
     # cutoff problems, low contamination). Extra two are training-only —
@@ -933,8 +934,8 @@ class OrchestratorConfig:
     plateau_auto_response: bool = True
     plateau_min_delta: float = 0.005  # legacy: kept for back-compat
     plateau_consec_cycles: int = 3    # legacy: kept for back-compat
-    plateau_rank_step: int = 8
-    plateau_rank_ceiling: int = 64
+    plateau_rank_step: int = 16  # bigger steps so floor enforcer reaches 256
+    plateau_rank_ceiling: int = 256
 
     # Hard floor: per-cycle minimum rolling-K anchor delta (#52). When a
     # SINGLE cycle drops below this, the floor enforcer fires immediately
@@ -942,6 +943,13 @@ class OrchestratorConfig:
     # before any repeats, then rotation resets. Default 1% per cycle =
     # the user's foom contract floor. Set 0.0 to disable hard-floor mode.
     floor_min_delta: float = 0.01
+
+    # Ceiling-break #3 / #55: alternate SFT and GRPO training modes
+    # cycle-by-cycle. SFT memorizes canonical solutions; GRPO uses
+    # property-quorum reward to push correctness via rollouts. The two
+    # objectives compound — they nudge weights in different directions.
+    # Disable to pin to one mode (config.trainer.training_mode).
+    alternate_sft_grpo: bool = True
 
     # Anti-saturation: graduated benchmark ladder (#46). When current anchor
     # set's max rolling-3 score >= threshold, add next benchmark from the

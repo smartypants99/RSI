@@ -60,7 +60,7 @@ while true; do
         --consistency-samples 3 \
         --samples-per-weakness 100 \
         --consistency-threshold 0.34 \
-        --lora-rank 32 \
+        --lora-rank 128 \
         --learning-rate 8e-6 \
         --plateau-patience 8 \
         --heldout-repetitions 1 \

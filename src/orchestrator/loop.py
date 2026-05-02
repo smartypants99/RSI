@@ -2377,6 +2377,22 @@ class ImprovementLoop:
         else:
             self.trainer.inject_lora(weak_layers=diag.layer_health)
 
+        # Ceiling-break #3 / #55: SFT/GRPO alternation. When `alternate_sft_grpo`
+        # is on, each cycle flips training_mode. SFT memorizes canonical
+        # solutions; GRPO uses property-quorum reward to push the model
+        # toward correctness rollout-by-rollout. They target different
+        # gradient directions and compound. Disable to pin to one mode.
+        if bool(getattr(
+            self.config.orchestrator, "alternate_sft_grpo", True,
+        )):
+            _alt_mode = "grpo" if (cycle % 2 == 0) else "sft"
+            old_mode = self.config.trainer.training_mode
+            if old_mode != _alt_mode:
+                logger.info(
+                    f"  training_mode flip: {old_mode} → {_alt_mode} "
+                    f"(SFT/GRPO alternation, cycle {cycle})"
+                )
+                self.config.trainer.training_mode = _alt_mode
         # 4a. PRM (optional) — train once per cycle on verified samples, then
         # install as reward_fn for downstream GRPO. Gated by config.trainer.use_prm
         # and training_mode == "grpo". Failures are isolated: a broken PRM
